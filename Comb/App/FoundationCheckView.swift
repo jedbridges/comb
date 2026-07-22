@@ -61,8 +61,8 @@ struct Mark: View {
     /// with. Taken from the icon artwork.
     private static let rings: [(scale: CGFloat, isInk: Bool)] = [
         (1.00, true),
-        (0.45, false),
-        (0.19, true),
+        (0.48, false),
+        (0.245, true),
     ]
 
     var body: some View {
@@ -89,11 +89,12 @@ struct Mark: View {
         .accessibilityLabel("Comb")
     }
 
-    /// A flat-top hexagon: vertices at left and right, level top and bottom edges.
+    /// A pointy-top hexagon: vertices at top and bottom, vertical side edges.
+    /// The 30 degree offset is what distinguishes it from a flat-top cell.
     private func hexagon(center: CGPoint, radius: CGFloat) -> Path {
         var path = Path()
         for corner in 0..<6 {
-            let angle = Double(corner) * .pi / 3
+            let angle = Double(corner) * .pi / 3 + .pi / 6
             let point = CGPoint(
                 x: center.x + cos(angle) * radius,
                 y: center.y + sin(angle) * radius

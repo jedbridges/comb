@@ -3,7 +3,7 @@ import Foundation
 import Testing
 @testable import CombNet
 
-@Suite("NIP-42 authentication")
+@Suite("NIP-42 authentication", .timeLimit(.minutes(1)))
 struct AuthenticationTests {
     @Test("answers a challenge with a signed kind 22242 bound to this relay")
     func answersChallenge() async throws {
@@ -47,6 +47,55 @@ struct AuthenticationTests {
         #expect(await harness.transport.sent(ofType: "REQ").count == 1)
     }
 
+    @Test("fails a caller that arrives after the rejection has already happened")
+    func rejectionIsTerminalForLateCallers() async throws {
+        // The ordering that hung CI. On a fast machine the subscribe suspends
+        // before the relay's rejection is processed; on a slow two-core runner
+        // the rejection lands first, against an empty waiter list. Without a
+        // recorded failure the late caller waits for an event that has been and
+        // gone, and no timeout exists to rescue it.
+        let harness = try await Harness(behaviour: { request, transport in
+            if case .auth(let event) = request {
+                await transport.push("[\"OK\",\"\(event.id)\",false,\"invalid: bad signature\"]")
+            }
+        })
+        try await harness.session.start()
+
+        await harness.transport.push("[\"AUTH\",\"challenge-abc\"]")
+        // Let the rejection be fully processed before anyone asks to subscribe.
+        try await waitUntil("auth rejection") {
+            await harness.transport.sent(ofType: "AUTH").count == 1
+        }
+        try await Task.sleep(for: .milliseconds(30))
+
+        await #expect(throws: RelayError.self) {
+            try await harness.session.subscribe([Filter(kinds: [.groupChatMessage])])
+        }
+    }
+
+    @Test("recovers when the relay challenges again after a rejection")
+    func recoversAfterRejection() async throws {
+        // A recorded failure must not be permanent: a relay may re-challenge and
+        // accept, and the session has to come back rather than staying poisoned.
+        let attempts = Counter()
+        let harness = try await Harness(behaviour: { request, transport in
+            if case .auth(let event) = request {
+                if await attempts.next() == 1 {
+                    await transport.push("[\"OK\",\"\(event.id)\",false,\"invalid: try again\"]")
+                } else {
+                    await transport.push("[\"OK\",\"\(event.id)\",true,\"\"]")
+                }
+            }
+        })
+        try await harness.session.start()
+
+        await harness.transport.push("[\"AUTH\",\"challenge-1\"]")
+        try await Task.sleep(for: .milliseconds(30))
+        await harness.transport.push("[\"AUTH\",\"challenge-2\"]")
+
+        try await waitUntil("recovery") { await harness.session.state == .ready }
+    }
+
     @Test("fails waiting callers when the relay rejects authentication")
     func rejectedAuthentication() async throws {
         let harness = try await Harness(behaviour: { request, transport in
@@ -65,7 +114,7 @@ struct AuthenticationTests {
     }
 }
 
-@Suite("Filter validation")
+@Suite("Filter validation", .timeLimit(.minutes(1)))
 struct FilterValidationTests {
     @Test("refuses a filter with no kinds")
     func refusesMissingKinds() async throws {
@@ -104,7 +153,7 @@ struct FilterValidationTests {
     }
 }
 
-@Suite("Subscriptions")
+@Suite("Subscriptions", .timeLimit(.minutes(1)))
 struct SubscriptionTests {
     @Test("routes events to the sink and reports end of stored events")
     func routesEvents() async throws {
@@ -166,7 +215,7 @@ struct SubscriptionTests {
     }
 }
 
-@Suite("Queries")
+@Suite("Queries", .timeLimit(.minutes(1)))
 struct QueryTests {
     @Test("collects stored events and resolves on EOSE")
     func resolvesOnEOSE() async throws {
@@ -237,7 +286,7 @@ struct QueryTests {
     }
 }
 
-@Suite("Publishing")
+@Suite("Publishing", .timeLimit(.minutes(1)))
 struct PublishTests {
     private func message(_ text: String) throws -> NostrEvent {
         try NostrEvent.signed(
@@ -324,7 +373,7 @@ struct PublishTests {
     }
 }
 
-@Suite("Recovery")
+@Suite("Recovery", .timeLimit(.minutes(1)))
 struct RecoveryTests {
     @Test("re-authenticates and retries once when a subscription is auth-closed")
     func retriesAfterAuthFailure() async throws {
@@ -481,7 +530,7 @@ struct RecoveryTests {
     }
 }
 
-@Suite("Reconnect policy")
+@Suite("Reconnect policy", .timeLimit(.minutes(1)))
 struct ReconnectPolicyTests {
     @Test("backs off exponentially up to the cap")
     func backsOff() {

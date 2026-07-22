@@ -67,12 +67,24 @@ public actor RelaySession {
     private var readTask: Task<Void, Never>?
     private var isStopping = false
 
-    /// Continuations waiting for authentication to complete.
-    private var authWaiters: [CheckedContinuation<Void, Error>] = []
+    /// Continuations waiting for authentication to complete, keyed so a
+    /// watchdog can fail one individually.
+    private var authWaiters: [Int: CheckedContinuation<Void, Error>] = [:]
+    private var nextWaiterID = 0
     /// The id of the in-flight NIP-42 response, so its OK can be told apart from
     /// a publish OK.
     private var pendingAuthEventID: String?
     private var authenticatedAs: PublicKey?
+
+    /// The last authentication failure, held so a caller that arrives after the
+    /// failure fails immediately instead of suspending.
+    ///
+    /// Without this there is a race with no timeout to save it: if the relay's
+    /// rejection is processed before a subscribe reaches `waitForAuthentication`,
+    /// the failure fires against an empty waiter list and the subscriber then
+    /// registers a continuation nobody will ever resume. Cleared on the next
+    /// challenge, since a relay may re-challenge and succeed.
+    private var authFailure: Error?
 
     /// Publishes waiting on their OK, keyed by event id.
     private var pendingPublishes: [String: CheckedContinuation<Void, Error>] = [:]
@@ -123,8 +135,8 @@ public actor RelaySession {
         readTask = nil
         await transport.close()
 
-        // Anything waiting will never be answered now, so fail it rather than
-        // leaving callers suspended forever.
+        // Anything waiting, or about to wait, will never be answered now.
+        authFailure = RelayError.notConnected
         failAllWaiters(with: RelayError.notConnected)
         state = .stopped
     }
@@ -188,6 +200,9 @@ public actor RelaySession {
 
     private func respondToChallenge(_ challenge: String) async {
         state = .authenticating
+        // A new challenge is a fresh attempt, so a previous failure no longer
+        // applies.
+        authFailure = nil
         do {
             let event = try await NostrEvent.authResponse(
                 challenge: challenge,
@@ -207,11 +222,13 @@ public actor RelaySession {
         switch result {
         case .success(let key):
             authenticatedAs = key
+            authFailure = nil
             state = .ready
-            for waiter in authWaiters { waiter.resume() }
+            for waiter in authWaiters.values { waiter.resume() }
         case .failure(let error):
             authenticatedAs = nil
-            for waiter in authWaiters { waiter.resume(throwing: error) }
+            authFailure = error
+            for waiter in authWaiters.values { waiter.resume(throwing: error) }
         }
         authWaiters.removeAll()
     }
@@ -223,11 +240,31 @@ public actor RelaySession {
     /// only earns a `CLOSED auth-required:` and a wasted round trip.
     private func waitForAuthentication() async throws {
         if state == .ready, authenticatedAs != nil { return }
-        guard !isStopping else { throw RelayError.notConnected }
+        guard !isStopping, state != .stopped else { throw RelayError.notConnected }
+        // Checked before suspending: a failure that already happened must not
+        // leave this caller waiting for an event that has been and gone.
+        if let authFailure { throw authFailure }
+
+        // A watchdog per waiter, because the recorded failure above cannot
+        // cover an ordering nobody anticipated. An unresumed continuation is
+        // not cancellable, so neither a task cancellation nor a test time limit
+        // can rescue it: the only thing that can is something that resumes it.
+        let id = nextWaiterID
+        nextWaiterID += 1
+
+        let watchdog = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(30))
+            await self?.timeOutAuthWaiter(id)
+        }
+        defer { watchdog.cancel() }
 
         try await withCheckedThrowingContinuation { continuation in
-            authWaiters.append(continuation)
+            authWaiters[id] = continuation
         }
+    }
+
+    private func timeOutAuthWaiter(_ id: Int) {
+        authWaiters.removeValue(forKey: id)?.resume(throwing: RelayError.timedOut)
     }
 
     // MARK: - Subscriptions
@@ -510,7 +547,7 @@ public actor RelaySession {
     private func failAllWaiters(with error: Error) {
         failPendingPublishes(with: error)
 
-        for waiter in authWaiters { waiter.resume(throwing: error) }
+        for waiter in authWaiters.values { waiter.resume(throwing: error) }
         authWaiters.removeAll()
 
         for (id, subscription) in subscriptions {
