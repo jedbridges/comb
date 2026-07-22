@@ -31,8 +31,8 @@ struct ChannelListView: View {
         .navigationBarTitleDisplayMode(.large)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                Button("Disconnect", action: onDisconnect)
-                    .font(.system(size: 13))
+                Button("Sign out", action: onDisconnect)
+                    .font(Typography.label)
                     .foregroundStyle(Palette.subtext)
             }
         }
@@ -42,7 +42,7 @@ struct ChannelListView: View {
         .task { await model.activate() }
         #if DEBUG
         .onChange(of: model.channels) { _, channels in
-            if LaunchFlags.opensFirstChannel, autoOpened == nil, let first = channels.first {
+            if AppModel.LaunchFlags.opensFirstChannel, autoOpened == nil, let first = channels.first {
                 autoOpened = first
             }
         }
@@ -65,22 +65,22 @@ struct ChannelListView: View {
                     if channel.id != model.channels.last?.id {
                         Divider()
                             .overlay(Palette.border.opacity(0.5))
-                            .padding(.leading, 60)
+                            .padding(.leading, Space.md + Sizing.channelCell + Space.xs)
                     }
                 }
             }
-            .padding(.vertical, 6)
-            .glassEffect(in: .rect(cornerRadius: 16))
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
+            .padding(.vertical, Space.xxs)
+            .glassEffect(in: .rect(cornerRadius: Radii.card))
+            .padding(.horizontal, Space.md)
+            .padding(.vertical, Space.sm)
         }
     }
 
     private var emptyState: some View {
         VStack(spacing: 12) {
-            Mark().frame(width: 48, height: 48).opacity(0.5)
+            Mark().frame(width: Sizing.inlineMark, height: Sizing.inlineMark).opacity(0.5)
             Text("No channels yet")
-                .font(.system(size: 15, weight: .medium))
+                .font(Typography.bodyEmphasis)
                 .foregroundStyle(Palette.subtext)
         }
     }
@@ -91,50 +91,50 @@ private struct ChannelRow: View {
     let channel: ChannelSummary
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: Space.sm) {
             cell
 
-            VStack(alignment: .leading, spacing: 3) {
+            VStack(alignment: .leading, spacing: Space.hairline) {
                 HStack(alignment: .firstTextBaseline) {
                     Text(channel.name)
-                        .font(.system(size: 16, weight: .semibold))
+                        .font(Typography.name)
                         .foregroundStyle(Palette.text)
                         .lineLimit(1)
 
-                    Spacer(minLength: 8)
+                    Spacer(minLength: Space.xs)
 
                     if let when = channel.lastActivityDate {
                         Text(when, format: .relative(presentation: .named))
-                            .font(.system(size: 12))
+                            .font(Typography.caption)
                             .foregroundStyle(Palette.subtext)
                     }
                 }
 
-                HStack(spacing: 4) {
+                HStack(spacing: Space.xxs) {
                     if let preview {
                         Text(preview)
-                            .font(.system(size: 14))
+                            .font(Typography.secondary)
                             .foregroundStyle(Palette.subtext)
                             .lineLimit(1)
                     } else {
                         Text("No messages yet")
-                            .font(.system(size: 14).italic())
+                            .font(Typography.secondary.italic())
                             .foregroundStyle(Palette.subtext.opacity(0.7))
                     }
 
-                    Spacer(minLength: 8)
+                    Spacer(minLength: Space.xs)
 
                     if channel.memberCount > 0 {
                         Label("\(channel.memberCount)", systemImage: "person.2")
-                            .font(.system(size: 11).monospacedDigit())
+                            .font(Typography.count)
                             .labelStyle(.titleAndIcon)
                             .foregroundStyle(Palette.subtext.opacity(0.8))
                     }
                 }
             }
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
+        .padding(.horizontal, Space.md)
+        .padding(.vertical, Space.sm)
         .contentShape(.rect)
     }
 
@@ -154,9 +154,9 @@ private struct ChannelRow: View {
     /// this keeps rows scannable until then.
     private var cell: some View {
         ZStack {
-            Mark().frame(width: 38, height: 38).opacity(0.9)
+            Mark().frame(width: Sizing.channelCell, height: Sizing.channelCell).opacity(0.9)
             Text(channel.name.prefix(1).uppercased())
-                .font(.system(size: 15, weight: .bold))
+                .font(Typography.name)
                 .foregroundStyle(Palette.chartreuse)
         }
     }

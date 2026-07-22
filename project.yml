@@ -33,6 +33,8 @@ targets:
     platform: iOS
     sources:
       - path: Comb
+      - path: communities/index.json
+        buildPhase: resources
     dependencies:
       - package: CombCore
       - package: CombNet

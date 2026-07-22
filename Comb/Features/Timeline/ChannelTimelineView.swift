@@ -38,8 +38,8 @@ struct ChannelTimelineView: View {
                         )
                     }
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 10)
+                .padding(.horizontal, Space.sm)
+                .padding(.vertical, Space.sm)
             }
             .defaultScrollAnchor(.bottom)
             .scrollDismissesKeyboard(.interactively)
@@ -57,7 +57,7 @@ struct ChannelTimelineView: View {
             ToolbarItem(placement: .topBarTrailing) {
                 if channel.memberCount > 0 {
                     Label("\(channel.memberCount)", systemImage: "person.2")
-                        .font(.system(size: 12).monospacedDigit())
+                        .font(Typography.count)
                         .foregroundStyle(Palette.subtext)
                 }
             }
@@ -75,7 +75,7 @@ struct ChannelTimelineView: View {
                     ProgressView().controlSize(.small)
                 } else {
                     Text("Earlier messages")
-                        .font(.system(size: 13, weight: .medium))
+                        .font(Typography.label)
                 }
             }
             .buttonStyle(.glass)
@@ -98,21 +98,21 @@ private struct MessageRow: View {
     private static let quickReactions = ["🐝", "👍", "❤️", "🔥", "😂"]
 
     var body: some View {
-        HStack(alignment: .top, spacing: 10) {
+        HStack(alignment: .top, spacing: Space.xs) {
             if entry.showsHeader {
-                Avatar(name: entry.row.displayName, picture: entry.row.authorPicture)
+                AvatarView(name: entry.row.displayName, picture: entry.row.authorPicture)
             } else {
-                Color.clear.frame(width: 34, height: 1)
+                Color.clear.frame(width: Sizing.avatar, height: 1)
             }
 
-            VStack(alignment: .leading, spacing: 3) {
+            VStack(alignment: .leading, spacing: Space.hairline) {
                 if entry.showsHeader {
-                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    HStack(alignment: .firstTextBaseline, spacing: Space.xs) {
                         Text(entry.row.displayName)
-                            .font(.system(size: 14, weight: .semibold))
+                            .font(Typography.name)
                             .foregroundStyle(Palette.text)
                         Text(entry.row.date, format: .dateTime.hour().minute())
-                            .font(.system(size: 11))
+                            .font(Typography.caption)
                             .foregroundStyle(Palette.subtext)
                     }
                 }
@@ -127,7 +127,7 @@ private struct MessageRow: View {
 
             Spacer(minLength: 0)
         }
-        .padding(.top, entry.showsHeader ? 10 : 0)
+        .padding(.top, entry.showsHeader ? Space.xs : 0)
         .opacity(entry.row.delivery == .pending ? 0.55 : 1)
     }
 
@@ -135,21 +135,21 @@ private struct MessageRow: View {
     private var content: some View {
         if entry.row.isDeleted {
             Text("Message deleted")
-                .font(.system(size: 15).italic())
+                .font(Typography.secondary.italic())
                 .foregroundStyle(Palette.subtext.opacity(0.7))
         } else {
             // Rich content (Buzz kind 40002) renders as its plain fallback for
             // now; a real renderer is later polish. The fallback rule is what
             // keeps the app whole on relays that never send it.
             Text("\(entry.row.content)\(editedMarker)")
-                .font(.system(size: 16))
+                .font(Typography.body)
                 .foregroundStyle(Palette.text)
                 .textSelection(.enabled)
         }
 
         if case .failed(let reason) = entry.row.delivery {
             Label(reason ?? "Could not send", systemImage: "exclamationmark.circle")
-                .font(.system(size: 12))
+                .font(Typography.caption)
                 .foregroundStyle(Palette.danger)
         }
     }
@@ -171,7 +171,7 @@ private struct MessageRow: View {
     private var editedMarker: Text {
         guard entry.row.isEdited else { return Text(verbatim: "") }
         return Text("  (edited)")
-            .font(.system(size: 11))
+            .font(Typography.caption)
             .foregroundStyle(Palette.subtext)
     }
 }
@@ -181,27 +181,27 @@ private struct ReactionBar: View {
     let onTap: (String) -> Void
 
     var body: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: Space.xxs) {
             ForEach(reactions) { reaction in
                 // Tapping a chip toggles: join the pile, or withdraw your own.
                 Button { onTap(reaction.emoji) } label: { chip(reaction) }
                     .buttonStyle(.plain)
             }
         }
-        .padding(.top, 2)
+        .padding(.top, Space.hairline)
     }
 
     private func chip(_ reaction: ReactionSummary) -> some View {
-        HStack(spacing: 4) {
-            Text(reaction.emoji).font(.system(size: 13))
+        HStack(spacing: Space.xxs) {
+            Text(reaction.emoji).font(Typography.label)
             Text("\(reaction.count)")
-                .font(.system(size: 12, weight: .medium).monospacedDigit())
+                .font(Typography.count)
                 .foregroundStyle(
                     reaction.includesMe ? Palette.oliveInk : Palette.subtext
                 )
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
+        .padding(.horizontal, Space.xs)
+        .padding(.vertical, Space.xxs)
         .background(
             reaction.includesMe
                 ? Palette.chartreuse.opacity(0.45)
@@ -217,18 +217,18 @@ private struct ComposeBar: View {
     let onSend: () -> Void
 
     var body: some View {
-        HStack(alignment: .bottom, spacing: 10) {
+        HStack(alignment: .bottom, spacing: Space.xs) {
             TextField("Message", text: $draft, axis: .vertical)
                 .lineLimit(1...5)
-                .font(.system(size: 16))
+                .font(Typography.body)
                 .foregroundStyle(Palette.text)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 9)
-                .background(Palette.surface.opacity(0.45), in: .rect(cornerRadius: 18))
+                .padding(.horizontal, Space.sm)
+                .padding(.vertical, Space.xs)
+                .background(Palette.surface.opacity(0.45), in: .rect(cornerRadius: Radii.card))
 
             Button(action: onSend) {
                 Image(systemName: "arrow.up")
-                    .font(.system(size: 15, weight: .bold))
+                    .font(Typography.action)
                     .foregroundStyle(Palette.ink)
                     .frame(width: 36, height: 36)
             }
@@ -236,28 +236,11 @@ private struct ComposeBar: View {
             .tint(Palette.chartreuse)
             .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .glassEffect(in: .rect(cornerRadius: 24))
-        .padding(.horizontal, 10)
-        .padding(.bottom, 4)
-    }
-}
-
-/// Initials in a comb cell until image loading arrives.
-private struct Avatar: View {
-    let name: String
-    let picture: String?
-
-    var body: some View {
-        ZStack {
-            Circle()
-                .fill(Palette.surface.opacity(0.8))
-            Text(name.prefix(1).uppercased())
-                .font(.system(size: 14, weight: .bold))
-                .foregroundStyle(Palette.text)
-        }
-        .frame(width: 34, height: 34)
+        .padding(.horizontal, Space.sm)
+        .padding(.vertical, Space.xs)
+        .glassEffect(in: .rect(cornerRadius: Radii.sheet))
+        .padding(.horizontal, Space.xs)
+        .padding(.bottom, Space.xxs)
     }
 }
 

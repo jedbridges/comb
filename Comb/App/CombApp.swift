@@ -1,37 +1,58 @@
+import CombNet
 import SwiftUI
 
 @main
 struct CombApp: App {
-    @State private var model = ConnectModel()
+    @State private var model = AppModel()
+    @State private var pendingInvite: String?
 
     var body: some Scene {
         WindowGroup {
-            NavigationStack {
-                if let session = model.session {
-                    ChannelListView(session: session) {
-                        Task { await model.disconnect() }
+            Group {
+                switch model.stage {
+                case .launching:
+                    LaunchingView()
+                case .welcome:
+                    WelcomeView(
+                        notice: model.launchNotice,
+                        onJoined: { model.adopt($0) },
+                        pendingInvite: $pendingInvite
+                    )
+                case .active(let session):
+                    NavigationStack {
+                        ChannelListView(session: session) {
+                            Task { await model.signOut() }
+                        }
                     }
-                } else {
-                    ConnectView(model: model)
                 }
             }
-            .task {
-                #if DEBUG
-                // Lets automation drive the demo path with no taps:
-                // simctl launch ... --demo [--open-first-channel]
-                if ProcessInfo.processInfo.arguments.contains("--demo") {
-                    await model.connectDemo()
-                }
-                #endif
+            .task { await model.bootstrap() }
+            .onOpenURL { url in
+                // buzz:// and comb:// join links. Only honoured before a
+                // community is open; multi-community switching is later work.
+                guard InviteLink.parse(url.absoluteString) != nil,
+                      case .welcome = model.stage
+                else { return }
+                pendingInvite = url.absoluteString
             }
         }
     }
 }
 
-#if DEBUG
-enum LaunchFlags {
-    static var opensFirstChannel: Bool {
-        ProcessInfo.processInfo.arguments.contains("--open-first-channel")
+/// The instant between launch and knowing whether a community opens silently.
+private struct LaunchingView: View {
+    @State private var isBreathing = false
+
+    var body: some View {
+        Backdrop {
+            Mark()
+                .frame(width: Sizing.heroMark, height: Sizing.heroMark)
+                .opacity(isBreathing ? 1 : 0.6)
+                .animation(
+                    .easeInOut(duration: 0.9).repeatForever(autoreverses: true),
+                    value: isBreathing
+                )
+        }
+        .onAppear { isBreathing = true }
     }
 }
-#endif

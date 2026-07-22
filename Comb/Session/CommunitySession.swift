@@ -155,6 +155,22 @@ actor CommunitySession {
         }
     }
 
+    /// Publishes the user's profile. Kind 0 is replaceable per pubkey, so this
+    /// overwrites any previous name; both `name` and `display_name` are set
+    /// because clients disagree about which one they read.
+    func setProfile(displayName: String) async {
+        let content: [String: String] = ["name": displayName, "display_name": displayName]
+        guard let data = try? JSONEncoder().encode(content),
+              let event = try? await signer.sign(
+                  kind: .metadata,
+                  content: String(decoding: data, as: UTF8.self)
+              )
+        else { return }
+
+        try? await relay.publish(event)
+        _ = try? await store.ingest([event])
+    }
+
     /// Re-delivers a failed message from its stored payload. No re-signing:
     /// the same event goes out, so the id cannot change under the timeline.
     func retrySend(_ eventID: String) async {
