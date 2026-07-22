@@ -144,11 +144,29 @@ public extension NostrEvent {
         try signed(
             kind: .clientAuth,
             content: "",
-            tags: [
-                ["relay", relayURL.absoluteString],
-                ["challenge", challenge],
-            ],
+            tags: authTags(challenge: challenge, relayURL: relayURL),
             with: key
         )
+    }
+
+    /// The signer-based form, which is what the relay session uses: the app's
+    /// key lives in the Keychain and is never handed around as a value.
+    static func authResponse(
+        challenge: String,
+        relayURL: URL,
+        with signer: some EventSigner
+    ) async throws -> NostrEvent {
+        try await signer.sign(
+            kind: .clientAuth,
+            content: "",
+            tags: authTags(challenge: challenge, relayURL: relayURL)
+        )
+    }
+
+    private static func authTags(challenge: String, relayURL: URL) -> [[String]] {
+        [
+            ["relay", relayURL.absoluteString],
+            ["challenge", challenge],
+        ]
     }
 }

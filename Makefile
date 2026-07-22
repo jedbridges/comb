@@ -1,4 +1,4 @@
-.PHONY: help project test test-core test-store build-app test-app run clean
+.PHONY: help project test test-core test-store test-net build-app test-app run clean
 
 SIMULATOR ?= platform=iOS Simulator,name=iPhone 17 Pro
 
@@ -14,13 +14,16 @@ project:
 	xcodegen generate
 
 # The fast loop. Everything protocol-level is verifiable here with no simulator.
-test: test-core test-store
+test: test-core test-store test-net
 
 test-core:
 	swift test --package-path CombCore
 
 test-store:
 	swift test --package-path CombStore
+
+test-net:
+	swift test --package-path CombNet
 
 # swift-secp256k1 ships a build plugin, which Xcode refuses to run unless trust
 # is granted interactively. The skip flags are what make a headless build work.

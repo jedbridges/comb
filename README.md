@@ -42,6 +42,8 @@ CombCore/          Swift package: protocol, crypto, wire format. Foundation only
                    testable from the command line with `swift test`.
 CombStore/         Swift package: the append-only event log, its projections,
                    and the ingest choke point where verification happens.
+CombNet/           Swift package: the relay connection and protocol state
+                   machine. Testable against a mock socket, with no relay.
 Comb/              The iOS app target. SwiftUI only.
 project.yml        XcodeGen source of truth. Comb.xcodeproj is generated and
                    is not checked in.
@@ -59,7 +61,7 @@ Early. The protocol core is implemented and tested. Nothing is shippable yet.
 - [x] NIP-98 HTTP auth, signer abstraction, project and CI scaffolding
 - [x] Append-only event log, verified ingest, rebuildable projections
 - [x] Timeline queries with stable pagination, and the optimistic send outbox
-- [ ] Relay connection, subscriptions, reconnection
+- [x] Relay connection, NIP-42 auth, subscriptions, reconnection
 - [ ] Channel list, message history, sending
 - [ ] Onboarding, community discovery
 - [ ] Keychain storage and the `nostrpair://` pairing handshake
