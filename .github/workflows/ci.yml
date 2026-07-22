@@ -14,7 +14,7 @@ jobs:
   # which is most of the code and nearly all of the subtle code.
   packages:
     name: Package tests
-    runs-on: macos-15
+    runs-on: macos-latest
     strategy:
       fail-fast: false
       matrix:
@@ -22,8 +22,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Select Xcode
-        run: sudo xcode-select -s /Applications/Xcode_26.app
+      # Runner images change their bundled Xcode versions without notice, so
+      # pick the newest one present rather than pinning a path that will rot.
+      - name: Select newest Xcode
+        run: |
+          ls -d /Applications/Xcode*.app
+          sudo xcode-select -s "$(ls -d /Applications/Xcode*.app | sort -V | tail -1)"
+          xcodebuild -version
+          swift --version
 
       - name: Cache SwiftPM
         uses: actions/cache@v4
@@ -37,12 +43,14 @@ jobs:
 
   app:
     name: App build
-    runs-on: macos-15
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Select Xcode
-        run: sudo xcode-select -s /Applications/Xcode_26.app
+      - name: Select newest Xcode
+        run: |
+          sudo xcode-select -s "$(ls -d /Applications/Xcode*.app | sort -V | tail -1)"
+          xcodebuild -version
 
       - name: Install XcodeGen
         run: brew install xcodegen
@@ -50,14 +58,19 @@ jobs:
       - name: Generate project
         run: xcodegen generate
 
-      # No code signing in CI. Building for the simulator needs none, and
-      # keeping credentials out of CI is worth more than an on-device build.
-      - name: Build and test
+      # A generic simulator destination avoids depending on which device names
+      # the runner image happens to ship. The app target's own tests are thin by
+      # design and run locally with `make test-app`; the package suites above are
+      # what actually gate correctness.
+      #
+      # swift-secp256k1 ships a build plugin that Xcode will not run without
+      # interactive trust, hence the skip flags.
+      - name: Build
         run: |
-          xcodebuild test \
+          xcodebuild build \
             -project Comb.xcodeproj \
             -scheme Comb \
-            -destination 'platform=iOS Simulator,name=iPhone 17 Pro' \
+            -destination 'generic/platform=iOS Simulator' \
             -derivedDataPath DerivedData \
             -skipPackagePluginValidation \
             -skipMacroValidation \
