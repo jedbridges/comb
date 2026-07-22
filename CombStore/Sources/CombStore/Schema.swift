@@ -73,10 +73,16 @@ enum Schema {
             // Messages signed but not yet acknowledged by the relay. The event id
             // exists the moment we sign, so an outbox row and its eventual event
             // row share an identity and the UI never sees a swap.
+            //
+            // `pubkey` and `content` are duplicated out of `payload` so the
+            // timeline can union event rows and outbox rows in one statement
+            // without extracting JSON in SQL.
             try db.execute(sql: """
                 CREATE TABLE outbox (
                     event_id   TEXT PRIMARY KEY NOT NULL,
                     channel_id TEXT NOT NULL,
+                    pubkey     TEXT NOT NULL,
+                    content    TEXT NOT NULL,
                     created_at INTEGER NOT NULL,
                     payload    TEXT NOT NULL,
                     state      TEXT NOT NULL,

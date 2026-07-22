@@ -58,7 +58,7 @@ Early. The protocol core is implemented and tested. Nothing is shippable yet.
 - [x] Client and relay wire messages, NIP-42 auth events
 - [x] NIP-98 HTTP auth, signer abstraction, project and CI scaffolding
 - [x] Append-only event log, verified ingest, rebuildable projections
-- [ ] Timeline queries with stable pagination, and the send outbox
+- [x] Timeline queries with stable pagination, and the optimistic send outbox
 - [ ] Relay connection, subscriptions, reconnection
 - [ ] Channel list, message history, sending
 - [ ] Onboarding, community discovery

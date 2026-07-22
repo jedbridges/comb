@@ -9,7 +9,9 @@ import GRDB
 /// stored event was cryptographically valid at the moment it was stored" holds
 /// as long as this one function is correct. That is why it has adversarial tests.
 public actor EventStore {
-    private let writer: any DatabaseWriter
+    /// Internal rather than private so the outbox extension can share the same
+    /// connection, and with it the same transaction semantics.
+    let writer: any DatabaseWriter
 
     /// Exposed so read-only observation can be set up outside the actor.
     /// Callers get a reader, never a writer.
@@ -83,44 +85,58 @@ public actor EventStore {
 
         try writer.write { db in
             for event in valid {
-                let tagsJSON = try Self.encodeTags(event.tags)
-
-                // The id is a content address, so a second copy of an event is
-                // by definition identical and can be ignored outright. This is
-                // what makes reconnect overlap and echoed sends free.
-                try db.execute(
-                    sql: """
-                        INSERT INTO event (id, pubkey, created_at, kind, content, tags, sig, h, received_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        ON CONFLICT(id) DO NOTHING
-                        """,
-                    arguments: [
-                        event.id,
-                        event.pubkey,
-                        event.createdAt,
-                        event.kind.rawValue,
-                        event.content,
-                        tagsJSON,
-                        event.sig,
-                        event.groupID,
-                        receivedAt,
-                    ]
-                )
-
-                // ON CONFLICT DO NOTHING means zero changes is the signal that
-                // this event was already in the log.
-                guard db.changesCount > 0 else {
+                if try Self.write(event, receivedAt: receivedAt, into: db) {
+                    result.inserted.append(event.id)
+                } else {
                     result.duplicates.append(event.id)
-                    continue
                 }
-
-                try Self.insertTags(event, into: db)
-                try Projector.project(event, into: db)
-                result.inserted.append(event.id)
             }
         }
 
         return result
+    }
+
+    /// Writes one already-verified event and its projections.
+    ///
+    /// Returns false when the event was already present. Callers must have
+    /// verified it: this is below the choke point, not part of it.
+    ///
+    /// Shared with the outbox confirmation path so a message we sent lands in
+    /// the log by exactly the same route as one that arrived from the relay.
+    static func write(
+        _ event: NostrEvent,
+        receivedAt: Int64,
+        into db: Database
+    ) throws -> Bool {
+        // The id is a content address, so a second copy of an event is by
+        // definition identical and can be ignored outright. This is what makes
+        // reconnect overlap and echoed sends free.
+        try db.execute(
+            sql: """
+                INSERT INTO event (id, pubkey, created_at, kind, content, tags, sig, h, received_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO NOTHING
+                """,
+            arguments: [
+                event.id,
+                event.pubkey,
+                event.createdAt,
+                event.kind.rawValue,
+                event.content,
+                try encodeTags(event.tags),
+                event.sig,
+                event.groupID,
+                receivedAt,
+            ]
+        )
+
+        // ON CONFLICT DO NOTHING means zero changes is the signal that this
+        // event was already in the log.
+        guard db.changesCount > 0 else { return false }
+
+        try insertTags(event, into: db)
+        try Projector.project(event, into: db)
+        return true
     }
 
     /// Indexes single-letter tags for `#e` / `#p` style lookups.
