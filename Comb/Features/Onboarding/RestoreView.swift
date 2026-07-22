@@ -18,6 +18,16 @@ struct RestoreView: View {
 
     var body: some View {
         Form {
+            Section {
+                NavigationLink {
+                    PairingView(onPaired: onRestored)
+                } label: {
+                    Label("Pair with a device", systemImage: "qrcode")
+                }
+            } footer: {
+                Text("Scan a code from Buzz on your computer to move your account across.")
+            }
+
             Section("Community relay") {
                 TextField("wss://…", text: $model.relayURL)
                     .font(Typography.mono)
