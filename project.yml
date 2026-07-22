@@ -22,6 +22,10 @@ settings:
 packages:
   CombCore:
     path: CombCore
+  CombNet:
+    path: CombNet
+  CombStore:
+    path: CombStore
 
 targets:
   Comb:
@@ -31,6 +35,8 @@ targets:
       - path: Comb
     dependencies:
       - package: CombCore
+      - package: CombNet
+      - package: CombStore
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.jedbridges.comb

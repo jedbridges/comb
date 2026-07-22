@@ -4,7 +4,7 @@ import SwiftUI
 struct CombApp: App {
     var body: some Scene {
         WindowGroup {
-            FoundationCheckView()
+            DebugConnectionView()
         }
     }
 }
