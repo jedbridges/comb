@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # The fast gate. Everything protocol-level is verifiable with no simulator,
+  # which is most of the code and nearly all of the subtle code.
+  packages:
+    name: Package tests
+    runs-on: macos-15
+    strategy:
+      fail-fast: false
+      matrix:
+        package: [CombCore]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_26.app
+
+      - name: Cache SwiftPM
+        uses: actions/cache@v4
+        with:
+          path: ${{ matrix.package }}/.build
+          key: spm-${{ matrix.package }}-${{ hashFiles(format('{0}/Package.resolved', matrix.package)) }}
+          restore-keys: spm-${{ matrix.package }}-
+
+      - name: Test
+        run: swift test --package-path ${{ matrix.package }}
+
+  app:
+    name: App build
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_26.app
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate project
+        run: xcodegen generate
+
+      # No code signing in CI. Building for the simulator needs none, and
+      # keeping credentials out of CI is worth more than an on-device build.
+      - name: Build and test
+        run: |
+          xcodebuild test \
+            -project Comb.xcodeproj \
+            -scheme Comb \
+            -destination 'platform=iOS Simulator,name=iPhone 17 Pro' \
+            -derivedDataPath DerivedData \
+            -skipPackagePluginValidation \
+            -skipMacroValidation \
+            CODE_SIGNING_ALLOWED=NO
