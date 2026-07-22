@@ -22,7 +22,10 @@ let package = Package(
         ),
         .testTarget(
             name: "CombCoreTests",
-            dependencies: ["CombCore"]
+            dependencies: ["CombCore"],
+            // The official NIP-44 vector suite, slimmed. Interop with every
+            // other Nostr client rests on these.
+            resources: [.process("Fixtures-nip44-vectors.json")]
         ),
     ]
 )
