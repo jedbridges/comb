@@ -441,3 +441,54 @@ struct OutboxTests {
         #expect(try store.timeline(channel: "room-1").count == 1)
     }
 }
+
+@Suite("Reaction withdrawal")
+struct ReactionWithdrawalTests {
+    @Test("a deleted reaction leaves the tally")
+    func withdrawnReactionLeaves() async throws {
+        // Un-reacting is a kind 5 deletion of the reaction event. If the tally
+        // ignored deletions, withdrawing a reaction would never take effect.
+        let store = try EventStore()
+        let fixture = try Fixture()
+        let message = try fixture.message("react to me", at: 1000)
+        let reaction = try fixture.event(.reaction, "🐝", tags: [["e", message.id]], at: 1001)
+
+        _ = try await store.ingest([message, reaction])
+        #expect(try store.reactions(for: [message.id], me: nil)[message.id]?.count == 1)
+
+        _ = try await store.ingest([
+            try fixture.event(.deletion, "", tags: [["e", reaction.id]], at: 1002),
+        ])
+        #expect(try store.reactions(for: [message.id], me: nil).isEmpty)
+    }
+
+    @Test("finds the caller's own live reaction for toggling")
+    func findsOwnReaction() async throws {
+        let store = try EventStore()
+        let mine = try Fixture()
+        let other = try Fixture()
+        let message = try mine.message("target", at: 1000)
+        let myReaction = try mine.event(.reaction, "🐝", tags: [["e", message.id]], at: 1001)
+
+        _ = try await store.ingest([
+            message,
+            myReaction,
+            try other.event(.reaction, "🐝", tags: [["e", message.id]], at: 1002),
+        ])
+
+        #expect(try store.ownReactionID(
+            target: message.id, emoji: "🐝", pubkey: mine.pubkey
+        ) == myReaction.id)
+        #expect(try store.ownReactionID(
+            target: message.id, emoji: "🔥", pubkey: mine.pubkey
+        ) == nil)
+
+        // Withdrawn means gone: a second toggle should add, not delete again.
+        _ = try await store.ingest([
+            try mine.event(.deletion, "", tags: [["e", myReaction.id]], at: 1003),
+        ])
+        #expect(try store.ownReactionID(
+            target: message.id, emoji: "🐝", pubkey: mine.pubkey
+        ) == nil)
+    }
+}

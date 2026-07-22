@@ -206,11 +206,15 @@ public extension EventStore {
         guard !eventIDs.isEmpty else { return [:] }
 
         let placeholders = databaseQuestionMarks(count: eventIDs.count)
+        // A withdrawn reaction is a kind 5 deletion of the reaction event, so
+        // the tally has to exclude deleted reactions or un-reacting would never
+        // take effect visually.
         let sql = """
             SELECT target_id, emoji, COUNT(*) AS n,
                    MAX(pubkey = ?) AS mine
             FROM reaction
             WHERE target_id IN (\(placeholders))
+              AND NOT EXISTS (SELECT 1 FROM deletion d WHERE d.target_id = reaction.event_id)
             GROUP BY target_id, emoji
             ORDER BY n DESC, emoji ASC
             """
@@ -233,6 +237,23 @@ public extension EventStore {
             )
         }
         return out
+    }
+
+    /// The id of the caller's own live reaction with this emoji, for toggling:
+    /// reacting again means withdrawing, which is a deletion of this event.
+    nonisolated func ownReactionID(
+        target: String,
+        emoji: String,
+        pubkey: String
+    ) throws -> String? {
+        try reader.read { db in
+            try String.fetchOne(db, sql: """
+                SELECT event_id FROM reaction
+                WHERE target_id = ? AND emoji = ? AND pubkey = ?
+                  AND NOT EXISTS (SELECT 1 FROM deletion d WHERE d.target_id = reaction.event_id)
+                LIMIT 1
+                """, arguments: [target, emoji, pubkey])
+        }
     }
 
     /// NIP-10 reply target: an explicit `reply` marker, else `root`.

@@ -7,6 +7,7 @@ struct ChannelTimelineView: View {
     let channel: ChannelSummary
 
     @State private var model: ChannelTimeline
+    @State private var draft = ""
 
     init(session: CommunitySession, channel: ChannelSummary) {
         self.session = session
@@ -28,7 +29,12 @@ struct ChannelTimelineView: View {
                     ForEach(model.displayRows) { entry in
                         MessageRow(
                             entry: entry,
-                            reactions: model.snapshot.reactions[entry.row.id] ?? []
+                            reactions: model.snapshot.reactions[entry.row.id] ?? [],
+                            onReact: { emoji in
+                                Task { await model.toggleReaction(emoji, on: entry.row.id) }
+                            },
+                            onRetry: { Task { await model.retry(entry.row.id) } },
+                            onDiscard: { Task { await model.discard(entry.row.id) } }
                         )
                     }
                 }
@@ -37,6 +43,13 @@ struct ChannelTimelineView: View {
             }
             .defaultScrollAnchor(.bottom)
             .scrollDismissesKeyboard(.interactively)
+        }
+        .safeAreaInset(edge: .bottom) {
+            ComposeBar(draft: $draft) {
+                let text = draft
+                draft = ""
+                Task { await model.send(text) }
+            }
         }
         .navigationTitle(channel.name)
         .navigationBarTitleDisplayMode(.inline)
@@ -77,6 +90,12 @@ struct ChannelTimelineView: View {
 private struct MessageRow: View {
     let entry: ChannelTimeline.Entry
     let reactions: [ReactionSummary]
+    let onReact: (String) -> Void
+    let onRetry: () -> Void
+    let onDiscard: () -> Void
+
+    /// The quick palette. A full picker is later polish.
+    private static let quickReactions = ["🐝", "👍", "❤️", "🔥", "😂"]
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
@@ -99,9 +118,10 @@ private struct MessageRow: View {
                 }
 
                 content
+                    .contextMenu { contextActions }
 
                 if !reactions.isEmpty {
-                    ReactionBar(reactions: reactions)
+                    ReactionBar(reactions: reactions, onTap: onReact)
                 }
             }
 
@@ -134,6 +154,18 @@ private struct MessageRow: View {
         }
     }
 
+    @ViewBuilder
+    private var contextActions: some View {
+        if case .failed = entry.row.delivery {
+            Button("Try again", systemImage: "arrow.clockwise", action: onRetry)
+            Button("Discard", systemImage: "trash", role: .destructive, action: onDiscard)
+        } else if !entry.row.isDeleted {
+            ForEach(Self.quickReactions, id: \.self) { emoji in
+                Button(emoji) { onReact(emoji) }
+            }
+        }
+    }
+
     /// Styled inline rather than concatenated: `Text + Text` is deprecated on
     /// iOS 26 in favour of interpolation.
     private var editedMarker: Text {
@@ -146,29 +178,69 @@ private struct MessageRow: View {
 
 private struct ReactionBar: View {
     let reactions: [ReactionSummary]
+    let onTap: (String) -> Void
 
     var body: some View {
         HStack(spacing: 6) {
             ForEach(reactions) { reaction in
-                HStack(spacing: 4) {
-                    Text(reaction.emoji).font(.system(size: 13))
-                    Text("\(reaction.count)")
-                        .font(.system(size: 12, weight: .medium).monospacedDigit())
-                        .foregroundStyle(
-                            reaction.includesMe ? Palette.oliveInk : Palette.subtext
-                        )
-                }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(
-                    reaction.includesMe
-                        ? Palette.chartreuse.opacity(0.45)
-                        : Palette.surface.opacity(0.5),
-                    in: .capsule
-                )
+                // Tapping a chip toggles: join the pile, or withdraw your own.
+                Button { onTap(reaction.emoji) } label: { chip(reaction) }
+                    .buttonStyle(.plain)
             }
         }
         .padding(.top, 2)
+    }
+
+    private func chip(_ reaction: ReactionSummary) -> some View {
+        HStack(spacing: 4) {
+            Text(reaction.emoji).font(.system(size: 13))
+            Text("\(reaction.count)")
+                .font(.system(size: 12, weight: .medium).monospacedDigit())
+                .foregroundStyle(
+                    reaction.includesMe ? Palette.oliveInk : Palette.subtext
+                )
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(
+            reaction.includesMe
+                ? Palette.chartreuse.opacity(0.45)
+                : Palette.surface.opacity(0.5),
+            in: .capsule
+        )
+    }
+}
+
+/// The message input, glass over the gradient.
+private struct ComposeBar: View {
+    @Binding var draft: String
+    let onSend: () -> Void
+
+    var body: some View {
+        HStack(alignment: .bottom, spacing: 10) {
+            TextField("Message", text: $draft, axis: .vertical)
+                .lineLimit(1...5)
+                .font(.system(size: 16))
+                .foregroundStyle(Palette.text)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 9)
+                .background(Palette.surface.opacity(0.45), in: .rect(cornerRadius: 18))
+
+            Button(action: onSend) {
+                Image(systemName: "arrow.up")
+                    .font(.system(size: 15, weight: .bold))
+                    .foregroundStyle(Palette.ink)
+                    .frame(width: 36, height: 36)
+            }
+            .buttonStyle(.glassProminent)
+            .tint(Palette.chartreuse)
+            .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .glassEffect(in: .rect(cornerRadius: 24))
+        .padding(.horizontal, 10)
+        .padding(.bottom, 4)
     }
 }
 
@@ -236,6 +308,22 @@ final class ChannelTimeline {
 
     func activate() async {
         observe()
+    }
+
+    func send(_ text: String) async {
+        await session.send(text, in: channel)
+    }
+
+    func toggleReaction(_ emoji: String, on messageID: String) async {
+        await session.toggleReaction(emoji, on: messageID, in: channel)
+    }
+
+    func retry(_ messageID: String) async {
+        await session.retrySend(messageID)
+    }
+
+    func discard(_ messageID: String) async {
+        await session.discardSend(messageID)
     }
 
     func loadOlder() async {

@@ -10,7 +10,7 @@ enum DemoSeed {
     /// Builds and signs the fixture set. Every event goes through the same
     /// verified ingest as real traffic, so the demo cannot mask a validation
     /// bug.
-    static func seed(into store: EventStore) async throws {
+    static func seed(into store: EventStore, as me: PrivateKey) async throws {
         let ada = try Persona(name: "Ada", about: "type systems and typefaces")
         let mies = try Persona(name: "Mies", about: "less, but better")
         let ray = try Persona(name: "Ray", about: "plywood optimist")
@@ -119,6 +119,38 @@ enum DemoSeed {
 
         let result = try await store.ingest(events)
         assert(result.rejected.isEmpty, "demo fixtures must survive verification")
+
+        // The user's own profile, plus the two send states the write path can
+        // leave behind: a message still waiting on the relay, and one the relay
+        // refused. Both go through the real outbox.
+        _ = try await store.ingest([
+            try NostrEvent.signed(
+                kind: .metadata,
+                content: #"{"display_name":"Jed"}"#,
+                createdAt: date(now - 86_000),
+                with: me
+            ),
+        ])
+
+        let pending = try NostrEvent.signed(
+            kind: .groupChatMessage,
+            content: "Sending this from Comb.",
+            tags: [["h", channel]],
+            createdAt: date(now - 60),
+            with: me
+        )
+        try await store.enqueue(pending, channel: channel)
+
+        let refused = try NostrEvent.signed(
+            kind: .groupChatMessage,
+            content: "This one the relay refused.",
+            tags: [["h", channel]],
+            createdAt: date(now - 30),
+            with: me
+        )
+        try await store.enqueue(refused, channel: channel)
+        try await store.markSending(refused.id)
+        try await store.markFailed(refused.id, error: "restricted: demo has no relay")
     }
 
     private static func date(_ seconds: Int64) -> Date {

@@ -166,12 +166,13 @@ final class ConnectModel {
     /// A local session with fixture data and no relay. Debug builds only.
     func connectDemo() async {
         do {
+            let key = try PrivateKey()
             let session = try CommunitySession(
                 url: URL(string: "wss://demo.local")!,
-                key: try PrivateKey(),
+                key: key,
                 store: try EventStore()   // in-memory: fresh every launch
             )
-            try await DemoSeed.seed(into: session.store)
+            try await DemoSeed.seed(into: session.store, as: key)
             self.session = session
         } catch {
             failure = Self.describe(error)
