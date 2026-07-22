@@ -184,7 +184,7 @@ public actor RelaySession {
             await handleEndOfStoredEvents(subscriptionID)
 
         case .ok(let eventID, let accepted, let reason):
-            handleOK(eventID: eventID, accepted: accepted, reason: reason)
+            await handleOK(eventID: eventID, accepted: accepted, reason: reason)
 
         case .closed(let subscriptionID, let reason):
             await handleClosed(subscriptionID, reason: reason)
@@ -407,14 +407,19 @@ public actor RelaySession {
         }
     }
 
-    private func handleOK(eventID: String, accepted: Bool, reason: String) {
+    private func handleOK(eventID: String, accepted: Bool, reason: String) async {
         // The NIP-42 response gets an OK like any other event, so it has to be
         // told apart from a publish before the publish table is consulted.
         if eventID == pendingAuthEventID {
             if accepted {
-                Task {
-                    let key = try? await signer.publicKey()
-                    await finishAuth(key: key, reason: reason)
+                // Awaited inline rather than in a spawned Task, so the session
+                // is marked ready before the next frame is processed. A detached
+                // completion would let a frame arriving right behind the OK be
+                // handled while the session still looked unauthenticated.
+                if let key = try? await signer.publicKey() {
+                    completeAuth(with: .success(key))
+                } else {
+                    completeAuth(with: .failure(RelayError.authenticationFailed(reason)))
                 }
             } else {
                 completeAuth(with: .failure(RelayError.authenticationFailed(reason)))
@@ -426,14 +431,6 @@ public actor RelaySession {
             eventID,
             with: accepted ? .success(()) : .failure(RelayError.publishRejected(reason))
         )
-    }
-
-    private func finishAuth(key: PublicKey?, reason: String) {
-        guard let key else {
-            completeAuth(with: .failure(RelayError.authenticationFailed(reason)))
-            return
-        }
-        completeAuth(with: .success(key))
     }
 
     private func handleClosed(_ subscriptionID: String, reason: String) async {
