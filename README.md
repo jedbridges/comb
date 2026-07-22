@@ -66,6 +66,7 @@ Early. The protocol core is implemented and tested. Nothing is shippable yet.
 - [ ] Onboarding, community discovery
 - [ ] Keychain storage and the `nostrpair://` pairing handshake
 - [ ] Media, search
+- [ ] Zaps (NIP-57), with sender-attested receipts on membership-gated relays
 
 Notifications are not in v1. Buzz's hosted push gateway verifies Apple App Attest
 against a single hardcoded app identifier, so no third-party client can register
