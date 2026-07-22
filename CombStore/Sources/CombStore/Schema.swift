@@ -29,8 +29,13 @@ enum Schema {
         migrator.registerMigration("v1.log") { db in
             // ── Source of truth ────────────────────────────────────────────
             //
-            // WITHOUT ROWID because the id is already a 32-byte content address;
-            // a synthetic rowid would just be a second key over the same thing.
+            // Deliberately NOT `WITHOUT ROWID`, here and everywhere below, even
+            // though the content-addressed TEXT primary keys make it look
+            // attractive. SQLite's update hook does not fire for WITHOUT ROWID
+            // tables, and GRDB's ValueObservation depends on that hook: with it,
+            // the initial fetch works and then no change is ever noticed again.
+            // The UI is built entirely on observation, so the hidden-rowid cost
+            // is the price of the architecture working at all.
             try db.execute(sql: """
                 CREATE TABLE event (
                     id          TEXT PRIMARY KEY NOT NULL,
@@ -42,7 +47,7 @@ enum Schema {
                     sig         TEXT NOT NULL,
                     h           TEXT,
                     received_at INTEGER NOT NULL
-                ) WITHOUT ROWID
+                )
                 """)
 
             // Serves the timeline query directly: channel, kind, newest first.
@@ -62,7 +67,7 @@ enum Schema {
                     value    TEXT NOT NULL,
                     position INTEGER NOT NULL,
                     PRIMARY KEY (event_id, name, position)
-                ) WITHOUT ROWID
+                )
                 """)
             try db.execute(sql: "CREATE INDEX event_tag_lookup ON event_tag(name, value)")
         }
@@ -88,7 +93,7 @@ enum Schema {
                     state      TEXT NOT NULL,
                     attempts   INTEGER NOT NULL DEFAULT 0,
                     last_error TEXT
-                ) WITHOUT ROWID
+                )
                 """)
             try db.execute(sql: "CREATE INDEX outbox_channel ON outbox(channel_id, created_at)")
 
@@ -98,21 +103,21 @@ enum Schema {
                     oldest_created_at INTEGER,
                     newest_created_at INTEGER,
                     backfill_complete INTEGER NOT NULL DEFAULT 0
-                ) WITHOUT ROWID
+                )
                 """)
 
             try db.execute(sql: """
                 CREATE TABLE read_state (
                     channel_id   TEXT PRIMARY KEY NOT NULL,
                     last_read_at INTEGER NOT NULL
-                ) WITHOUT ROWID
+                )
                 """)
 
             try db.execute(sql: """
                 CREATE TABLE meta (
                     key   TEXT PRIMARY KEY NOT NULL,
                     value TEXT NOT NULL
-                ) WITHOUT ROWID
+                )
                 """)
         }
 
@@ -135,7 +140,7 @@ enum Schema {
                 is_private      INTEGER NOT NULL DEFAULT 0,
                 source_event_id TEXT NOT NULL,
                 updated_at      INTEGER NOT NULL
-            ) WITHOUT ROWID
+            )
             """)
 
         try db.execute(sql: """
@@ -144,7 +149,7 @@ enum Schema {
                 pubkey     TEXT NOT NULL,
                 role       TEXT,
                 PRIMARY KEY (channel_id, pubkey)
-            ) WITHOUT ROWID
+            )
             """)
 
         try db.execute(sql: """
@@ -156,7 +161,7 @@ enum Schema {
                 nip05           TEXT,
                 source_event_id TEXT NOT NULL,
                 created_at      INTEGER NOT NULL
-            ) WITHOUT ROWID
+            )
             """)
 
         try db.execute(sql: """
@@ -166,7 +171,7 @@ enum Schema {
                 pubkey     TEXT NOT NULL,
                 emoji      TEXT NOT NULL,
                 created_at INTEGER NOT NULL
-            ) WITHOUT ROWID
+            )
             """)
         try db.execute(sql: "CREATE INDEX reaction_target ON reaction(target_id)")
 
@@ -179,7 +184,7 @@ enum Schema {
                 target_id  TEXT NOT NULL,
                 deleted_by TEXT NOT NULL,
                 created_at INTEGER NOT NULL
-            ) WITHOUT ROWID
+            )
             """)
         try db.execute(sql: "CREATE INDEX deletion_target ON deletion(target_id)")
 
@@ -192,7 +197,7 @@ enum Schema {
                 pubkey     TEXT NOT NULL,
                 content    TEXT NOT NULL,
                 created_at INTEGER NOT NULL
-            ) WITHOUT ROWID
+            )
             """)
         try db.execute(sql: "CREATE INDEX edit_target ON edit(target_id, created_at DESC)")
 
@@ -203,7 +208,7 @@ enum Schema {
                 target_id TEXT PRIMARY KEY NOT NULL,
                 event_id  TEXT NOT NULL,
                 payload   TEXT NOT NULL
-            ) WITHOUT ROWID
+            )
             """)
     }
 

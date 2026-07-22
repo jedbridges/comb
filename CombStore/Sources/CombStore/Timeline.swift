@@ -94,6 +94,19 @@ public extension EventStore {
         before cursor: TimelineCursor? = nil,
         limit: Int = 50
     ) throws -> [TimelineRow] {
+        try reader.read { db in
+            try Self.fetchTimeline(db, channel: channel, before: cursor, limit: limit)
+        }
+    }
+
+    /// The query itself, over an open database so `ValueObservation` can track
+    /// the tables it touches.
+    static func fetchTimeline(
+        _ db: Database,
+        channel: String,
+        before cursor: TimelineCursor?,
+        limit: Int
+    ) throws -> [TimelineRow] {
         // Columns are qualified per branch because the joined `profile` table
         // also has a `created_at`, and the two branches key on different id
         // columns. Descending id in the tiebreak so the comparison matches
@@ -144,35 +157,33 @@ public extension EventStore {
             LIMIT :limit
             """
 
-        return try reader.read { db in
-            let rows = try Row.fetchAll(db, sql: sql, arguments: [
-                "channel": channel,
-                "kind": EventKind.groupChatMessage.rawValue,
-                "hasCursor": cursor == nil ? 0 : 1,
-                "ts": cursor?.createdAt ?? 0,
-                "id": cursor?.id ?? "",
-                "limit": limit,
-            ])
+        let rows = try Row.fetchAll(db, sql: sql, arguments: [
+            "channel": channel,
+            "kind": EventKind.groupChatMessage.rawValue,
+            "hasCursor": cursor == nil ? 0 : 1,
+            "ts": cursor?.createdAt ?? 0,
+            "id": cursor?.id ?? "",
+            "limit": limit,
+        ])
 
-            return rows.map { row in
-                let edited: String? = row["edited"]
-                let tagsJSON: String = row["tags"]
-                let tags = (try? JSONDecoder().decode([[String]].self, from: Data(tagsJSON.utf8))) ?? []
+        return rows.map { row in
+            let edited: String? = row["edited"]
+            let tagsJSON: String = row["tags"]
+            let tags = (try? JSONDecoder().decode([[String]].self, from: Data(tagsJSON.utf8))) ?? []
 
-                return TimelineRow(
-                    id: row["id"],
-                    pubkey: row["pubkey"],
-                    createdAt: row["created_at"],
-                    content: edited ?? row["content"],
-                    isEdited: edited != nil,
-                    isDeleted: row["deleted"] ?? false,
-                    delivery: Delivery(state: row["state"], lastError: row["last_error"]),
-                    authorName: row["display_name"],
-                    authorPicture: row["picture"],
-                    replyTo: Self.replyTarget(in: tags),
-                    richContent: row["rich"]
-                )
-            }
+            return TimelineRow(
+                id: row["id"],
+                pubkey: row["pubkey"],
+                createdAt: row["created_at"],
+                content: edited ?? row["content"],
+                isEdited: edited != nil,
+                isDeleted: row["deleted"] ?? false,
+                delivery: Delivery(state: row["state"], lastError: row["last_error"]),
+                authorName: row["display_name"],
+                authorPicture: row["picture"],
+                replyTo: Self.replyTarget(in: tags),
+                richContent: row["rich"]
+            )
         }
     }
 
@@ -181,6 +192,14 @@ public extension EventStore {
     /// Aggregated in SQL and fetched for a whole page at once. Counting in Swift
     /// per row would be an N+1 query against the timeline.
     nonisolated func reactions(
+        for eventIDs: [String],
+        me: String?
+    ) throws -> [String: [ReactionSummary]] {
+        try reader.read { db in try Self.fetchReactions(db, for: eventIDs, me: me) }
+    }
+
+    static func fetchReactions(
+        _ db: Database,
         for eventIDs: [String],
         me: String?
     ) throws -> [String: [ReactionSummary]] {
@@ -196,26 +215,24 @@ public extension EventStore {
             ORDER BY n DESC, emoji ASC
             """
 
-        return try reader.read { db in
-            let rows = try Row.fetchAll(
-                db,
-                sql: sql,
-                arguments: StatementArguments([me ?? ""] + eventIDs)
-            )
+        let rows = try Row.fetchAll(
+            db,
+            sql: sql,
+            arguments: StatementArguments([me ?? ""] + eventIDs)
+        )
 
-            var out: [String: [ReactionSummary]] = [:]
-            for row in rows {
-                let target: String = row["target_id"]
-                out[target, default: []].append(
-                    ReactionSummary(
-                        emoji: row["emoji"],
-                        count: row["n"],
-                        includesMe: row["mine"] ?? false
-                    )
+        var out: [String: [ReactionSummary]] = [:]
+        for row in rows {
+            let target: String = row["target_id"]
+            out[target, default: []].append(
+                ReactionSummary(
+                    emoji: row["emoji"],
+                    count: row["n"],
+                    includesMe: row["mine"] ?? false
                 )
-            }
-            return out
+            )
         }
+        return out
     }
 
     /// NIP-10 reply target: an explicit `reply` marker, else `root`.
