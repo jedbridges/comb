@@ -16,26 +16,6 @@ struct GlassCard<Content: View>: View {
     }
 }
 
-/// An eyebrow-labelled form control.
-struct FormField<Control: View>: View {
-    let label: String
-    @ViewBuilder let control: () -> Control
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: Space.xxs) {
-            Text(label.uppercased())
-                .font(Typography.eyebrow)
-                .kerning(Kerning.eyebrow)
-                .foregroundStyle(Palette.subtext)
-            control()
-                .foregroundStyle(Palette.text)
-                .padding(.vertical, Space.xs)
-                .padding(.horizontal, Space.xs)
-                .background(Palette.surface.opacity(0.4), in: .rect(cornerRadius: Radii.control))
-        }
-    }
-}
-
 /// The screen's one most important action: chartreuse on ink, full width.
 /// There is at most one of these per screen, which is what makes it work.
 struct PrimaryButton: View {

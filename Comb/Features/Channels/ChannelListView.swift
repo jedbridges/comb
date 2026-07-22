@@ -7,6 +7,7 @@ struct ChannelListView: View {
     let onDisconnect: () -> Void
 
     @State private var model: ChannelListModel
+    @State private var isShowingSettings = false
     #if DEBUG
     @State private var autoOpened: ChannelSummary?
     #endif
@@ -31,16 +32,28 @@ struct ChannelListView: View {
         .navigationBarTitleDisplayMode(.large)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                Button("Sign out", action: onDisconnect)
-                    .font(Typography.label)
-                    .foregroundStyle(Palette.subtext)
+                Button {
+                    isShowingSettings = true
+                } label: {
+                    Image(systemName: "gearshape")
+                        .font(Typography.actionSecondary)
+                        .foregroundStyle(Palette.subtext)
+                }
             }
+        }
+        .sheet(isPresented: $isShowingSettings) {
+            SettingsView(session: session, onSignOut: onDisconnect)
         }
         .navigationDestination(for: ChannelSummary.self) { channel in
             ChannelTimelineView(session: session, channel: channel)
         }
         .task { await model.activate() }
         #if DEBUG
+        .onAppear {
+            if ProcessInfo.processInfo.arguments.contains("--open-settings") {
+                isShowingSettings = true
+            }
+        }
         .onChange(of: model.channels) { _, channels in
             if AppModel.LaunchFlags.opensFirstChannel, autoOpened == nil, let first = channels.first {
                 autoOpened = first

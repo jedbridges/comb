@@ -17,62 +17,65 @@ struct RestoreView: View {
     private enum Field { case url, key }
 
     var body: some View {
-        Backdrop {
-            ScrollView {
-                GlassCard {
-                    VStack(alignment: .leading, spacing: Space.md) {
-                        FormField(label: "Community relay") {
-                            TextField("wss://…", text: $model.relayURL)
-                                .font(Typography.mono)
-                                .textInputAutocapitalization(.never)
-                                .autocorrectionDisabled()
-                                .keyboardType(.URL)
-                                .focused($focus, equals: .url)
-                        }
+        Form {
+            Section("Community relay") {
+                TextField("wss://…", text: $model.relayURL)
+                    .font(Typography.mono)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .keyboardType(.URL)
+                    .focused($focus, equals: .url)
+            }
 
-                        FormField(label: "Recovery code") {
-                            SecureField("nsec1… or 64 hex characters", text: $model.secretKey)
-                                .font(Typography.mono)
-                                .textInputAutocapitalization(.never)
-                                .autocorrectionDisabled()
-                                .focused($focus, equals: .key)
-                        }
+            Section {
+                SecureField("nsec1… or 64 hex characters", text: $model.secretKey)
+                    .font(Typography.mono)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .focused($focus, equals: .key)
+            } header: {
+                Text("Recovery code")
+            } footer: {
+                Text("Stored in this iPhone's Keychain, on this device only. Sent nowhere.")
+            }
 
-                        FootnoteText(text: "Stored in this iPhone's Keychain, on this device only. Sent nowhere.")
+            if let failure = model.failure {
+                Section {
+                    Label(failure, systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(Palette.danger)
+                }
+            }
 
-                        PrimaryButton(
-                            title: model.isRestoring ? "Restoring…" : "Restore",
-                            isDisabled: model.secretKey.isEmpty || model.isRestoring
-                        ) {
-                            focus = nil
-                            Task {
-                                if let session = await model.restore() {
-                                    onRestored(session)
-                                }
-                            }
+            #if DEBUG
+            Section {
+                Button("Preview with sample data") {
+                    Task {
+                        if let session = await model.demo() {
+                            onRestored(session)
                         }
-
-                        if let failure = model.failure {
-                            InlineNotice(kind: .failure, text: failure)
-                        }
-
-                        #if DEBUG
-                        Button("Preview with sample data") {
-                            Task {
-                                if let session = await model.demo() {
-                                    onRestored(session)
-                                }
-                            }
-                        }
-                        .font(Typography.label)
-                        .foregroundStyle(Palette.subtext)
-                        .frame(maxWidth: .infinity)
-                        #endif
                     }
                 }
-                .padding(Space.lg)
+                .foregroundStyle(Palette.subtext)
             }
-            .scrollDismissesKeyboard(.interactively)
+            #endif
+        }
+        .scrollContentBackground(.hidden)
+        .background(Palette.backgroundGradient.ignoresSafeArea())
+        .scrollDismissesKeyboard(.interactively)
+        .safeAreaInset(edge: .bottom) {
+            PrimaryButton(
+                title: model.isRestoring ? "Restoring…" : "Restore",
+                isDisabled: model.secretKey.isEmpty || model.isRestoring
+            ) {
+                focus = nil
+                Task {
+                    if let session = await model.restore() {
+                        onRestored(session)
+                    }
+                }
+            }
+            .padding(.horizontal, Space.lg)
+            .padding(.bottom, Space.xs)
         }
         .navigationTitle("Restore")
         .navigationBarTitleDisplayMode(.inline)

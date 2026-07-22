@@ -4,9 +4,10 @@ import SwiftUI
 
 /// The join flow: paste an invite, say what people should call you, tap once.
 ///
-/// Two screens' worth of work behind one button: parse, mint or reuse a key,
-/// claim the invite, persist custody, connect, publish the profile. The user
-/// sees none of those words.
+/// Built from a system Form so the inputs are iOS's own, not hand-drawn
+/// imitations. The brand shows up in the backdrop and the one chartreuse
+/// button; the rows belong to the OS, which is what keeps them feeling native
+/// today and inheriting whatever iOS looks like next year.
 struct JoinView: View {
     let prefilledInvite: String?
     let onJoined: (CommunitySession) -> Void
@@ -17,56 +18,59 @@ struct JoinView: View {
     private enum Field { case invite, name }
 
     var body: some View {
-        Backdrop {
-            ScrollView {
-                GlassCard {
-                    VStack(alignment: .leading, spacing: Space.md) {
-                        FormField(label: "Invite link") {
-                            TextField("Paste your invite", text: $model.inviteText, axis: .vertical)
-                                .lineLimit(1...3)
-                                .font(Typography.mono)
-                                .textInputAutocapitalization(.never)
-                                .autocorrectionDisabled()
-                                .focused($focus, equals: .invite)
-                                .onChange(of: model.inviteText) { _, _ in model.parseInvite() }
-                        }
+        Form {
+            Section {
+                TextField("Paste your invite", text: $model.inviteText, axis: .vertical)
+                    .lineLimit(1...3)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .focused($focus, equals: .invite)
+                    .onChange(of: model.inviteText) { _, _ in model.parseInvite() }
+            } header: {
+                Text("Invite link")
+            } footer: {
+                if let host = model.parsedHost {
+                    Label(host, systemImage: "checkmark.seal")
+                        .foregroundStyle(Palette.success)
+                } else if !model.inviteText.isEmpty {
+                    Text("That does not look like an invite link yet.")
+                }
+            }
 
-                        if let host = model.parsedHost {
-                            InlineNotice(kind: .success, text: host)
-                                .arrival(true)
-                        } else if !model.inviteText.isEmpty {
-                            InlineNotice(kind: .info, text: "That does not look like an invite link yet")
-                        }
+            Section {
+                TextField("Your name", text: $model.displayName)
+                    .textContentType(.nickname)
+                    .focused($focus, equals: .name)
+            } header: {
+                Text("What should people call you?")
+            } footer: {
+                Text("Comb keeps your account on this iPhone.")
+            }
 
-                        FormField(label: "What should people call you?") {
-                            TextField("Your name", text: $model.displayName)
-                                .font(Typography.body)
-                                .textContentType(.nickname)
-                                .focused($focus, equals: .name)
-                        }
-
-                        FootnoteText(text: "Comb keeps your account on this iPhone.")
-
-                        PrimaryButton(
-                            title: model.isJoining ? "Joining…" : model.joinLabel,
-                            isDisabled: !model.canJoin
-                        ) {
-                            focus = nil
-                            Task {
-                                if let session = await model.join() {
-                                    onJoined(session)
-                                }
-                            }
-                        }
-
-                        if let failure = model.failure {
-                            InlineNotice(kind: .failure, text: failure)
-                        }
+            if let failure = model.failure {
+                Section {
+                    Label(failure, systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(Palette.danger)
+                }
+            }
+        }
+        .scrollContentBackground(.hidden)
+        .background(Palette.backgroundGradient.ignoresSafeArea())
+        .scrollDismissesKeyboard(.interactively)
+        .safeAreaInset(edge: .bottom) {
+            PrimaryButton(
+                title: model.isJoining ? "Joining…" : model.joinLabel,
+                isDisabled: !model.canJoin
+            ) {
+                focus = nil
+                Task {
+                    if let session = await model.join() {
+                        onJoined(session)
                     }
                 }
-                .padding(Space.lg)
             }
-            .scrollDismissesKeyboard(.interactively)
+            .padding(.horizontal, Space.lg)
+            .padding(.bottom, Space.xs)
         }
         .navigationTitle("Join")
         .navigationBarTitleDisplayMode(.inline)

@@ -24,6 +24,18 @@ Apache 2.0 withholds trademark rights, and Comb's honeycomb mark is its own.
 
 ## Rules
 
+**Native first, always.** System components are the default: `Form`, `List`,
+`Section`, `TextField`, standard navigation, context menus, the `.glass`
+button styles. Custom chrome exists only where the product IS the chrome: the
+message timeline, the compose bar, the mark. If Apple ships a control that
+does the job, the system version wins over a hand-drawn one. This is what
+makes Comb read as a real iOS app, it is where accessibility comes from, and
+it is the future-proofing: when iOS 27 lands, apps built from system
+components and semantic styles inherit the new design language by rebuilding
+against the new SDK, while hand-drawn chrome stays frozen in the old one.
+Hand-built input boxes are specifically forbidden; that mistake has already
+been made and removed once.
+
 **Type scales with the user.** Tokens map to Apple's semantic text styles, so
 Dynamic Type works everywhere by construction. `Typography.body` is 16pt at
 the default setting, Buzz's chat base size, and grows when the user asks.
