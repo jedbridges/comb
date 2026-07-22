@@ -88,7 +88,7 @@ public actor EventStore {
                 // The id is a content address, so a second copy of an event is
                 // by definition identical and can be ignored outright. This is
                 // what makes reconnect overlap and echoed sends free.
-                let changes = try db.execute(
+                try db.execute(
                     sql: """
                         INSERT INTO event (id, pubkey, created_at, kind, content, tags, sig, h, received_at)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -106,8 +106,9 @@ public actor EventStore {
                         receivedAt,
                     ]
                 )
-                _ = changes
 
+                // ON CONFLICT DO NOTHING means zero changes is the signal that
+                // this event was already in the log.
                 guard db.changesCount > 0 else {
                     result.duplicates.append(event.id)
                     continue

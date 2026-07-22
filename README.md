@@ -40,6 +40,8 @@ over the original id.
 ```
 CombCore/          Swift package: protocol, crypto, wire format. Foundation only,
                    testable from the command line with `swift test`.
+CombStore/         Swift package: the append-only event log, its projections,
+                   and the ingest choke point where verification happens.
 Comb/              The iOS app target. SwiftUI only.
 project.yml        XcodeGen source of truth. Comb.xcodeproj is generated and
                    is not checked in.
@@ -55,7 +57,8 @@ Early. The protocol core is implemented and tested. Nothing is shippable yet.
 - [x] Filters including dynamic tag filters and p-gated kind detection
 - [x] Client and relay wire messages, NIP-42 auth events
 - [x] NIP-98 HTTP auth, signer abstraction, project and CI scaffolding
-- [ ] Persistence: append-only event log with rebuildable projections
+- [x] Append-only event log, verified ingest, rebuildable projections
+- [ ] Timeline queries with stable pagination, and the send outbox
 - [ ] Relay connection, subscriptions, reconnection
 - [ ] Channel list, message history, sending
 - [ ] Onboarding, community discovery
