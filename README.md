@@ -1,7 +1,12 @@
+<img src="docs/comb-icon.png" alt="" width="96" align="left" hspace="12" vspace="4">
+
 # Comb
 
 A native iOS client for [Buzz](https://github.com/block/buzz) relays, and for
 plain Nostr NIP-29 relays generally.
+
+<br clear="left">
+
 
 Comb is an independent client. It is not affiliated with Block, Inc.
 

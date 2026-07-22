@@ -51,33 +51,57 @@ struct FoundationCheckView: View {
     }
 }
 
-/// Comb's mark: a honeycomb cell. Derived from the hexagonal geometry the name
-/// refers to, deliberately not Buzz's bee, which is not licensed for reuse.
-private struct Mark: View {
+/// Comb's mark: nested honeycomb cells, matching the app icon.
+///
+/// Deliberately not Buzz's bee, which Apache 2.0 section 6 does not license for
+/// reuse. Drawn rather than loaded from the asset catalog so it stays crisp at
+/// any size and can be tinted per context.
+struct Mark: View {
+    /// Ring radii as a fraction of the outer cell, and the color each is filled
+    /// with. Taken from the icon artwork.
+    private static let rings: [(scale: CGFloat, isInk: Bool)] = [
+        (1.00, true),
+        (0.45, false),
+        (0.19, true),
+    ]
+
     var body: some View {
         Canvas { context, size in
             let center = CGPoint(x: size.width / 2, y: size.height / 2)
-            let radius = min(size.width, size.height) / 2
+            let outer = min(size.width, size.height) / 2
 
-            for ring in [1.0, 0.58] {
-                var path = Path()
-                for corner in 0..<6 {
-                    // Flat-top hexagon: start at 30 degrees so two edges are level.
-                    let angle = Double(corner) * .pi / 3 + .pi / 6
-                    let point = CGPoint(
-                        x: center.x + cos(angle) * radius * ring,
-                        y: center.y + sin(angle) * radius * ring
-                    )
-                    corner == 0 ? path.move(to: point) : path.addLine(to: point)
-                }
-                path.closeSubpath()
+            for ring in Self.rings {
+                let radius = outer * ring.scale
+                let color = ring.isInk ? Palette.ink : Palette.chartreuse
+                let path = hexagon(center: center, radius: radius * 0.9)
+
+                context.fill(path, with: .color(color))
+                // Stroking the same path with a round join rounds the corners
+                // and restores the width lost above, which is cheaper than
+                // building an arc-jointed path by hand.
                 context.stroke(
                     path,
-                    with: .color(Palette.ink),
-                    style: StrokeStyle(lineWidth: radius * 0.16, lineJoin: .round)
+                    with: .color(color),
+                    style: StrokeStyle(lineWidth: radius * 0.22, lineJoin: .round)
                 )
             }
         }
+        .accessibilityLabel("Comb")
+    }
+
+    /// A flat-top hexagon: vertices at left and right, level top and bottom edges.
+    private func hexagon(center: CGPoint, radius: CGFloat) -> Path {
+        var path = Path()
+        for corner in 0..<6 {
+            let angle = Double(corner) * .pi / 3
+            let point = CGPoint(
+                x: center.x + cos(angle) * radius,
+                y: center.y + sin(angle) * radius
+            )
+            corner == 0 ? path.move(to: point) : path.addLine(to: point)
+        }
+        path.closeSubpath()
+        return path
     }
 }
 
