@@ -20,6 +20,7 @@ struct BrowseView: View {
     @State private var hasLoaded = false
     @State private var selectedInvite: String?
     @State private var order: Order = .newest
+    @State private var query = ""
 
     /// Every sort the data can truthfully support. Member counts and activity
     /// are deliberately hidden by the relays, so recency of listing, name, and
@@ -32,21 +33,33 @@ struct BrowseView: View {
         var id: String { rawValue }
     }
 
+    /// Entries matching the search, across every field a person might
+    /// remember: name, what it is about, and its tags.
+    private var matching: [CommunityIndex.Entry] {
+        let needle = query.trimmingCharacters(in: .whitespaces)
+        guard !needle.isEmpty else { return entries }
+        return entries.filter { entry in
+            entry.name.localizedCaseInsensitiveContains(needle)
+                || entry.description?.localizedCaseInsensitiveContains(needle) == true
+                || entry.tags.contains { $0.localizedCaseInsensitiveContains(needle) }
+        }
+    }
+
     private var sorted: [CommunityIndex.Entry] {
         switch order {
         case .newest:
             // Descending by listed date, undated entries last, ties by name.
-            entries.sorted {
+            matching.sorted {
                 ($0.listedAt ?? "") == ($1.listedAt ?? "")
                     ? $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
                     : ($0.listedAt ?? "") > ($1.listedAt ?? "")
             }
         case .name:
-            entries.sorted {
+            matching.sorted {
                 $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
             }
         case .joinable:
-            entries.sorted {
+            matching.sorted {
                 $0.isJoinableNow == $1.isJoinableNow
                     ? $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
                     : $0.isJoinableNow
@@ -59,6 +72,8 @@ struct BrowseView: View {
             Group {
                 if entries.isEmpty && hasLoaded {
                     emptyState
+                } else if sorted.isEmpty {
+                    ContentUnavailableView.search(text: query)
                 } else {
                     list
                 }
@@ -66,6 +81,7 @@ struct BrowseView: View {
         }
         .navigationTitle("Communities")
         .navigationBarTitleDisplayMode(.inline)
+        .searchable(text: $query, prompt: "Search communities")
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 sortMenu
@@ -133,10 +149,28 @@ struct BrowseView: View {
                         .lineLimit(2)
                 }
                 if !entry.tags.isEmpty {
-                    Text(entry.tags.joined(separator: " · "))
-                        .font(Typography.caption)
-                        .foregroundStyle(Palette.subtext.opacity(0.8))
-                        .luminousChrome()
+                    HStack(spacing: Space.xxs) {
+                        ForEach(entry.tags, id: \.self) { tag in
+                            Text(tag)
+                                .font(Typography.caption)
+                                .foregroundStyle(Palette.subtext)
+                                .padding(.horizontal, Space.xs)
+                                .padding(.vertical, Space.hairline)
+                                .background(
+                                    Color.white.opacity(0.07),
+                                    in: .capsule
+                                )
+                                .overlay(
+                                    Capsule()
+                                        .strokeBorder(Color.white.opacity(0.10), lineWidth: 0.5)
+                                )
+                                .luminousChrome()
+                        }
+                    }
+                    .padding(.top, Space.xxs)
+                    // One element: VoiceOver reads "bitcoin, lightning" rather
+                    // than walking each pill.
+                    .accessibilityElement(children: .combine)
                 }
             }
 
@@ -167,7 +201,10 @@ struct BrowseView: View {
             Text("Run a community?")
                 .font(Typography.bodyEmphasis)
                 .foregroundStyle(Palette.text)
-            Text("Add it to this list so people can find it. Listing is a small change to a public file, and takes a few minutes.")
+            // Says exactly what the button does and where it goes: out to
+            // GitHub, add your name and address, submit. No mystery about
+            // leaving the app or what happens after the tap.
+            Text("Get it listed here. The button opens this list on GitHub: add your community's name and address, then submit the change.")
                 .font(Typography.secondary)
                 .foregroundStyle(Palette.subtext)
                 .multilineTextAlignment(.center)

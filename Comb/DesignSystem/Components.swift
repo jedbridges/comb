@@ -25,6 +25,8 @@ struct PrimaryButton: View {
     var isDisabled = false
     let action: () -> Void
 
+    private var isInactive: Bool { isBusy || isDisabled }
+
     var body: some View {
         Button(action: action) {
             Text(title)
@@ -34,8 +36,11 @@ struct PrimaryButton: View {
         }
         .buttonStyle(.glassProminent)
         .tint(Palette.chartreuse)
-        .foregroundStyle(Palette.ink)
-        .disabled(isBusy || isDisabled)
+        // Ink only earns its place on the chartreuse fill. Disabled, the style
+        // drops the fill to dim glass, and ink on dim glass is black on dark:
+        // the label has to switch with the background it sits on.
+        .foregroundStyle(isInactive ? Palette.subtext : Palette.ink)
+        .disabled(isInactive)
     }
 }
 

@@ -66,18 +66,18 @@ struct WelcomeView: View {
                             path.append(.browse)
                         }
 
-                        // Last, but legible. The original plan had this near
-                        // invisible so a first-timer's eye slid past it; in
-                        // practice that made returning users hunt for the only
-                        // door that leads anywhere for them. Still third in the
-                        // hierarchy, by weight and position rather than by
-                        // being hard to read.
-                        Button("Already have an account? Restore it") {
+                        // Last, but legible. The question reads as prose in
+                        // white; only the action itself carries the accent, so
+                        // the tappable part is the part that glows.
+                        Button {
                             path.append(.restore)
+                        } label: {
+                            // Interpolated rather than `Text + Text`, which is
+                            // deprecated on iOS 26.
+                            Text("Have an account? \(Text("Sign in with your key").foregroundStyle(Palette.chartreuse))")
+                                .foregroundStyle(Palette.text)
                         }
                         .font(Typography.actionSecondary)
-                        .foregroundStyle(Palette.text)
-                        .luminousChrome()
                         .padding(.top, Space.sm)
                         .frame(minHeight: Sizing.hitTarget)
                     }
