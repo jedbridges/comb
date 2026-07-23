@@ -554,6 +554,9 @@ private struct UnreadBadge: View {
     var body: some View {
         Text(count > 99 ? "99+" : "\(count)")
             .font(Typography.count)
+            // Rolls as messages land, so a badge climbing while you watch
+            // reads as activity rather than a redraw.
+            .contentTransition(.numericText())
             .foregroundStyle(Palette.ink)
             .padding(.horizontal, Space.xs)
             .padding(.vertical, Space.hairline)

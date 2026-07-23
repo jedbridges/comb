@@ -169,8 +169,16 @@ struct ChannelTimelineView: View {
             .overlay(alignment: .bottomTrailing) {
                 if isAwayFromBottom {
                     jumpToBottom(proxy)
+                        // Rises into place from where it points. Scale from
+                        // slightly small so it reads as arriving rather than
+                        // being switched on.
+                        .transition(
+                            .opacity.combined(with: .scale(scale: 0.9, anchor: .bottomTrailing))
+                            .combined(with: .offset(y: Space.xs))
+                        )
                 }
             }
+            .animation(Motion.fast, value: isAwayFromBottom)
             // A deep link opened this channel: land on the message once the
             // rows are loaded. Runs on first populate and, if the message was
             // not in the first page, again as more history arrives.
@@ -531,10 +539,19 @@ struct MessageRow: View {
                         onPickEmoji: onPickEmoji,
                         onShowReactors: onShowReactors
                     )
+                    // The first reaction on a message adds a whole row beneath
+                    // it. Growing from the leading edge, where the chips are,
+                    // keeps that from reading as the message twitching.
+                    .transition(
+                        .opacity.combined(with: .scale(scale: 0.92, anchor: .topLeading))
+                    )
                 }
 
                 if entry.row.hasThread, let onOpenThread {
                     ThreadAffordance(count: entry.row.replyCount, action: onOpenThread)
+                        .transition(
+                            .opacity.combined(with: .scale(scale: 0.92, anchor: .topLeading))
+                        )
                 }
             }
 
@@ -543,6 +560,11 @@ struct MessageRow: View {
         // A new speaker gets real air above them; a continuation line stays
         // close to what it continues.
         .padding(.top, entry.showsHeader ? Space.sm : 0)
+        // Scoped to this row's own furniture: reactions and the thread chip
+        // appearing or leaving. Deliberately not on the row's insertion, which
+        // in a bottom-anchored scroll view fights the anchor.
+        .animation(Motion.fast, value: reactions)
+        .animation(Motion.fast, value: entry.row.replyCount)
         // No row-level treatment for being mentioned. A wash and a leading
         // edge were both tried: the wash read as an unexplained tint on a
         // message nobody could see a reason for, and the edge collided with
@@ -745,6 +767,7 @@ private struct ThreadAffordance: View {
             HStack(spacing: Space.xxs) {
                 Text(count == 1 ? "1 reply" : "\(count) replies")
                     .font(Typography.label)
+                    .contentTransition(.numericText())
                 Image(systemName: "chevron.right")
                     .font(Typography.icon)
                     .foregroundStyle(Palette.subtext)
@@ -876,6 +899,9 @@ private struct ReactionChip: View {
                 .lineLimit(1)
             Text("\(reaction.count)")
                 .font(Typography.count)
+                // The number rolls rather than swaps when someone joins or
+                // leaves the pile. This is the moment the count is looked at.
+                .contentTransition(.numericText())
                 // Ink on the solid fill, subtext on the quiet one. Dark ink on
                 // a 45% chartreuse wash over a dark gradient was legible on
                 // paper and invisible on screen: the count read as missing
