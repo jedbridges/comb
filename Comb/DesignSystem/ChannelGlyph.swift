@@ -16,6 +16,10 @@ struct ChannelGlyph: View {
             RoundedCombCell(cornerRadius: size * 0.18)
                 .fill(Palette.glyphSurface)
             Image(systemName: ChannelSymbol.forName(name))
+                // Derived from the cell, not the type ramp, and deliberately
+                // so: this symbol has to stay in proportion to the hexagon
+                // around it at every size the caller asks for. A ramp token
+                // would scale independently and break the lockup.
                 .font(.system(size: size * 0.42, weight: .medium))
                 .foregroundStyle(Palette.glyphTint)
         }

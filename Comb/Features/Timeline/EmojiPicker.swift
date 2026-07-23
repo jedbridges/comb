@@ -80,7 +80,7 @@ struct EmojiPicker: View {
                         dismiss()
                     } label: {
                         Text(entry.value)
-                            .font(.system(size: 30))
+                            .font(Typography.emojiLarge)
                             .frame(maxWidth: .infinity, minHeight: Sizing.hitTarget)
                     }
                     .buttonStyle(.plain)

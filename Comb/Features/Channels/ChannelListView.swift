@@ -297,30 +297,54 @@ private struct ChannelRow: View {
         .accessibilityLabel(accessibilityDescription)
     }
 
+    /// Name and trailing metadata, side by side while they fit and stacked
+    /// once they do not.
+    ///
+    /// At accessibility text sizes the side-by-side version collapses badly:
+    /// a channel name truncates to "wel…" while "10 hours ago" takes four
+    /// lines beside it. `ViewThatFits` picks the stacked version instead, so
+    /// the name stays readable and the metadata sits under it.
     private var titleLine: some View {
-        HStack(alignment: .firstTextBaseline, spacing: Space.xs) {
-            Text(channel.name)
-                // Weight is the scanning cue: you should find what is new
-                // without reading a single word.
-                .font(activity == .unread ? Typography.bodyEmphasis : Typography.name)
-                .foregroundStyle(activity == .quiet ? Palette.subtext : Palette.text)
-                .lineLimit(1)
-
-            Spacer(minLength: Space.xs)
-
-            switch activity {
-            case .unread, .settled:
-                if let when = channel.lastActivityDate {
-                    Text(when, format: .relative(presentation: .named))
-                        .font(Typography.caption)
-                        .foregroundStyle(Palette.subtext)
-                        .luminousChrome()
-                }
-            case .quiet:
-                // With no second line, the member count rides up here rather
-                // than costing the row another whole line of height.
-                memberCount
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .firstTextBaseline, spacing: Space.xs) {
+                title
+                Spacer(minLength: Space.xs)
+                trailingMeta
             }
+
+            VStack(alignment: .leading, spacing: Space.xxs) {
+                title
+                trailingMeta
+            }
+        }
+    }
+
+    private var title: some View {
+        Text(channel.name)
+            // Weight is the scanning cue: you should find what is new
+            // without reading a single word.
+            .font(activity == .unread ? Typography.bodyEmphasis : Typography.name)
+            .foregroundStyle(activity == .quiet ? Palette.subtext : Palette.text)
+            .lineLimit(1)
+    }
+
+    @ViewBuilder
+    private var trailingMeta: some View {
+        switch activity {
+        case .unread, .settled:
+            if let when = channel.lastActivityDate {
+                Text(when, format: .relative(presentation: .named))
+                    .font(Typography.caption)
+                    .foregroundStyle(Palette.subtext)
+                    // One line always: a relative date that wraps to four
+                    // lines is worse than one that is simply shorter.
+                    .lineLimit(1)
+                    .luminousChrome()
+            }
+        case .quiet:
+            // With no second line, the member count rides up here rather
+            // than costing the row another whole line of height.
+            memberCount
         }
     }
 
@@ -341,12 +365,19 @@ private struct ChannelRow: View {
         }
     }
 
+    /// Never wraps: a count split across two lines stops being a number.
+    private var memberCountLabel: some View {
+        Label("\(channel.memberCount)", systemImage: "person.2")
+            .font(Typography.count)
+            .labelStyle(.titleAndIcon)
+            .lineLimit(1)
+            .fixedSize()
+    }
+
     @ViewBuilder
     private var memberCount: some View {
         if channel.memberCount > 0 {
-            Label("\(channel.memberCount)", systemImage: "person.2")
-                .font(Typography.count)
-                .labelStyle(.titleAndIcon)
+            memberCountLabel
                 .foregroundStyle(Palette.subtext.opacity(activity == .quiet ? 0.7 : 1))
                 .luminousChrome()
         }

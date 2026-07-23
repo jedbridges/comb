@@ -564,11 +564,11 @@ private struct ThreadAffordance: View {
         Button(action: action) {
             HStack(spacing: Space.xxs) {
                 Image(systemName: "bubble.left.and.bubble.right.fill")
-                    .font(Typography.count)
+                    .font(Typography.icon)
                 Text(count == 1 ? "1 reply" : "\(count) replies")
                     .font(Typography.label)
                 Image(systemName: "chevron.right")
-                    .font(Typography.count)
+                    .font(Typography.icon)
                     .foregroundStyle(Palette.subtext)
             }
             .foregroundStyle(Palette.text)
@@ -632,7 +632,7 @@ struct ReactionBar: View {
             // Two grapheme clusters cover every real emoji including flags and
             // family sequences.
             Text(String(reaction.emoji.prefix(2)))
-                .font(Typography.label)
+                .font(Typography.emoji)
                 .lineLimit(1)
             Text("\(reaction.count)")
                 .font(Typography.count)
@@ -863,7 +863,7 @@ private struct AttachmentTrayView: View {
                 tray.remove(item.id)
             } label: {
                 Image(systemName: "xmark.circle.fill")
-                    .font(.system(size: 18))
+                    .font(Typography.action)
                     .symbolRenderingMode(.palette)
                     .foregroundStyle(.white, .black.opacity(0.6))
             }

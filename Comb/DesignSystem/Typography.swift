@@ -50,12 +50,35 @@ enum Typography {
 
     // MARK: - Code-shaped
 
+    /// The six digits both devices must match during pairing. Large, bold and
+    /// monospaced: this is the one number in the app a person reads aloud to
+    /// compare against another screen, and every digit has to be unmistakable.
+    static let pairingCode = Font.system(.largeTitle, design: .monospaced).weight(.bold)
+
     /// Relay URLs, keys, identifiers.
     static let mono = Font.system(.callout, design: .monospaced)
     static let monoSmall = Font.system(.footnote, design: .monospaced)
 
     /// Numbers that change in place (counts, badges), so digits do not jitter.
     static let count = Font.system(.caption, design: .default).monospacedDigit()
+
+    /// Glyphs riding beside text: chevrons, small symbols. Same size as
+    /// `caption` but without the monospaced digits, which mean nothing on a
+    /// symbol and were only ever inherited by borrowing `count`.
+    static let icon = Font.system(.caption)
+
+    // MARK: - Emoji
+    //
+    // Emoji carry their own optical size: a glyph set at the same point size
+    // as body text reads noticeably smaller, because the character fills less
+    // of its em box than a letter does. These are the only place in the ramp
+    // where a role gets a size for how it looks rather than what it is.
+
+    /// Emoji in a reaction chip, beside its count.
+    static let emoji = Font.system(.body)
+
+    /// Emoji in the picker grid, sized to be tappable and scannable.
+    static let emojiLarge = Font.system(.largeTitle)
 }
 
 /// Letterspacing pairs with the token, not the call site.
