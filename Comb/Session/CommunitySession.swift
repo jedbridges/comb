@@ -113,15 +113,28 @@ actor CommunitySession {
 
     /// Signs, queues, and delivers a message. The queued row appears in the
     /// timeline immediately through observation; delivery updates its state.
-    func send(_ text: String, in channel: String) async {
+    ///
+    /// A reply carries NIP-10 marked tags. Both markers are written even when
+    /// replying straight to a thread's opener, where root and parent are the
+    /// same event: Buzz reads the `reply` marker to decide something is a reply
+    /// at all, so omitting it would post the message flat into the channel.
+    func send(_ text: String, in channel: String, replyingTo reply: ReplyContext? = nil) async {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
+
+        var tags = [["h", channel]]
+        if let reply {
+            tags.append(["e", reply.rootID, "", "root"])
+            tags.append(["e", reply.parentID, "", "reply"])
+            // So the person being answered can be notified.
+            tags.append(["p", reply.authorPubkey])
+        }
 
         do {
             let event = try await signer.sign(
                 kind: .groupChatMessage,
                 content: trimmed,
-                tags: [["h", channel]]
+                tags: tags
             )
             try await store.enqueue(event, channel: channel)
             await deliver(event)
@@ -273,6 +286,32 @@ actor CommunitySession {
                 .inGroup(channel),
         ])
         return try await store.ingest(older).inserted.count
+    }
+}
+
+/// What a reply needs to know about the message it answers.
+struct ReplyContext: Sendable, Equatable {
+    /// The message being answered directly.
+    let parentID: String
+    /// The message that opened the thread. Equal to `parentID` when answering
+    /// the opener itself.
+    let rootID: String
+    /// The author being answered, tagged so they can be notified.
+    let authorPubkey: String
+
+    /// Replying to a message in the channel: it becomes the thread's root.
+    init(startingThreadOn row: TimelineRow) {
+        self.parentID = row.id
+        self.rootID = row.id
+        self.authorPubkey = row.pubkey
+    }
+
+    /// Replying inside an existing thread, keeping the original root so the
+    /// whole thread stays one conversation rather than splintering.
+    init(replyingTo row: TimelineRow, inThreadRootedAt root: String) {
+        self.parentID = row.id
+        self.rootID = root
+        self.authorPubkey = row.pubkey
     }
 }
 

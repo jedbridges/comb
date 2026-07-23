@@ -218,9 +218,15 @@ struct TimelineTests {
 
         _ = try await store.ingest([root, reply])
 
+        // The reply belongs to the thread, not the channel, so the channel keeps
+        // only the opener. See ThreadTests for the full threading behaviour.
         let rows = try store.timeline(channel: "room-1")
-        #expect(rows[0].replyTo == root.id)
-        #expect(rows[1].replyTo == nil)
+        #expect(rows.map(\.content) == ["root"])
+        #expect(!rows[0].isReply)
+
+        let thread = try store.thread(root: root.id)
+        #expect(thread[1].parentID == root.id)
+        #expect(thread[1].rootID == root.id)
     }
 
     // MARK: - Reactions

@@ -145,25 +145,53 @@ public struct NostrEvent: Codable, Hashable, Sendable, Identifiable {
     public var referencedEventIDs: [String] { values(for: "e") }
     public var referencedPubkeys: [String] { values(for: "p") }
 
-    /// The event this one replies to, per NIP-10 marked tags.
+    /// Where this event sits in a thread, per NIP-10 marked tags.
     ///
-    /// Prefers an explicit `reply` marker, falling back to `root` so a direct
-    /// reply to a thread's opening message still threads correctly.
-    public var replyTarget: String? {
-        for tag in tags where tag.first == "e" && tag.count >= 4 {
-            if tag[3] == "reply" { return tag[1] }
-        }
-        for tag in tags where tag.first == "e" && tag.count >= 4 {
-            if tag[3] == "root" { return tag[1] }
-        }
-        return nil
+    /// An explicit `reply` marker is required. A lone `root` tag does **not**
+    /// make an event a reply: Buzz's own threading resolver returns no parent in
+    /// that case (`desktop/src/features/messages/lib/threading.ts`), and a
+    /// falling-back reader would thread messages that Buzz shows flat, so the
+    /// two clients would disagree about the shape of the same conversation.
+    ///
+    /// The last `reply` marker wins, matching the same resolver, so an event
+    /// carrying several is read the way its author's client meant it.
+    public var threadReference: ThreadReference {
+        let eventTags = tags.filter { $0.first == "e" && $0.count >= 2 }
+        guard let replyTag = eventTags.last(where: { $0.count >= 4 && $0[3] == "reply" })
+        else { return ThreadReference(parentID: nil, rootID: nil) }
+
+        let parent = replyTag[1]
+        let root = eventTags.first { $0.count >= 4 && $0[3] == "root" }?[1]
+        // A reply straight to a thread's opener carries no separate root, so the
+        // parent is the root.
+        return ThreadReference(parentID: parent, rootID: root ?? parent)
     }
 
-    /// The thread root per NIP-10, if this event is part of a thread.
-    public var threadRoot: String? {
-        for tag in tags where tag.first == "e" && tag.count >= 4 {
-            if tag[3] == "root" { return tag[1] }
-        }
-        return nil
+    /// A reply its author chose to echo into the channel as well as the thread.
+    /// Buzz marks these `broadcast=1`, and they belong in both places.
+    public var isBroadcastReply: Bool {
+        tags.contains { $0.count >= 2 && $0[0] == "broadcast" && $0[1] == "1" }
     }
+
+    /// Whether this belongs only in a thread, and so must not appear as its own
+    /// message in the channel.
+    public var isThreadReply: Bool {
+        threadReference.parentID != nil && !isBroadcastReply
+    }
+}
+
+/// An event's position in a thread.
+public struct ThreadReference: Sendable, Equatable {
+    /// The message being replied to directly.
+    public let parentID: String?
+    /// The message that opened the thread. Equal to `parentID` for a direct
+    /// reply to the opener.
+    public let rootID: String?
+
+    public init(parentID: String?, rootID: String?) {
+        self.parentID = parentID
+        self.rootID = rootID
+    }
+
+    public var isReply: Bool { parentID != nil }
 }

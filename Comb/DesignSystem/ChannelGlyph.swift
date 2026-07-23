@@ -18,7 +18,13 @@ struct ChannelGlyph: View {
             Image(systemName: ChannelSymbol.forName(name))
                 .font(.system(size: size * 0.42, weight: .medium))
                 .foregroundStyle(Palette.glyphTint)
+                // Burned into the cell rather than sitting on top of it, so the
+                // symbol reads as part of the badge instead of a sticker.
+                .blendMode(.plusDarker)
         }
+        // Contains the blend to the cell: without this the symbol would burn
+        // through to the list surface behind the glyph as well.
+        .compositingGroup()
         .frame(width: size, height: size)
         // The channel's name is right beside it; the glyph is atmosphere.
         .accessibilityHidden(true)

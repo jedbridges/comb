@@ -25,11 +25,43 @@ enum Projector {
             try projectEdit(event, into: db)
         case .buzzRichContent:
             try projectRichContent(event, into: db)
+        case .groupChatMessage:
+            try projectThread(event, into: db)
         default:
-            // Kind 9 and everything else needs no projection; the timeline reads
-            // the log directly.
+            // Everything else needs no projection; the timeline reads the log
+            // directly.
             break
         }
+    }
+
+    // MARK: - Threads
+
+    /// Records a message's place in a thread, when it has one.
+    ///
+    /// Only real replies get a row. That is what lets the channel timeline
+    /// exclude replies with a single `NOT EXISTS` instead of decoding tag JSON
+    /// for every message it renders.
+    private static func projectThread(_ event: NostrEvent, into db: Database) throws {
+        let reference = event.threadReference
+        guard let parent = reference.parentID, let root = reference.rootID else { return }
+
+        try db.execute(
+            sql: """
+                INSERT INTO thread
+                    (event_id, root_id, parent_id, channel_id, pubkey, created_at, broadcast)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(event_id) DO NOTHING
+                """,
+            arguments: [
+                event.id,
+                root,
+                parent,
+                event.groupID,
+                event.pubkey,
+                event.createdAt,
+                event.isBroadcastReply,
+            ]
+        )
     }
 
     // MARK: - Channels

@@ -15,7 +15,7 @@ import GRDB
 enum Schema {
     /// Bump when any projection's shape or meaning changes. On next open, every
     /// projection table is dropped and replayed from `event`.
-    static let projectionVersion = 2
+    static let projectionVersion = 3
 
     static var migrator: DatabaseMigrator {
         var migrator = DatabaseMigrator()
@@ -125,6 +125,15 @@ enum Schema {
             try createProjectionTables(db)
         }
 
+        // A queued reply has to appear in its thread the instant it is sent, and
+        // the thread projection only covers events that reached the log. The
+        // outbox carries its own copy so the pending row can be placed without
+        // parsing the payload JSON in SQL.
+        migrator.registerMigration("v2.outbox.thread") { db in
+            try db.execute(sql: "ALTER TABLE outbox ADD COLUMN root_id TEXT")
+            try db.execute(sql: "ALTER TABLE outbox ADD COLUMN parent_id TEXT")
+        }
+
         return migrator
     }
 
@@ -211,10 +220,29 @@ enum Schema {
                 payload   TEXT NOT NULL
             )
             """)
+
+        // Threading, derived from NIP-10 markers. A row exists only for a real
+        // reply, so the channel timeline can exclude replies with one NOT EXISTS
+        // rather than parsing every event's tag JSON in SQL.
+        //
+        // `broadcast` rows are replies their author also echoed to the channel;
+        // they appear in both places, so the timeline filter keeps them.
+        try db.execute(sql: """
+            CREATE TABLE thread (
+                event_id   TEXT PRIMARY KEY NOT NULL,
+                root_id    TEXT NOT NULL,
+                parent_id  TEXT NOT NULL,
+                channel_id TEXT,
+                pubkey     TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                broadcast  INTEGER NOT NULL DEFAULT 0
+            )
+            """)
+        try db.execute(sql: "CREATE INDEX thread_root ON thread(root_id, created_at, event_id)")
     }
 
     static let projectionTables = [
-        "rich_content", "edit", "deletion", "reaction",
+        "thread", "rich_content", "edit", "deletion", "reaction",
         "profile", "channel_member", "channel",
     ]
 

@@ -32,12 +32,18 @@ public extension EventStore {
     /// change state rather than being replaced, which is what lets SwiftUI
     /// animate it instead of reinserting it.
     func enqueue(_ event: NostrEvent, channel: String) throws {
+        // Thread position is denormalized out of the event's tags so a queued
+        // reply lands in its thread immediately, rather than showing up in the
+        // channel and hopping into the thread once the relay answers.
+        let reference = event.threadReference
+
         try writer.write { db in
             try db.execute(
                 sql: """
                     INSERT INTO outbox
-                        (event_id, channel_id, pubkey, content, created_at, payload, state, attempts)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, 0)
+                        (event_id, channel_id, pubkey, content, created_at, payload,
+                         state, attempts, root_id, parent_id)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
                     ON CONFLICT(event_id) DO NOTHING
                     """,
                 arguments: [
@@ -48,6 +54,8 @@ public extension EventStore {
                     event.createdAt,
                     String(decoding: try JSONEncoder().encode(event), as: UTF8.self),
                     OutboxState.pending.rawValue,
+                    reference.rootID,
+                    reference.parentID,
                 ]
             )
         }

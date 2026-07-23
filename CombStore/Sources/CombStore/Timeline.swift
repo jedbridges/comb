@@ -4,7 +4,7 @@ import GRDB
 
 /// One message as the UI needs it: content already resolved through edits,
 /// deletion and delivery state applied, author details joined in.
-public struct TimelineRow: Sendable, Equatable, Identifiable {
+public struct TimelineRow: Sendable, Hashable, Identifiable {
     public let id: String
     public let pubkey: String
     public let createdAt: Int64
@@ -18,10 +18,25 @@ public struct TimelineRow: Sendable, Equatable, Identifiable {
     /// The author's Lightning address (lud16), when their profile carries one.
     /// Present is what makes zapping this message possible.
     public let authorLightningAddress: String?
-    public let replyTo: String?
+    /// The message this one replies to directly, when it is a reply.
+    public let parentID: String?
+    /// The message that opened this reply's thread.
+    public let rootID: String?
+    /// How many replies hang off this message, when it opens a thread.
+    public let replyCount: Int
+    /// When the newest reply landed, for "last reply 5m ago".
+    public let lastReplyAt: Int64?
     /// Buzz kind 40002 payload, absent on relays that do not implement it. The
     /// renderer falls back to `content`.
     public let richContent: String?
+
+    /// Whether this message opens a thread worth offering a way into.
+    public var hasThread: Bool { replyCount > 0 }
+    public var isReply: Bool { parentID != nil }
+
+    public var lastReplyDate: Date? {
+        lastReplyAt.map { Date(timeIntervalSince1970: TimeInterval($0)) }
+    }
 
     public var date: Date { Date(timeIntervalSince1970: TimeInterval(createdAt)) }
 
@@ -37,7 +52,7 @@ public struct TimelineRow: Sendable, Equatable, Identifiable {
 }
 
 /// Where a message is in its journey to the relay.
-public enum Delivery: Sendable, Equatable {
+public enum Delivery: Sendable, Hashable {
     /// Written to the log, which means the relay accepted it.
     case sent
     /// Signed and queued, waiting on the relay's OK.
@@ -122,40 +137,28 @@ public extension EventStore {
             """
         }
 
+        // Thread replies are excluded here and shown in their thread instead.
+        // Without this every reply renders as its own top-level message and a
+        // threaded conversation reads as a flat pile, which is exactly what a
+        // thread is meant to prevent. Broadcast replies keep their `thread` row
+        // but are deliberately let through: their author echoed them here.
         let sql = """
-            SELECT id, pubkey, created_at, content, edited, deleted, rich,
-                   display_name, picture, lud16, tags, state, last_error
+            SELECT \(Self.timelineColumns)
             FROM (
-                SELECT e.id                AS id,
-                       e.pubkey            AS pubkey,
-                       e.created_at        AS created_at,
-                       e.content           AS content,
-                       (SELECT ed.content FROM edit ed
-                         WHERE ed.target_id = e.id
-                         ORDER BY ed.created_at DESC, ed.event_id DESC
-                         LIMIT 1)          AS edited,
-                       EXISTS(SELECT 1 FROM deletion d WHERE d.target_id = e.id) AS deleted,
-                       rc.payload          AS rich,
-                       p.display_name      AS display_name,
-                       p.picture           AS picture,
-                       p.lud16             AS lud16,
-                       e.tags              AS tags,
-                       'sent'              AS state,
-                       NULL                AS last_error
-                FROM event e
-                LEFT JOIN rich_content rc ON rc.target_id = e.id
-                LEFT JOIN profile p ON p.pubkey = e.pubkey
-                WHERE e.h = :channel AND e.kind = :kind AND \(page("e.created_at", "e.id"))
+                \(Self.eventBranch(where: """
+                    e.h = :channel AND e.kind = :kind AND \(page("e.created_at", "e.id"))
+                      AND NOT EXISTS (
+                            SELECT 1 FROM thread tx
+                            WHERE tx.event_id = e.id AND tx.broadcast = 0
+                          )
+                    """))
 
                 UNION ALL
 
-                SELECT o.event_id, o.pubkey, o.created_at, o.content,
-                       NULL, 0, NULL,
-                       p.display_name, p.picture, p.lud16,
-                       '[]', o.state, o.last_error
-                FROM outbox o
-                LEFT JOIN profile p ON p.pubkey = o.pubkey
-                WHERE o.channel_id = :channel AND \(page("o.created_at", "o.event_id"))
+                \(Self.outboxBranch(where: """
+                    o.channel_id = :channel AND o.parent_id IS NULL
+                      AND \(page("o.created_at", "o.event_id"))
+                    """))
             )
             ORDER BY created_at DESC, id DESC
             LIMIT :limit
@@ -170,26 +173,128 @@ public extension EventStore {
             "limit": limit,
         ])
 
-        return rows.map { row in
-            let edited: String? = row["edited"]
-            let tagsJSON: String = row["tags"]
-            let tags = (try? JSONDecoder().decode([[String]].self, from: Data(tagsJSON.utf8))) ?? []
+        return rows.map(Self.makeRow)
+    }
 
-            return TimelineRow(
-                id: row["id"],
-                pubkey: row["pubkey"],
-                createdAt: row["created_at"],
-                content: edited ?? row["content"],
-                isEdited: edited != nil,
-                isDeleted: row["deleted"] ?? false,
-                delivery: Delivery(state: row["state"], lastError: row["last_error"]),
-                authorName: row["display_name"],
-                authorPicture: row["picture"],
-                authorLightningAddress: row["lud16"],
-                replyTo: Self.replyTarget(in: tags),
-                richContent: row["rich"]
+    /// A whole thread: the message that opened it, then every reply, oldest
+    /// first because a thread is read forwards.
+    nonisolated func thread(root: String) throws -> [TimelineRow] {
+        try reader.read { db in try Self.fetchThread(db, root: root) }
+    }
+
+    static func fetchThread(_ db: Database, root: String) throws -> [TimelineRow] {
+        let sql = """
+            SELECT \(Self.timelineColumns)
+            FROM (
+                \(Self.eventBranch(where: "e.id = :root AND e.kind = :kind"))
+
+                UNION ALL
+
+                \(Self.eventBranch(where: """
+                    e.kind = :kind AND EXISTS (
+                        SELECT 1 FROM thread tr
+                        WHERE tr.event_id = e.id AND tr.root_id = :root
+                    )
+                    """))
+
+                UNION ALL
+
+                \(Self.outboxBranch(where: "o.root_id = :root"))
             )
-        }
+            ORDER BY created_at ASC, id ASC
+            """
+
+        let rows = try Row.fetchAll(db, sql: sql, arguments: [
+            "root": root,
+            "kind": EventKind.groupChatMessage.rawValue,
+        ])
+        return rows.map(Self.makeRow)
+    }
+
+    // MARK: - Shared query pieces
+
+    /// One column list, so the branches below and their callers cannot drift.
+    private static let timelineColumns = """
+        id, pubkey, created_at, content, edited, deleted, rich,
+        display_name, picture, lud16, parent_id, root_id,
+        reply_count, last_reply_at, state, last_error
+        """
+
+    /// A message from the log, with its author, edits and thread position.
+    ///
+    /// The reply tallies exclude deleted replies: a thread whose only reply was
+    /// removed should stop advertising one.
+    private static func eventBranch(where predicate: String) -> String {
+        """
+        SELECT e.id                AS id,
+               e.pubkey            AS pubkey,
+               e.created_at        AS created_at,
+               e.content           AS content,
+               (SELECT ed.content FROM edit ed
+                 WHERE ed.target_id = e.id
+                 ORDER BY ed.created_at DESC, ed.event_id DESC
+                 LIMIT 1)          AS edited,
+               EXISTS(SELECT 1 FROM deletion d WHERE d.target_id = e.id) AS deleted,
+               rc.payload          AS rich,
+               p.display_name      AS display_name,
+               p.picture           AS picture,
+               p.lud16             AS lud16,
+               t.parent_id         AS parent_id,
+               t.root_id           AS root_id,
+               (SELECT COUNT(*) FROM thread tc
+                 WHERE tc.root_id = e.id
+                   AND NOT EXISTS (
+                         SELECT 1 FROM deletion dc WHERE dc.target_id = tc.event_id
+                       )) AS reply_count,
+               (SELECT MAX(tl.created_at) FROM thread tl
+                 WHERE tl.root_id = e.id
+                   AND NOT EXISTS (
+                         SELECT 1 FROM deletion dl WHERE dl.target_id = tl.event_id
+                       )) AS last_reply_at,
+               'sent'              AS state,
+               NULL                AS last_error
+        FROM event e
+        LEFT JOIN rich_content rc ON rc.target_id = e.id
+        LEFT JOIN profile p ON p.pubkey = e.pubkey
+        LEFT JOIN thread t ON t.event_id = e.id
+        WHERE \(predicate)
+        """
+    }
+
+    /// A message we have signed but the relay has not acknowledged. It carries
+    /// no reply tally: nothing can have replied to it yet.
+    private static func outboxBranch(where predicate: String) -> String {
+        """
+        SELECT o.event_id, o.pubkey, o.created_at, o.content,
+               NULL, 0, NULL,
+               p.display_name, p.picture, p.lud16,
+               o.parent_id, o.root_id, 0, NULL,
+               o.state, o.last_error
+        FROM outbox o
+        LEFT JOIN profile p ON p.pubkey = o.pubkey
+        WHERE \(predicate)
+        """
+    }
+
+    private static func makeRow(_ row: Row) -> TimelineRow {
+        let edited: String? = row["edited"]
+        return TimelineRow(
+            id: row["id"],
+            pubkey: row["pubkey"],
+            createdAt: row["created_at"],
+            content: edited ?? row["content"],
+            isEdited: edited != nil,
+            isDeleted: row["deleted"] ?? false,
+            delivery: Delivery(state: row["state"], lastError: row["last_error"]),
+            authorName: row["display_name"],
+            authorPicture: row["picture"],
+            authorLightningAddress: row["lud16"],
+            parentID: row["parent_id"],
+            rootID: row["root_id"],
+            replyCount: row["reply_count"] ?? 0,
+            lastReplyAt: row["last_reply_at"],
+            richContent: row["rich"]
+        )
     }
 
     /// Reaction tallies for a set of messages.
@@ -261,14 +366,4 @@ public extension EventStore {
         }
     }
 
-    /// NIP-10 reply target: an explicit `reply` marker, else `root`.
-    private static func replyTarget(in tags: [[String]]) -> String? {
-        for tag in tags where tag.first == "e" && tag.count >= 4 && tag[3] == "reply" {
-            return tag[1]
-        }
-        for tag in tags where tag.first == "e" && tag.count >= 4 && tag[3] == "root" {
-            return tag[1]
-        }
-        return nil
-    }
 }

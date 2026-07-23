@@ -11,6 +11,7 @@ struct ChannelTimelineView: View {
     @State private var draft = ""
     @State private var zapTarget: ChannelTimeline.Entry?
     @State private var profileTarget: ProfileTarget?
+    @State private var threadRoot: TimelineRow?
 
     init(session: CommunitySession, channel: ChannelSummary) {
         self.session = session
@@ -41,7 +42,12 @@ struct ChannelTimelineView: View {
                             onZap: entry.row.authorLightningAddress == nil
                                 ? nil
                                 : { zapTarget = entry },
-                            onOpenAuthor: { profileTarget = ProfileTarget(pubkey: entry.row.pubkey) }
+                            onOpenAuthor: { profileTarget = ProfileTarget(pubkey: entry.row.pubkey) },
+                            onOpenThread: { threadRoot = entry.row },
+                            // Replying opens the thread rather than composing in
+                            // place: the reply belongs there, and landing in the
+                            // thread shows what is already being said.
+                            onReply: entry.row.isDeleted ? nil : { threadRoot = entry.row }
                         )
                     }
                 }
@@ -80,6 +86,9 @@ struct ChannelTimelineView: View {
             }
         }
         .task { await model.activate() }
+        .navigationDestination(item: $threadRoot) { root in
+            ThreadView(session: session, channel: channel, root: root)
+        }
         .sheet(item: $profileTarget) { target in
             ProfileSheet(session: session, pubkey: target.pubkey)
         }
@@ -119,7 +128,7 @@ struct ChannelTimelineView: View {
 }
 
 /// One message, with the author header shown only at the start of a run.
-private struct MessageRow: View {
+struct MessageRow: View {
     let entry: ChannelTimeline.Entry
     let reactions: [ReactionSummary]
     let onReact: (String) -> Void
@@ -127,6 +136,10 @@ private struct MessageRow: View {
     let onDiscard: () -> Void
     let onZap: (() -> Void)?
     let onOpenAuthor: () -> Void
+    /// Opens the thread this message started. Absent inside a thread, where
+    /// there is nowhere further to go.
+    var onOpenThread: (() -> Void)?
+    var onReply: (() -> Void)?
 
     /// The quick palette. A full picker is later polish.
     private static let quickReactions = ["🐝", "👍", "❤️", "🔥", "😂"]
@@ -148,26 +161,42 @@ private struct MessageRow: View {
             }
 
             VStack(alignment: .leading, spacing: Space.hairline) {
-                if entry.showsHeader {
-                    HStack(alignment: .firstTextBaseline, spacing: Space.xs) {
-                        Button(action: onOpenAuthor) {
-                            Text(entry.row.displayName)
-                                .font(Typography.name)
-                                .foregroundStyle(Palette.text)
+                // Only the author, time and text are merged. Combining the whole
+                // row would swallow the reaction and thread buttons: `.combine`
+                // flattens its children into one element, and a control inside
+                // it stops being reachable by VoiceOver.
+                VStack(alignment: .leading, spacing: Space.hairline) {
+                    if entry.showsHeader {
+                        HStack(alignment: .firstTextBaseline, spacing: Space.xs) {
+                            Button(action: onOpenAuthor) {
+                                Text(entry.row.displayName)
+                                    .font(Typography.name)
+                                    .foregroundStyle(Palette.text)
+                            }
+                            .buttonStyle(.plain)
+                            Text(entry.row.date, format: .dateTime.hour().minute())
+                                .font(Typography.caption)
+                                .foregroundStyle(Palette.subtext)
+                                .luminousChrome()
                         }
-                        .buttonStyle(.plain)
-                        Text(entry.row.date, format: .dateTime.hour().minute())
-                            .font(Typography.caption)
-                            .foregroundStyle(Palette.subtext)
-                            .luminousChrome()
                     }
-                }
 
-                content
-                    .contextMenu { contextActions }
+                    content
+                }
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel(accessibilityDescription)
+                .contextMenu { contextActions }
 
                 if !reactions.isEmpty {
                     ReactionBar(reactions: reactions, onTap: onReact)
+                }
+
+                if entry.row.hasThread, let onOpenThread {
+                    ThreadAffordance(
+                        count: entry.row.replyCount,
+                        lastReply: entry.row.lastReplyDate,
+                        action: onOpenThread
+                    )
                 }
             }
 
@@ -175,10 +204,6 @@ private struct MessageRow: View {
         }
         .padding(.top, entry.showsHeader ? Space.xs : 0)
         .opacity(entry.row.delivery == .pending ? 0.55 : 1)
-        // VoiceOver reads the row as one sentence rather than walking five
-        // separate fragments, and the reactions ride along as a summary.
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(accessibilityDescription)
     }
 
     /// What VoiceOver says for this message, in the order a person would.
@@ -193,12 +218,8 @@ private struct MessageRow: View {
         case .failed(let reason): parts.append("failed to send. \(reason ?? "")")
         case .sent: break
         }
-        if !reactions.isEmpty {
-            let summary = reactions
-                .map { "\($0.count) \($0.emoji)\($0.includesMe ? ", including yours" : "")" }
-                .joined(separator: ", ")
-            parts.append("Reactions: \(summary)")
-        }
+        // Reactions and the thread affordance are their own elements now, each
+        // with its own label, so repeating them here would read them twice.
         return parts.joined(separator: ", ")
     }
 
@@ -234,8 +255,11 @@ private struct MessageRow: View {
             ForEach(Self.quickReactions, id: \.self) { emoji in
                 Button(emoji) { onReact(emoji) }
             }
-            if let onZap {
+            if let onReply {
                 Divider()
+                Button("Reply in thread", systemImage: "arrowshape.turn.up.left", action: onReply)
+            }
+            if let onZap {
                 Button("Zap", systemImage: "bolt.fill", action: onZap)
             }
         }
@@ -251,7 +275,41 @@ private struct MessageRow: View {
     }
 }
 
-private struct ReactionBar: View {
+/// The way into a thread, shown under the message that started it.
+///
+/// Carries the reply count and how recently the thread moved, because those are
+/// the two things that decide whether it is worth opening.
+private struct ThreadAffordance: View {
+    let count: Int
+    let lastReply: Date?
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: Space.xxs) {
+                Image(systemName: "bubble.left.and.bubble.right.fill")
+                    .font(Typography.count)
+                Text(count == 1 ? "1 reply" : "\(count) replies")
+                    .font(Typography.label)
+                if let lastReply {
+                    Text(lastReply, format: .relative(presentation: .named))
+                        .font(Typography.caption)
+                        .foregroundStyle(Palette.subtext)
+                }
+            }
+            .foregroundStyle(Palette.oliveInk)
+            .padding(.horizontal, Space.xs)
+            .padding(.vertical, Space.xxs)
+            .background(Palette.chartreuse.opacity(0.18), in: .capsule)
+        }
+        .buttonStyle(.plain)
+        .padding(.top, Space.xxs)
+        .accessibilityLabel(count == 1 ? "1 reply" : "\(count) replies")
+        .accessibilityHint("Opens the thread")
+    }
+}
+
+struct ReactionBar: View {
     let reactions: [ReactionSummary]
     let onTap: (String) -> Void
 
@@ -294,13 +352,14 @@ private struct ReactionBar: View {
 }
 
 /// The message input, glass over the gradient.
-private struct ComposeBar: View {
+struct ComposeBar: View {
     @Binding var draft: String
+    var placeholder: String = "Message"
     let onSend: () -> Void
 
     var body: some View {
         HStack(alignment: .bottom, spacing: Space.xs) {
-            TextField("Message", text: $draft, axis: .vertical)
+            TextField(placeholder, text: $draft, axis: .vertical)
                 .lineLimit(1...5)
                 .font(Typography.body)
                 .foregroundStyle(Palette.text)

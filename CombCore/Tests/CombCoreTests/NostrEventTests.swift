@@ -198,22 +198,75 @@ struct NostrEventTests {
             with: key
         )
 
-        #expect(event.threadRoot == "root-id")
-        #expect(event.replyTarget == "parent-id")
+        #expect(event.threadReference.rootID == "root-id")
+        #expect(event.threadReference.parentID == "parent-id")
+        #expect(event.isThreadReply)
         #expect(event.referencedEventIDs == ["root-id", "parent-id"])
         #expect(event.referencedPubkeys == ["someone"])
     }
 
-    @Test("falls back to root when there is no explicit reply marker")
-    func fallsBackToRoot() throws {
+    @Test("a lone root marker is not a reply")
+    func rootAloneIsNotAReply() throws {
+        // Buzz's resolver requires an explicit `reply` marker. Falling back to
+        // `root` here would thread messages that Buzz renders flat, and the two
+        // clients would draw the same conversation differently.
         let key = try PrivateKey()
         let event = try NostrEvent.signed(
             kind: .groupChatMessage,
-            content: "direct reply to the opener",
+            content: "mentions a thread without joining it",
             tags: [["e", "root-id", "", "root"]],
             with: key
         )
-        #expect(event.replyTarget == "root-id")
+        #expect(event.threadReference.parentID == nil)
+        #expect(event.threadReference.rootID == nil)
+        #expect(!event.isThreadReply)
+    }
+
+    @Test("a reply to the opener is its own root")
+    func replyToOpener() throws {
+        let key = try PrivateKey()
+        let event = try NostrEvent.signed(
+            kind: .groupChatMessage,
+            content: "first reply",
+            tags: [["e", "opener", "", "reply"]],
+            with: key
+        )
+        #expect(event.threadReference.parentID == "opener")
+        #expect(event.threadReference.rootID == "opener")
+    }
+
+    @Test("the last reply marker wins")
+    func lastReplyMarkerWins() throws {
+        let key = try PrivateKey()
+        let event = try NostrEvent.signed(
+            kind: .groupChatMessage,
+            content: "x",
+            tags: [
+                ["e", "root-id", "", "root"],
+                ["e", "first", "", "reply"],
+                ["e", "second", "", "reply"],
+            ],
+            with: key
+        )
+        #expect(event.threadReference.parentID == "second")
+        #expect(event.threadReference.rootID == "root-id")
+    }
+
+    @Test("a broadcast reply belongs in the channel as well as the thread")
+    func broadcastReply() throws {
+        // Buzz lets an author echo a reply back into the channel. Treating it as
+        // thread-only would silently hide a message its author meant everyone
+        // to see.
+        let key = try PrivateKey()
+        let event = try NostrEvent.signed(
+            kind: .groupChatMessage,
+            content: "worth everyone seeing",
+            tags: [["e", "root-id", "", "reply"], ["broadcast", "1"]],
+            with: key
+        )
+        #expect(event.threadReference.parentID == "root-id")
+        #expect(event.isBroadcastReply)
+        #expect(!event.isThreadReply)
     }
 
     @Test("tag accessors ignore malformed tags")

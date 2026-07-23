@@ -119,6 +119,21 @@ public extension EventStore {
             .values(in: reader)
     }
 
+    /// Emits a thread whenever it, or anything it renders, changes.
+    nonisolated func observeThread(
+        root: String,
+        me: String?
+    ) -> AsyncValueObservation<TimelineSnapshot> {
+        ValueObservation
+            .tracking { db -> TimelineSnapshot in
+                let rows = try Self.fetchThread(db, root: root)
+                let reactions = try Self.fetchReactions(db, for: rows.map(\.id), me: me)
+                return TimelineSnapshot(rows: rows, reactions: reactions)
+            }
+            .removeDuplicates()
+            .values(in: reader)
+    }
+
     /// Emits the channel list whenever channels, members, messages, profiles,
     /// or read state change.
     nonisolated func observeChannelSummaries(me: String = "") -> AsyncValueObservation<[ChannelSummary]> {
