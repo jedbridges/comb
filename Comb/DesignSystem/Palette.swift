@@ -42,16 +42,31 @@ enum Palette {
 
     // MARK: - Glyphs
 
-    /// The channel badge's fill: a muted tone that sits back from the text
-    /// rather than competing with it. Chartreuse here would spend the brand's
-    /// scarcest colour on decoration.
-    static let glyphSurface = adaptive(light: 0xDCDFE8, dark: 0x343850)
-    /// The symbol inside it, soft enough to read as texture.
-    /// The symbol or initial inside a glyph. Kept close to `text` in
-    /// luminance rather than sitting at subtext level: after the blend it
-    /// loses contrast against its own cell, and a dim tint on a dim cell
-    /// reads as flat grey, which is the one thing the brand is not.
-    static let glyphTint = adaptive(light: 0x4C4F69, dark: 0xC3CAE6)
+    /// A channel badge and an avatar are the same object wearing two shapes,
+    /// so they share every token below.
+    ///
+    /// The rule: a glyph has no hue of its own. It used to carry a Catppuccin
+    /// indigo, and that one value read as two different things depending on
+    /// where in the list it landed, clashing as a cool patch against the olive
+    /// at the top and dissolving into the navy at the bottom. Lifting the
+    /// backdrop instead of painting over it means the badge belongs at every
+    /// scroll position, in either appearance, with one value.
+
+    /// The badge fill: a lift of whatever the gradient is doing behind it.
+    /// Inverts with the appearance, because lightening a pale background does
+    /// nothing at all, which is exactly how the old token failed in light mode.
+    static let glyphLift = adaptiveOverlay(light: .black, lightAlpha: 0.07,
+                                           dark: .white, darkAlpha: 0.10)
+
+    /// The edge that keeps the badge from dissolving completely where the
+    /// gradient happens to match its own value.
+    static let glyphHairline = adaptiveOverlay(light: .black, lightAlpha: 0.12,
+                                               dark: .white, darkAlpha: 0.14)
+
+    /// The symbol or initial. The one place a glyph is allowed colour, and it
+    /// is the brand's. Light mode drops to olive ink: chartreuse on a pale
+    /// gradient is close to unreadable, and the token exists for exactly this.
+    static let glyphMark = adaptive(light: 0x717106, dark: 0xBFBF0A)
 
     // MARK: - Semantic
 
@@ -76,6 +91,19 @@ enum Palette {
     private static func adaptive(light: UInt32, dark: UInt32) -> Color {
         Color(UIColor { traits in
             UIColor(Color(hex: traits.userInterfaceStyle == .dark ? dark : light))
+        })
+    }
+
+    /// An overlay that has to flip direction with the appearance, not just
+    /// change value. White at 10% lifts a dark backdrop and does essentially
+    /// nothing to a pale one, so light mode needs black instead.
+    private static func adaptiveOverlay(
+        light: Color, lightAlpha: Double,
+        dark: Color, darkAlpha: Double
+    ) -> Color {
+        Color(UIColor { traits in
+            let isDark = traits.userInterfaceStyle == .dark
+            return UIColor(isDark ? dark.opacity(darkAlpha) : light.opacity(lightAlpha))
         })
     }
 }

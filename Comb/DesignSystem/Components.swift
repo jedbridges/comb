@@ -136,6 +136,10 @@ struct AvatarView: View {
                 }
                 .frame(width: size, height: size)
                 .clipShape(.circle)
+                // The same edge the letter version carries. Without it a photo
+                // avatar was full-saturation photography dropped beside flat
+                // badges, and read as belonging to a different app.
+                .overlay(Circle().strokeBorder(Palette.glyphHairline, lineWidth: 0.75))
             } else {
                 initial.glyphChrome(size: size)
             }
@@ -144,14 +148,20 @@ struct AvatarView: View {
         .accessibilityHidden(true)
     }
 
-    /// Same fills and blend treatment as ChannelGlyph, so an initial reads as
-    /// one family with the channel cells rather than a flat opaque disc.
+    /// Exactly ChannelGlyph's treatment in a circle: the same lift, the same
+    /// hairline, the same chartreuse mark. A room and a person are the same
+    /// object wearing two shapes, and the shape is the only thing that should
+    /// tell them apart.
     private var initial: some View {
         ZStack {
-            Circle().fill(Palette.glyphSurface)
+            Circle().fill(Palette.glyphLift)
+            Circle().stroke(Palette.glyphHairline, lineWidth: 0.75)
             Text(name.prefix(1).uppercased())
-                .font(Typography.name)
-                .foregroundStyle(Palette.glyphTint)
+                // Sized off the circle rather than the type ramp, matching the
+                // symbol in ChannelGlyph, so a letter and an icon sit at the
+                // same optical weight at every size a caller asks for.
+                .font(.system(size: size * 0.4, weight: .semibold))
+                .foregroundStyle(Palette.glyphMark)
                 .minimumScaleFactor(0.7)
         }
     }

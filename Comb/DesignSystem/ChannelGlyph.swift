@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// A channel's badge: a rounded comb cell in a muted tone, carrying a symbol
-/// chosen from the channel's name.
+/// A channel's badge: a rounded comb cell lifted out of the gradient, carrying
+/// a symbol chosen from the channel's name.
 ///
 /// Replaces the initial-in-a-cell. An initial says nothing a reader cannot
 /// already see in the title beside it, and it collided with the mark's
@@ -13,20 +13,24 @@ struct ChannelGlyph: View {
 
     var body: some View {
         ZStack {
-            RoundedCombCell(cornerRadius: size * 0.18)
-                .fill(Palette.glyphSurface)
+            let cell = RoundedCombCell(cornerRadius: size * 0.18)
+            // Lift, not paint. The cell has no hue of its own, so it reads the
+            // same against the olive at the top of a list and the navy at the
+            // bottom. The hairline is what stops it disappearing entirely
+            // where the gradient happens to match its own value.
+            cell.fill(Palette.glyphLift)
+            cell.stroke(Palette.glyphHairline, lineWidth: 0.75)
             Image(systemName: ChannelSymbol.forName(name))
                 // Derived from the cell, not the type ramp, and deliberately
                 // so: this symbol has to stay in proportion to the hexagon
                 // around it at every size the caller asks for. A ramp token
                 // would scale independently and break the lockup.
                 .font(.system(size: size * 0.42, weight: .medium))
-                .foregroundStyle(Palette.glyphTint)
+                .foregroundStyle(Palette.glyphMark)
         }
-        // Composited first, then blended as one badge: cell and symbol together
-        // shift the light behind them instead of sitting on top as a flat
-        // indigo patch fighting the gradient's hue. The shared modifier is what
-        // keeps avatars looking like part of the same system.
+        // Composited as one badge, so the fill and the hairline cannot be
+        // blended separately. The shared modifier is what keeps avatars
+        // looking like part of the same system.
         .glyphChrome(size: size)
         // The channel's name is right beside it; the glyph is atmosphere.
         .accessibilityHidden(true)

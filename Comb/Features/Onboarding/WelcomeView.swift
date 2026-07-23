@@ -12,6 +12,12 @@ struct WelcomeView: View {
     @Binding var pendingInvite: String?
 
     @State private var path: [Destination] = []
+    /// Flipped once, on the first frame, so the whole screen resolves into
+    /// place instead of being painted already finished. Everything below reads
+    /// from it, which is what makes the stagger a stagger.
+    @State private var appeared = false
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     enum Destination: Hashable {
         case enterInvite
@@ -28,6 +34,20 @@ struct WelcomeView: View {
                 // centre, and the swarm should orbit the mark, not the type.
                 BeeSwarmView(hive: UnitPoint(x: 0.5, y: 0.4))
                     .ignoresSafeArea()
+                    // The swarm gathers. It starts wide and invisible and
+                    // draws in toward the mark over about a second, so the
+                    // bees look like they flew in rather than like they were
+                    // always sitting there. Slowest thing on screen, and last
+                    // to finish, because atmosphere should settle after the
+                    // content it surrounds.
+                    .scaleEffect(appeared ? 1 : 1.2, anchor: UnitPoint(x: 0.5, y: 0.4))
+                    .opacity(appeared ? 1 : 0)
+                    .animation(
+                        reduceMotion
+                            ? .easeOut(duration: 0.2)
+                            : Motion.arrival.delay(0.2).speed(0.55),
+                        value: appeared
+                    )
 
                 // Centred, deliberately. An asymmetric version was tried and
                 // read worse: the identity block wants the optical centre, and
@@ -40,7 +60,10 @@ struct WelcomeView: View {
                     VStack(spacing: Space.md) {
                         WelcomeSymbol()
                             .frame(width: Sizing.heroMark, height: Sizing.heroMark)
-                            .arrival(true)
+                            // The one element that scales: a mark growing into
+                            // place reads as the app introducing itself. Text
+                            // doing the same would read as a zoom.
+                            .arrival(appeared, from: 0.9)
 
                         VStack(spacing: Space.xxs) {
                             // Lowercase as a wordmark, not a sentence: the app
@@ -54,7 +77,7 @@ struct WelcomeView: View {
                                 .font(Typography.secondary)
                                 .foregroundStyle(Palette.subtext)
                         }
-                        .arrival(true, delay: 0.08)
+                        .arrival(appeared, delay: 0.08)
                     }
 
                     Spacer()
@@ -90,7 +113,7 @@ struct WelcomeView: View {
                     }
                     // Last in the stagger: the eye lands on the identity, then
                     // the way in.
-                    .arrival(true, delay: 0.16)
+                    .arrival(appeared, delay: 0.16)
                     .padding(.horizontal, Space.xl)
                     .padding(.bottom, Space.xxxl)
                 }
@@ -105,6 +128,10 @@ struct WelcomeView: View {
                     SignInView(onSignedIn: onJoined)
                 }
             }
+            // First frame paints the screen still arriving; this commits the
+            // resolved state, and the value-driven animations do the rest.
+            // Idempotent, so popping back from Join does not replay it.
+            .onAppear { appeared = true }
             .onChange(of: pendingInvite) { _, invite in
                 guard invite != nil else { return }
                 path = [.enterInvite]

@@ -8,8 +8,21 @@ struct CombApp: App {
 
     var body: some Scene {
         WindowGroup {
-            Group {
-                switch model.stage {
+            stageView
+            .task { await model.bootstrap() }
+            .onOpenURL { url in
+                // buzz:// and comb:// join links, honoured in either stage:
+                // signed out they open the welcome join flow, signed in they
+                // present the join sheet over the open community. Silently
+                // ignoring a tapped invite is never the right answer.
+                guard InviteLink.parse(url.absoluteString) != nil else { return }
+                pendingInvite = url.absoluteString
+            }
+        }
+    }
+
+    @ViewBuilder private var stageView: some View {
+        switch model.stage {
                 case .launching:
                     LaunchingView()
                 case .welcome:
@@ -35,17 +48,6 @@ struct CombApp: App {
                             }
                         )
                     }
-                }
-            }
-            .task { await model.bootstrap() }
-            .onOpenURL { url in
-                // buzz:// and comb:// join links, honoured in either stage:
-                // signed out they open the welcome join flow, signed in they
-                // present the join sheet over the open community. Silently
-                // ignoring a tapped invite is never the right answer.
-                guard InviteLink.parse(url.absoluteString) != nil else { return }
-                pendingInvite = url.absoluteString
-            }
         }
     }
 }
