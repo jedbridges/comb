@@ -21,6 +21,8 @@ public struct EventKind: RawRepresentable, Hashable, Codable, Sendable, Expressi
     public static let giftWrap: EventKind = 1059         // NIP-17 encrypted DM
     public static let clientAuth: EventKind = 22242      // NIP-42 auth response
     public static let httpAuth: EventKind = 27235        // NIP-98 HTTP auth
+    public static let zapRequest: EventKind = 9734       // NIP-57
+    public static let zapReceipt: EventKind = 9735       // NIP-57
 
     // MARK: - NIP-29 relay-based groups (moderation)
 
