@@ -92,6 +92,7 @@ struct BrowseView: View {
             Mark()
                 .frame(width: Sizing.inlineMark, height: Sizing.inlineMark)
                 .opacity(0.5)
+                .accessibilityHidden(true)
             Text("No communities listed yet")
                 .font(Typography.bodyEmphasis)
                 .foregroundStyle(Palette.text)

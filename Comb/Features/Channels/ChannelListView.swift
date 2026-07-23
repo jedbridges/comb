@@ -39,6 +39,7 @@ struct ChannelListView: View {
                         .font(Typography.actionSecondary)
                         .foregroundStyle(Palette.subtext)
                 }
+                .accessibilityLabel("Settings")
             }
         }
         .sheet(isPresented: $isShowingSettings) {
@@ -90,11 +91,19 @@ struct ChannelListView: View {
     }
 
     private var emptyState: some View {
-        VStack(spacing: 12) {
-            Mark().frame(width: Sizing.inlineMark, height: Sizing.inlineMark).opacity(0.5)
+        VStack(spacing: Space.sm) {
+            Mark()
+                .frame(width: Sizing.inlineMark, height: Sizing.inlineMark)
+                .opacity(0.5)
+                .accessibilityHidden(true)
             Text("No channels yet")
                 .font(Typography.bodyEmphasis)
+                .foregroundStyle(Palette.text)
+            Text("Channels appear here as soon as this community shares them.")
+                .font(Typography.secondary)
                 .foregroundStyle(Palette.subtext)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, Space.xl)
         }
     }
 }
@@ -102,6 +111,8 @@ struct ChannelListView: View {
 /// One channel: name, member count, last message preview.
 private struct ChannelRow: View {
     let channel: ChannelSummary
+
+    @ScaledMetric(relativeTo: .subheadline) private var cellSize: CGFloat = Sizing.channelCell
 
     var body: some View {
         HStack(spacing: Space.sm) {
@@ -149,6 +160,16 @@ private struct ChannelRow: View {
         .padding(.horizontal, Space.md)
         .padding(.vertical, Space.sm)
         .contentShape(.rect)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(accessibilityDescription)
+    }
+
+    private var accessibilityDescription: String {
+        var parts = [channel.name]
+        if channel.memberCount > 0 { parts.append("\(channel.memberCount) members") }
+        if let preview { parts.append("Latest: \(preview)") }
+        else { parts.append("No messages yet") }
+        return parts.joined(separator: ", ")
     }
 
     private var preview: String? {
@@ -163,15 +184,24 @@ private struct ChannelRow: View {
         return flattened
     }
 
-    /// A comb cell with the channel's initial. Channel icons come later;
+    /// A comb cell carrying the channel's initial. Channel icons come later;
     /// this keeps rows scannable until then.
+    ///
+    /// A plain filled cell, not the `Mark`: the logo's inner detail collided
+    /// with the letter and some initials became unreadable.
     private var cell: some View {
         ZStack {
-            Mark().frame(width: Sizing.channelCell, height: Sizing.channelCell).opacity(0.9)
+            CombCell()
+                .fill(Palette.ink)
+            CombCell()
+                .stroke(Palette.chartreuse.opacity(0.55), lineWidth: 1.5)
             Text(channel.name.prefix(1).uppercased())
                 .font(Typography.name)
                 .foregroundStyle(Palette.chartreuse)
+                .minimumScaleFactor(0.7)
         }
+        .frame(width: cellSize, height: cellSize)
+        .accessibilityHidden(true)
     }
 }
 

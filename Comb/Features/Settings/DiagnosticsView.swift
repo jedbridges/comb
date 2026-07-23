@@ -66,6 +66,7 @@ struct DiagnosticsView: View {
                 } label: {
                     Image(systemName: "ellipsis.circle")
                 }
+                .accessibilityLabel("Log actions")
             }
         }
     }

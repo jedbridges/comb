@@ -51,6 +51,10 @@ struct PairingView: View {
                     .font(.system(.largeTitle, design: .monospaced).weight(.bold))
                     .foregroundStyle(Palette.chartreuse)
                     .kerning(2)
+                    // Spoken one digit at a time. "482917" read as "four
+                    // hundred eighty-two thousand..." is useless for comparing
+                    // against another screen.
+                    .accessibilityLabel(code.map(String.init).joined(separator: " "))
 
                 Text("Check the other device shows the same code.")
                     .font(Typography.secondary)
@@ -77,9 +81,10 @@ struct PairingView: View {
     private func statusPane(_ text: String, systemImage: String) -> some View {
         VStack(spacing: Space.md) {
             Image(systemName: systemImage)
-                .font(.system(size: 40))
+                .font(.system(.largeTitle))
                 .foregroundStyle(Palette.subtext)
                 .symbolEffect(.pulse)
+                .accessibilityHidden(true)
             Text(text)
                 .font(Typography.bodyEmphasis)
                 .foregroundStyle(Palette.text)
@@ -140,8 +145,9 @@ private struct ScannerPane: View {
         VStack(spacing: Space.md) {
             Spacer()
             Image(systemName: "qrcode.viewfinder")
-                .font(.system(size: 44))
+                .font(.system(.largeTitle))
                 .foregroundStyle(Palette.subtext)
+                .accessibilityHidden(true)
             Text("The camera is unavailable in the simulator. Paste a pairing code to continue.")
                 .font(Typography.secondary)
                 .foregroundStyle(Palette.subtext)

@@ -15,6 +15,32 @@ struct WelcomeSymbol: View {
     }
 }
 
+/// A single honeycomb cell, as a `Shape`.
+///
+/// For anything that needs the brand's silhouette as a container: channel
+/// avatars, badges, placeholders. Distinct from `Mark`, which is the logo and
+/// has its own interior detail. Putting content on top of `Mark` collides with
+/// that detail; that mistake was made in the channel list and removed.
+struct CombCell: Shape {
+    func path(in rect: CGRect) -> Path {
+        let center = CGPoint(x: rect.midX, y: rect.midY)
+        let radius = min(rect.width, rect.height) / 2
+
+        var path = Path()
+        for corner in 0..<6 {
+            // Pointy-top, matching the mark and the icon.
+            let angle = Double(corner) * .pi / 3 + .pi / 6
+            let point = CGPoint(
+                x: center.x + cos(angle) * radius,
+                y: center.y + sin(angle) * radius
+            )
+            corner == 0 ? path.move(to: point) : path.addLine(to: point)
+        }
+        path.closeSubpath()
+        return path
+    }
+}
+
 /// Comb's mark: nested honeycomb cells, matching the app icon.
 ///
 /// Deliberately not Buzz's bee, which Apache 2.0 section 6 does not license for

@@ -42,17 +42,23 @@ struct CombApp: App {
 /// The instant between launch and knowing whether a community opens silently.
 private struct LaunchingView: View {
     @State private var isBreathing = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         Backdrop {
             Mark()
                 .frame(width: Sizing.heroMark, height: Sizing.heroMark)
                 .opacity(isBreathing ? 1 : 0.6)
+                // A forever-repeating pulse is exactly what Reduce Motion is
+                // for; the mark simply sits still instead.
                 .animation(
-                    .easeInOut(duration: 0.9).repeatForever(autoreverses: true),
+                    reduceMotion
+                        ? nil
+                        : .easeInOut(duration: 0.9).repeatForever(autoreverses: true),
                     value: isBreathing
                 )
         }
-        .onAppear { isBreathing = true }
+        .accessibilityLabel("Opening Comb")
+        .onAppear { isBreathing = !reduceMotion }
     }
 }

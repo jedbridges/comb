@@ -22,7 +22,7 @@ struct ChannelTimelineView: View {
             Palette.backgroundGradient.ignoresSafeArea()
 
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 2) {
+                LazyVStack(alignment: .leading, spacing: Space.hairline) {
                     if model.canLoadOlder {
                         loadOlderControl
                     }
@@ -99,7 +99,7 @@ struct ChannelTimelineView: View {
             .disabled(model.isLoadingOlder)
             Spacer()
         }
-        .padding(.vertical, 8)
+        .padding(.vertical, Space.xs)
     }
 }
 
@@ -115,12 +115,16 @@ private struct MessageRow: View {
     /// The quick palette. A full picker is later polish.
     private static let quickReactions = ["🐝", "👍", "❤️", "🔥", "😂"]
 
+    /// Matches AvatarView's scaled frame so continuation lines in a run stay
+    /// aligned with the first at every text size.
+    @ScaledMetric(relativeTo: .subheadline) private var avatarWidth: CGFloat = Sizing.avatar
+
     var body: some View {
         HStack(alignment: .top, spacing: Space.xs) {
             if entry.showsHeader {
                 AvatarView(name: entry.row.displayName, picture: entry.row.authorPicture)
             } else {
-                Color.clear.frame(width: Sizing.avatar, height: 1)
+                Color.clear.frame(width: avatarWidth, height: 1)
             }
 
             VStack(alignment: .leading, spacing: Space.hairline) {
@@ -147,6 +151,31 @@ private struct MessageRow: View {
         }
         .padding(.top, entry.showsHeader ? Space.xs : 0)
         .opacity(entry.row.delivery == .pending ? 0.55 : 1)
+        // VoiceOver reads the row as one sentence rather than walking five
+        // separate fragments, and the reactions ride along as a summary.
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(accessibilityDescription)
+    }
+
+    /// What VoiceOver says for this message, in the order a person would.
+    private var accessibilityDescription: String {
+        var parts = ["\(entry.row.displayName) said"]
+        parts.append(entry.row.isDeleted ? "message deleted" : entry.row.content)
+        parts.append(entry.row.date.formatted(date: .omitted, time: .shortened))
+
+        if entry.row.isEdited { parts.append("edited") }
+        switch entry.row.delivery {
+        case .pending: parts.append("sending")
+        case .failed(let reason): parts.append("failed to send. \(reason ?? "")")
+        case .sent: break
+        }
+        if !reactions.isEmpty {
+            let summary = reactions
+                .map { "\($0.count) \($0.emoji)\($0.includesMe ? ", including yours" : "")" }
+                .joined(separator: ", ")
+            parts.append("Reactions: \(summary)")
+        }
+        return parts.joined(separator: ", ")
     }
 
     @ViewBuilder
@@ -208,6 +237,13 @@ private struct ReactionBar: View {
                 // Tapping a chip toggles: join the pile, or withdraw your own.
                 Button { onTap(reaction.emoji) } label: { chip(reaction) }
                     .buttonStyle(.plain)
+                    .accessibilityLabel(
+                        "\(reaction.emoji), \(reaction.count)"
+                            + (reaction.includesMe ? ", including yours" : "")
+                    )
+                    .accessibilityHint(
+                        reaction.includesMe ? "Removes your reaction" : "Adds your reaction"
+                    )
             }
         }
         .padding(.top, Space.hairline)
@@ -252,8 +288,11 @@ private struct ComposeBar: View {
                 Image(systemName: "arrow.up")
                     .font(Typography.action)
                     .foregroundStyle(Palette.ink)
-                    .frame(width: 36, height: 36)
+                    // 44pt is Apple's minimum comfortable target; the glyph
+                    // stays visually small inside it.
+                    .frame(width: Sizing.hitTarget, height: Sizing.hitTarget)
             }
+            .accessibilityLabel("Send message")
             .buttonStyle(.glassProminent)
             .tint(Palette.chartreuse)
             .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)

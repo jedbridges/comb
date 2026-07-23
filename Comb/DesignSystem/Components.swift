@@ -100,10 +100,15 @@ struct FootnoteText: View {
 }
 
 /// A person, as initials until image loading lands.
+///
+/// The frame is `@ScaledMetric` so avatars grow with Dynamic Type. A fixed
+/// 34pt circle beside 40pt text reads as broken; the whole row has to scale
+/// together or the alignment falls apart at accessibility sizes.
 struct AvatarView: View {
     let name: String
     var picture: String?
-    var size: CGFloat = Sizing.avatar
+
+    @ScaledMetric(relativeTo: .subheadline) private var size: CGFloat = Sizing.avatar
 
     var body: some View {
         ZStack {
@@ -111,8 +116,12 @@ struct AvatarView: View {
             Text(name.prefix(1).uppercased())
                 .font(Typography.name)
                 .foregroundStyle(Palette.text)
+                .minimumScaleFactor(0.7)
         }
         .frame(width: size, height: size)
+        // The initial is a stand-in for a face, not information: the row's
+        // label already says who spoke.
+        .accessibilityHidden(true)
     }
 }
 
