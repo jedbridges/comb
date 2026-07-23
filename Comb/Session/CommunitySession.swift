@@ -167,7 +167,8 @@ actor CommunitySession {
         _ text: String,
         in channel: String,
         replyingTo reply: ReplyContext? = nil,
-        attachments: [Blossom.Descriptor] = []
+        attachments: [Blossom.Descriptor] = [],
+        mentioning mentionedPubkeys: [String] = []
     ) async {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         // An attachment is a message on its own; requiring a caption to send a
@@ -182,6 +183,13 @@ actor CommunitySession {
             tags.append(["p", reply.authorPubkey])
         }
         tags.append(contentsOf: attachments.map(Blossom.imetaTag))
+
+        // Normalized the way the relay will normalize it anyway: lowercased,
+        // deduplicated, self dropped, capped. A reply already tags the person
+        // being answered, so that pubkey is in the pool and dedup keeps it
+        // from being tagged twice.
+        let mentions = Mentions.normalize(mentionedPubkeys, sender: me.hex)
+        tags.append(contentsOf: mentions.map { ["p", $0] })
 
         // The markdown link goes in the body as well as the tag, matching Buzz:
         // a client that does not read NIP-92 still shows a usable link instead

@@ -50,6 +50,8 @@ struct ChannelTimelineView: View {
                             entry: entry,
                             reactions: model.snapshot.reactions[entry.row.id] ?? [],
                             loader: loader,
+                            mentionNames: model.mentionNames,
+                            mentionsMe: entry.row.mentions(session.me.hex),
                             onReact: { emoji in
                                 Task { await model.toggleReaction(emoji, on: entry.row.id) }
                             },
@@ -113,6 +115,10 @@ struct ChannelTimelineView: View {
                 onCancelEdit: {
                     editing = nil
                     draft = ""
+                },
+                mentionSuggestions: model.mentionSuggestions,
+                onPickMention: { profile in
+                    draft = model.completeMention(in: draft, with: profile)
                 }
             ) {
                 let text = draft
@@ -125,6 +131,9 @@ struct ChannelTimelineView: View {
                     tray.clear()
                     Task { await model.send(text, attachments: media) }
                 }
+            }
+            .onChange(of: draft) { _, new in
+                model.updateMentionSuggestions(for: new)
             }
         }
         .confirmationDialog(
@@ -267,6 +276,11 @@ struct MessageRow: View {
     let entry: ChannelTimeline.Entry
     let reactions: [ReactionSummary]
     let loader: MediaLoader
+    /// Roster names, so `@mentions` in the body can be highlighted.
+    var mentionNames: [String] = []
+    /// Whether this message names the reader, which earns it a wash of the
+    /// accent down the leading edge.
+    var mentionsMe: Bool = false
     let onReact: (String) -> Void
     let onRetry: () -> Void
     let onDiscard: () -> Void
@@ -356,12 +370,25 @@ struct MessageRow: View {
             Spacer(minLength: 0)
         }
         .padding(.top, entry.showsHeader ? Space.xs : 0)
+        .padding(.vertical, mentionsMe ? Space.xxs : 0)
+        .background {
+            // Being named is the one thing worth finding while scanning, so
+            // it gets a wash rather than only a coloured word inside the
+            // text. Chartreuse at low opacity: the accent stays scarce.
+            if mentionsMe {
+                RoundedRectangle(cornerRadius: Radii.bubble)
+                    .fill(Palette.chartreuse.opacity(0.10))
+            }
+        }
         .opacity(entry.row.delivery == .pending ? 0.55 : 1)
     }
 
     /// What VoiceOver says for this message, in the order a person would.
     private var accessibilityDescription: String {
-        var parts = ["\(entry.row.displayName) said"]
+        // Announced first: it is the reason to care about this row at all.
+        var parts = mentionsMe
+            ? ["Mentions you.", "\(entry.row.displayName) said"]
+            : ["\(entry.row.displayName) said"]
         if entry.row.isDeleted {
             parts.append("message deleted")
         } else {
@@ -398,7 +425,7 @@ struct MessageRow: View {
                 // Linkified: a designers community trades in links, and dead
                 // URLs were the first papercut in every share. Tapping opens
                 // Safari through the standard openURL path.
-                Text("\(Text(MessageLinks.attributed(text)))\(editedMarker)")
+                Text("\(Text(MessageLinks.attributed(text, mentionNames: mentionNames)))\(editedMarker)")
                     .font(Typography.body)
                     .foregroundStyle(Palette.text)
                     .textSelection(.enabled)
@@ -592,6 +619,10 @@ struct ComposeBar: View {
     /// A preview of the message being edited, when the bar is in edit mode.
     var editingPreview: String?
     var onCancelEdit: () -> Void = {}
+    /// Mention suggestions for the token being typed, and what to do with a
+    /// pick. Empty when the draft has no open mention.
+    var mentionSuggestions: [ProfileSummary] = []
+    var onPickMention: (ProfileSummary) -> Void = { _ in }
     let onSend: () -> Void
 
     @State private var picked: [PhotosPickerItem] = []
@@ -640,6 +671,10 @@ struct ComposeBar: View {
                 }
                 .padding(.horizontal, Space.sm)
                 .padding(.top, Space.xxs)
+            }
+
+            if !mentionSuggestions.isEmpty {
+                MentionSuggestions(suggestions: mentionSuggestions, onPick: onPickMention)
             }
 
             if let attachments, !attachments.isEmpty {
@@ -834,10 +869,24 @@ final class ChannelTimeline {
     private let channel: String
     private var visibleLimit = 80
     private var observation: Task<Void, Never>?
+    private let mentions: MentionComposer
 
     init(session: CommunitySession, channel: String) {
         self.session = session
         self.channel = channel
+        self.mentions = MentionComposer(store: session.store, channelID: channel)
+    }
+
+    var mentionSuggestions: [ProfileSummary] { mentions.suggestions }
+    /// Every roster name, for highlighting mentions in rendered messages.
+    var mentionNames: [String] { mentions.candidates.map(\.name) }
+
+    func updateMentionSuggestions(for draft: String) {
+        mentions.update(for: draft)
+    }
+
+    func completeMention(in draft: String, with profile: ProfileSummary) -> String {
+        mentions.complete(draft, with: profile)
     }
 
     /// Oldest first, with run grouping and day breaks resolved.
@@ -847,6 +896,7 @@ final class ChannelTimeline {
 
     func activate() async {
         observe()
+        mentions.loadCandidates()
         await markRead()
     }
 
@@ -858,7 +908,12 @@ final class ChannelTimeline {
     }
 
     func send(_ text: String, attachments: [Blossom.Descriptor] = []) async {
-        await session.send(text, in: channel, attachments: attachments)
+        await session.send(
+            text,
+            in: channel,
+            attachments: attachments,
+            mentioning: mentions.mentionedPubkeys(in: text)
+        )
     }
 
     func edit(_ messageID: String, to newText: String) async {

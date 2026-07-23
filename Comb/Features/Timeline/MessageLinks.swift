@@ -12,7 +12,42 @@ enum MessageLinks {
         types: NSTextCheckingResult.CheckingType.link.rawValue
     )
 
-    static func attributed(_ content: String) -> AttributedString {
+    /// Links, plus `@name` runs highlighted for the given roster.
+    ///
+    /// Names come from the roster rather than a regex over `@\w+`: only a
+    /// real member's name should light up, or every email address and price
+    /// tag becomes a false mention.
+    static func attributed(
+        _ content: String,
+        mentionNames: [String] = []
+    ) -> AttributedString {
+        var attributed = linkified(content)
+
+        // Longest first: "@Greg Christian" must not be half-matched by a
+        // member called "Greg".
+        for name in mentionNames.sorted(by: { $0.count > $1.count }) {
+            let needle = "@\(name)"
+            var searchRange = attributed.startIndex..<attributed.endIndex
+            while let found = attributed[searchRange].range(
+                of: needle, options: .caseInsensitive
+            ) {
+                // Skip anything already carrying a link: a mention inside a
+                // URL is part of the URL.
+                if attributed[found].link == nil {
+                    attributed[found].foregroundColor = Palette.chartreuse
+                    attributed[found].font = Typography.bodyEmphasis
+                }
+                guard found.upperBound < attributed.endIndex else { break }
+                searchRange = found.upperBound..<attributed.endIndex
+            }
+        }
+        return attributed
+    }
+
+    /// Links only. Separate from the mention-aware entry point rather than an
+    /// overload with a default argument: two same-named functions where one
+    /// defaults its extra parameter is a resolution puzzle at every call site.
+    static func linkified(_ content: String) -> AttributedString {
         var attributed = AttributedString(content)
         guard let detector else { return attributed }
 

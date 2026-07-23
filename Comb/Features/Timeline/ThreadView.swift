@@ -59,12 +59,23 @@ struct ThreadView: View {
             .softScrollEdges()
         }
         .safeAreaInset(edge: .bottom) {
-            ComposeBar(draft: $draft, placeholder: "Reply", attachments: tray) {
+            ComposeBar(
+                draft: $draft,
+                placeholder: "Reply",
+                attachments: tray,
+                mentionSuggestions: model.mentionSuggestions,
+                onPickMention: { profile in
+                    draft = model.completeMention(in: draft, with: profile)
+                }
+            ) {
                 let text = draft
                 let media = tray.readyDescriptors
                 draft = ""
                 tray.clear()
                 Task { await model.reply(text, attachments: media) }
+            }
+            .onChange(of: draft) { _, new in
+                model.updateMentionSuggestions(for: new)
             }
         }
         .navigationTitle("Thread")
@@ -92,6 +103,8 @@ struct ThreadView: View {
             entry: entry,
             reactions: model.snapshot.reactions[entry.row.id] ?? [],
             loader: loader,
+            mentionNames: model.mentionNames,
+            mentionsMe: entry.row.mentions(session.me.hex),
             onReact: { emoji in
                 Task { await model.toggleReaction(emoji, on: entry.row.id) }
             },
@@ -129,11 +142,24 @@ final class ThreadModel {
     private let channel: String
     private let root: TimelineRow
     private var observation: Task<Void, Never>?
+    private let mentions: MentionComposer
 
     init(session: CommunitySession, channel: String, root: TimelineRow) {
         self.session = session
         self.channel = channel
         self.root = root
+        self.mentions = MentionComposer(store: session.store, channelID: channel)
+    }
+
+    var mentionSuggestions: [ProfileSummary] { mentions.suggestions }
+    var mentionNames: [String] { mentions.candidates.map(\.name) }
+
+    func updateMentionSuggestions(for draft: String) {
+        mentions.update(for: draft)
+    }
+
+    func completeMention(in draft: String, with profile: ProfileSummary) -> String {
+        mentions.complete(draft, with: profile)
     }
 
     /// Everything but the opener.
@@ -147,16 +173,20 @@ final class ThreadModel {
 
     func activate() async {
         observe()
+        mentions.loadCandidates()
     }
 
     /// Replies to the thread's opener, which is what keeps every reply under one
     /// root instead of chaining each onto the last and splintering the thread.
     func reply(_ text: String, attachments: [Blossom.Descriptor] = []) async {
+        // The thread's opener is always tagged: answering someone is itself a
+        // mention, and normalization dedupes it against any @name in the body.
         await session.send(
             text,
             in: channel,
             replyingTo: ReplyContext(startingThreadOn: root),
-            attachments: attachments
+            attachments: attachments,
+            mentioning: mentions.mentionedPubkeys(in: text)
         )
     }
 

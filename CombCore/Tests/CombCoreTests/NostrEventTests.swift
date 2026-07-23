@@ -319,3 +319,23 @@ struct EventKindTests {
         #expect(!EventKind.groupChatMessage.isRelaySigned)
     }
 }
+
+@Suite("Mentions")
+struct MentionsTests {
+    @Test("lowercases, deduplicates, and drops the sender")
+    func normalizes() {
+        let out = Mentions.normalize(
+            ["ABC", "abc", "def", "ME", "def"],
+            sender: "me"
+        )
+        #expect(out == ["abc", "def"])
+    }
+
+    @Test("keeps first-seen order and caps at the relay's limit")
+    func capsAtLimit() {
+        let many = (0..<60).map { "pk\($0)" }
+        let out = Mentions.normalize(many, sender: "me")
+        #expect(out.count == Mentions.maxPerMessage)
+        #expect(out.first == "pk0")
+    }
+}

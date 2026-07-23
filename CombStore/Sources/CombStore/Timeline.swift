@@ -31,6 +31,13 @@ public struct TimelineRow: Sendable, Hashable, Identifiable {
     public let richContent: String?
     /// Images and video hanging off this message, from its NIP-92 `imeta` tags.
     public let attachments: [Blossom.Attachment]
+    /// Pubkeys this message mentions via `p` tags. Comparing against the
+    /// viewer is what lets a message that names you carry extra weight.
+    public let mentionedPubkeys: [String]
+
+    public func mentions(_ pubkey: String) -> Bool {
+        mentionedPubkeys.contains { $0.caseInsensitiveCompare(pubkey) == .orderedSame }
+    }
 
     /// The body as a person should read it.
     ///
@@ -318,18 +325,21 @@ public extension EventStore {
     /// Done in Swift rather than SQL: the tags are already JSON, the page is at
     /// most a screenful, and pushing JSON parsing into SQLite would buy nothing
     /// but an unreadable query.
-    private static func attachments(
-        inTagsJSON json: String?,
+    private static func decodedTags(
+        fromJSON json: String?,
         decoder: JSONDecoder
-    ) -> [Blossom.Attachment] {
+    ) -> [[String]] {
         guard let json,
               let tags = try? decoder.decode([[String]].self, from: Data(json.utf8))
         else { return [] }
-        return Blossom.attachments(in: tags)
+        return tags
     }
 
     private static func makeRow(_ row: Row, decoder: JSONDecoder) -> TimelineRow {
         let edited: String? = row["edited"]
+        // Decoded once per row and read twice: attachments and mentions both
+        // come from the same tag array.
+        let tags = decodedTags(fromJSON: row["tags"], decoder: decoder)
         return TimelineRow(
             id: row["id"],
             pubkey: row["pubkey"],
@@ -346,7 +356,10 @@ public extension EventStore {
             replyCount: row["reply_count"] ?? 0,
             lastReplyAt: row["last_reply_at"],
             richContent: row["rich"],
-            attachments: Self.attachments(inTagsJSON: row["tags"], decoder: decoder)
+            attachments: Blossom.attachments(in: tags),
+            mentionedPubkeys: tags.compactMap {
+                $0.count >= 2 && $0[0] == "p" ? $0[1] : nil
+            }
         )
     }
 
