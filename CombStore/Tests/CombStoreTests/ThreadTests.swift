@@ -258,6 +258,54 @@ struct MessageTextTests {
         let body = "shot <https://example.com/a>\n![image](https://relay.example/m/1.png)"
         #expect(MessageText.display(body) == "shot https://example.com/a")
     }
+
+    @Test("an inline link shows its label and keeps its destination")
+    func inlineLink() {
+        let body = "made a video [on X](https://x.com/pavlenex/status/207) earlier"
+        let (text, links) = MessageText.expandingInlineLinks(body)
+
+        #expect(text == "made a video on X earlier")
+        #expect(links.count == 1)
+        #expect(links.first?.url.absoluteString == "https://x.com/pavlenex/status/207")
+        // The label, and only the label.
+        #expect((text as NSString).substring(with: links[0].range) == "on X")
+    }
+
+    @Test("several inline links keep their own destinations")
+    func severalInlineLinks() {
+        let body = "[one](https://a.example) then [two](https://b.example)"
+        let (text, links) = MessageText.expandingInlineLinks(body)
+
+        #expect(text == "one then two")
+        #expect(links.map(\.url.absoluteString) == ["https://a.example", "https://b.example"])
+        #expect((text as NSString).substring(with: links[0].range) == "one")
+        #expect((text as NSString).substring(with: links[1].range) == "two")
+    }
+
+    @Test("a non-http destination is left as written")
+    func inlineLinkRejectsOtherSchemes() {
+        // Nothing is rewritten, so the reader sees the raw markup and can tell
+        // that something unusual was in the message. Silently showing a
+        // friendly label over a javascript: or file: target is the whole
+        // link-spoofing trick.
+        let body = "tap [here](javascript:alert(1)) now"
+        let (text, links) = MessageText.expandingInlineLinks(body)
+        #expect(text == body)
+        #expect(links.isEmpty)
+    }
+
+    @Test("a label long enough to hide a destination is left as written")
+    func inlineLinkRejectsParagraphLabels() {
+        let label = String(repeating: "a", count: 200)
+        let body = "[\(label)](https://example.com)"
+        #expect(MessageText.expandingInlineLinks(body).text == body)
+    }
+
+    @Test("ordinary brackets and parentheses survive")
+    func leavesOrdinaryBrackets() {
+        #expect(MessageText.display("see [1] (page 4)") == "see [1] (page 4)")
+        #expect(MessageText.display("array[i] (fast)") == "array[i] (fast)")
+    }
 }
 
 @Suite("Ownership of edits and deletions", .timeLimit(.minutes(1)))

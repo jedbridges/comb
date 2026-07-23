@@ -9,8 +9,83 @@ public enum MessageText {
     /// for one step and forgets the other is how a channel preview and its
     /// timeline end up disagreeing about what a message says.
     public static func display(_ content: String) -> String {
-        unwrappingAutolinks(withoutMediaMarkdown(content))
+        expandingInlineLinks(unwrappingAutolinks(withoutMediaMarkdown(content))).text
     }
+
+    /// A `[label](url)` in a message body, once the markup is gone.
+    public struct InlineLink: Sendable, Equatable {
+        /// Where the label ended up in the rewritten text.
+        public let range: NSRange
+        public let url: URL
+    }
+
+    /// Rewrites `[label](url)` to just `label`, and reports where each label
+    /// landed so a renderer can make it tappable.
+    ///
+    /// Buzz's composer writes these when someone pastes a link over selected
+    /// text, and its own client renders them, so in Comb they arrived as raw
+    /// brackets and parentheses with a URL repeated twice.
+    ///
+    /// Showing the label and attaching the URL, rather than picking one, is
+    /// the only choice that loses nothing: dropping the URL leaves an
+    /// often-truncated label that goes nowhere, and dropping the label shows a
+    /// wall of URL the author had already chosen to hide.
+    ///
+    /// Callers that only need text take `.text` and ignore the rest, which is
+    /// what `display` does for channel previews and search results.
+    public static func expandingInlineLinks(
+        _ content: String
+    ) -> (text: String, links: [InlineLink]) {
+        guard content.contains("](") else { return (content, []) }
+
+        let source = content as NSString
+        let matches = inlineLink.matches(
+            in: content,
+            range: NSRange(location: 0, length: source.length)
+        )
+        guard !matches.isEmpty else { return (content, []) }
+
+        var output = ""
+        var links: [InlineLink] = []
+        var cursor = 0
+
+        for match in matches {
+            let target = source.substring(with: match.range(at: 2))
+            guard let url = URL(string: target),
+                  let scheme = url.scheme?.lowercased(),
+                  scheme == "https" || scheme == "http"
+            else {
+                // Left exactly as written. The cursor does not advance, so the
+                // untouched markup is carried over by the next append.
+                continue
+            }
+
+            output += source.substring(
+                with: NSRange(location: cursor, length: match.range.location - cursor)
+            )
+            let label = source.substring(with: match.range(at: 1))
+            let start = (output as NSString).length
+            output += label
+            links.append(
+                InlineLink(
+                    range: NSRange(location: start, length: (label as NSString).length),
+                    url: url
+                )
+            )
+            cursor = match.range.location + match.range.length
+        }
+
+        output += source.substring(from: cursor)
+        return (output, links)
+    }
+
+    /// The label is capped and may not span lines: an unbounded one would let
+    /// a single message hide an arbitrary destination behind arbitrary text,
+    /// which is the shape of every link-spoofing trick there is. A short label
+    /// on one line is a link; a paragraph is something else.
+    private static let inlineLink = try! NSRegularExpression(
+        pattern: #"\[([^\]\n]{1,120})\]\((https?://[^)\s]+)\)"#
+    )
 
     /// Removes the angle brackets from a Markdown autolink, `<https://…>`.
     ///

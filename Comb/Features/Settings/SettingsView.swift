@@ -40,7 +40,12 @@ struct SettingsView: View {
                 } header: {
                     Text("Your account")
                 } footer: {
-                    Text("Your name is what people see in channels. The only copy of this account is on this iPhone.")
+                    // A claim about what Comb does, not about the world. The
+                    // previous wording said this was the only copy of the
+                    // account, which Comb cannot know: anyone who arrived
+                    // through Sign in with your key already has it on the
+                    // machine they copied it from.
+                    Text("Your name is what people see in channels. Comb keeps this account on this iPhone: it is never copied to iCloud or included in a backup.")
                 }
                 .combRows()
 

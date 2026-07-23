@@ -1,3 +1,4 @@
+import CombStore
 import Foundation
 
 /// Makes URLs in a message tappable, and nothing else.
@@ -18,10 +19,23 @@ enum MessageLinks {
     /// real member's name should light up, or every email address and price
     /// tag becomes a false mention.
     static func attributed(
-        _ content: String,
+        _ rawContent: String,
         mentionNames: [String] = []
     ) -> AttributedString {
+        // `[label](url)` collapses to the label first, so everything below
+        // works on the text a reader actually sees. Doing it here rather than
+        // in `display` keeps the URLs, which a plain String cannot carry.
+        let (content, inlineLinks) = MessageText.expandingInlineLinks(rawContent)
+
         var attributed = linkified(content)
+
+        for link in inlineLinks {
+            guard let swiftRange = Range(link.range, in: content),
+                  let range = Range(swiftRange, in: attributed)
+            else { continue }
+            attributed[range].link = link.url
+            attributed[range].underlineStyle = .single
+        }
 
         // Ranges are found in the plain String and then mapped across, rather
         // than walking AttributedString slices. Slice-walking looked fine and
