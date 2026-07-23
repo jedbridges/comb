@@ -23,22 +23,41 @@ enum MessageLinks {
     ) -> AttributedString {
         var attributed = linkified(content)
 
-        // Longest first: "@Greg Christian" must not be half-matched by a
-        // member called "Greg".
+        // Ranges are found in the plain String and then mapped across, rather
+        // than walking AttributedString slices. Slice-walking looked fine and
+        // was not: it searched a re-sliced view each pass, which made loop
+        // termination depend on index arithmetic across two index spaces and
+        // could leave the timeline rendering nothing at all.
+        //
+        // Longest first, so "@Greg Christian" is not half-matched by a member
+        // called "Greg", and already-claimed ranges are skipped so the shorter
+        // name cannot then overwrite part of the longer one.
+        var claimed: [Range<String.Index>] = []
+
         for name in mentionNames.sorted(by: { $0.count > $1.count }) {
-            let needle = "@\(name)"
-            var searchRange = attributed.startIndex..<attributed.endIndex
-            while let found = attributed[searchRange].range(
-                of: needle, options: .caseInsensitive
-            ) {
-                // Skip anything already carrying a link: a mention inside a
-                // URL is part of the URL.
-                if attributed[found].link == nil {
-                    attributed[found].foregroundColor = Palette.chartreuse
-                    attributed[found].font = Typography.bodyEmphasis
+            guard !name.isEmpty else { continue }
+            let needle = "@" + name
+
+            var searchStart = content.startIndex
+            while searchStart < content.endIndex,
+                  let found = content.range(
+                      of: needle,
+                      options: .caseInsensitive,
+                      range: searchStart..<content.endIndex
+                  ) {
+                // Always advance past the match, so this terminates whatever
+                // the haystack contains.
+                searchStart = found.upperBound
+
+                guard !claimed.contains(where: { $0.overlaps(found) }) else { continue }
+                guard let range = Range(found, in: attributed) else { continue }
+
+                // A mention inside a URL is part of the URL.
+                if attributed[range].link == nil {
+                    attributed[range].foregroundColor = Palette.chartreuse
+                    attributed[range].font = Typography.bodyEmphasis
+                    claimed.append(found)
                 }
-                guard found.upperBound < attributed.endIndex else { break }
-                searchRange = found.upperBound..<attributed.endIndex
             }
         }
         return attributed
