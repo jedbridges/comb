@@ -63,7 +63,8 @@ struct ChannelTimelineView: View {
                 if channel.memberCount > 0 {
                     Label("\(channel.memberCount)", systemImage: "person.2")
                         .font(Typography.count)
-                        .foregroundStyle(Palette.subtext)
+                        .foregroundStyle(Palette.text)
+                        .luminousChrome()
                 }
             }
         }
@@ -136,6 +137,7 @@ private struct MessageRow: View {
                         Text(entry.row.date, format: .dateTime.hour().minute())
                             .font(Typography.caption)
                             .foregroundStyle(Palette.subtext)
+                            .luminousChrome()
                     }
                 }
 

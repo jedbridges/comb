@@ -35,6 +35,11 @@ enum Palette {
     static let accent = adaptive(light: 0x8839EF, dark: 0xA875F5)
     static let link = adaptive(light: 0x1E66F5, dark: 0x8AADF4)
 
+    /// A hue-preserving lift for surfaces sitting on the gradient. White at low
+    /// opacity shifts lightness without introducing a competing grey.
+    static let liftOnGradient = Color.white.opacity(0.07)
+    static let hairlineOnGradient = Color.white.opacity(0.10)
+
     // MARK: - Glyphs
 
     /// The channel badge's fill: a muted tone that sits back from the text

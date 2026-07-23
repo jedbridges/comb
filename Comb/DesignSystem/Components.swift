@@ -163,15 +163,55 @@ extension View {
         modifier(CombFormStyle())
     }
 
-    /// The translucent row treatment, so rows float on the gradient instead of
-    /// sitting on opaque system grey.
+    /// The row treatment: a luminance lift that keeps the gradient's own hue.
+    ///
+    /// A grey fill over a coloured backdrop always reads washed out, because
+    /// the grey is a literal grey fighting the hue behind it. White at low
+    /// opacity is a pure lightness shift, so the row stays olive at the top of
+    /// the screen and blue at the bottom, exactly like the gradient it sits on.
+    /// The hairline does the same job for the edge.
     ///
     /// Applied per `Section`, because SwiftUI only honours `listRowBackground`
     /// on row content: setting it on the `Form` itself silently does nothing.
     func combRows() -> some View {
         listRowBackground(
             RoundedRectangle(cornerRadius: Radii.bubble)
-                .fill(Palette.surface.opacity(0.30))
+                .fill(Color.white.opacity(0.07))
+                .overlay(
+                    RoundedRectangle(cornerRadius: Radii.bubble)
+                        .strokeBorder(Color.white.opacity(0.10), lineWidth: 0.5)
+                )
         )
+    }
+}
+
+
+// MARK: - Chrome over the gradient
+
+/// Makes controls and secondary text sit *in* the gradient rather than on top
+/// of it, by blending rather than compositing flat.
+///
+/// Grey chrome over a coloured backdrop reads as dead: the grey is a literal
+/// grey, so it fights the hue behind it instead of belonging to it.
+/// `plusLighter` adds the source to the destination, so light content glows
+/// through and picks up the backdrop's colour. It is the treatment Apple uses
+/// for overlay chrome on media.
+///
+/// The blend has to invert with the appearance: `plusLighter` on a light
+/// background blows out to white, so light mode gets `plusDarker`, which is the
+/// same idea in the other direction.
+struct LuminousChrome: ViewModifier {
+    @Environment(\.colorScheme) private var scheme
+
+    func body(content: Content) -> some View {
+        content.blendMode(scheme == .dark ? .plusLighter : .plusDarker)
+    }
+}
+
+extension View {
+    /// Blends chrome into the gradient instead of laying it flat on top.
+    /// For toolbar glyphs, secondary text, and separators over the backdrop.
+    func luminousChrome() -> some View {
+        modifier(LuminousChrome())
     }
 }

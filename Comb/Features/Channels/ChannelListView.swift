@@ -60,7 +60,8 @@ struct ChannelListView: View {
                 } label: {
                     Image(systemName: "gearshape")
                         .font(Typography.actionSecondary)
-                        .foregroundStyle(Palette.subtext)
+                        .foregroundStyle(Palette.text)
+                        .luminousChrome()
                 }
                 .accessibilityLabel("Settings")
             }
@@ -112,7 +113,8 @@ struct ChannelListView: View {
         } label: {
             Image(systemName: "square.grid.2x2")
                 .font(Typography.actionSecondary)
-                .foregroundStyle(Palette.subtext)
+                .foregroundStyle(Palette.text)
+                .luminousChrome()
         }
         .accessibilityLabel("Communities")
         .accessibilityHint("Switch between communities or add another")
@@ -183,6 +185,7 @@ private struct ChannelRow: View {
                         Text(when, format: .relative(presentation: .named))
                             .font(Typography.caption)
                             .foregroundStyle(Palette.subtext)
+                            .luminousChrome()
                     }
                 }
 
@@ -204,7 +207,8 @@ private struct ChannelRow: View {
                         Label("\(channel.memberCount)", systemImage: "person.2")
                             .font(Typography.count)
                             .labelStyle(.titleAndIcon)
-                            .foregroundStyle(Palette.subtext.opacity(0.8))
+                            .foregroundStyle(Palette.subtext)
+                            .luminousChrome()
                     }
                 }
             }
