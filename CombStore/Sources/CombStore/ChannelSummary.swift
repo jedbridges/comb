@@ -39,7 +39,9 @@ public extension EventStore {
                      WHERE m.channel_id = c.id)                       AS members,
                    (SELECT e.content FROM event e
                      WHERE e.h = c.id AND e.kind = :kind
-                       AND NOT EXISTS (SELECT 1 FROM deletion d WHERE d.target_id = e.id)
+                       AND NOT EXISTS (SELECT 1 FROM deletion d
+                                        WHERE d.target_id = e.id
+                                          AND (d.kind = 9005 OR d.deleted_by = e.pubkey))
                      ORDER BY e.created_at DESC, e.id DESC LIMIT 1)   AS last_message,
                    (SELECT p.display_name FROM event e
                      LEFT JOIN profile p ON p.pubkey = e.pubkey
@@ -54,7 +56,9 @@ public extension EventStore {
                        AND e.created_at > COALESCE(
                              (SELECT r.last_read_at FROM read_state r
                                WHERE r.channel_id = c.id), 0)
-                       AND NOT EXISTS (SELECT 1 FROM deletion d WHERE d.target_id = e.id)
+                       AND NOT EXISTS (SELECT 1 FROM deletion d
+                                        WHERE d.target_id = e.id
+                                          AND (d.kind = 9005 OR d.deleted_by = e.pubkey))
                    )                                                  AS unread
             FROM channel c
             ORDER BY last_at IS NULL, last_at DESC, c.name COLLATE NOCASE ASC

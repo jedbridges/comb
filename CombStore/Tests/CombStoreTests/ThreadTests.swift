@@ -225,3 +225,128 @@ struct MessageTextTests {
         #expect(MessageText.withoutMediaMarkdown("") == "")
     }
 }
+
+@Suite("Ownership of edits and deletions", .timeLimit(.minutes(1)))
+struct OwnershipTests {
+    // Hosted Buzz enforces these rules server-side. These tests exist because
+    // Comb also speaks to plain NIP-29 relays, where the only thing standing
+    // between a hostile member and everyone else's message history is the
+    // read-time predicates under test here.
+
+    @Test("a foreign edit does not rewrite someone else's message")
+    func foreignEditIgnored() async throws {
+        let store = try EventStore()
+        let author = try Fixture()
+        let attacker = try Fixture()
+
+        let message = try author.message("the original", at: 1000)
+        _ = try await store.ingest([
+            message,
+            try attacker.event(
+                .buzzEdit, "rewritten by someone else",
+                tags: [["h", "room-1"], ["e", message.id]], at: 1100
+            ),
+        ])
+
+        let row = try #require(try store.timeline(channel: "room-1").first)
+        #expect(row.content == "the original")
+        #expect(!row.isEdited)
+    }
+
+    @Test("the author's own edit still applies")
+    func ownEditApplies() async throws {
+        let store = try EventStore()
+        let author = try Fixture()
+
+        let message = try author.message("tpyo", at: 1000)
+        _ = try await store.ingest([
+            message,
+            try author.event(
+                .buzzEdit, "typo",
+                tags: [["h", "room-1"], ["e", message.id]], at: 1100
+            ),
+        ])
+
+        let row = try #require(try store.timeline(channel: "room-1").first)
+        #expect(row.content == "typo")
+        #expect(row.isEdited)
+    }
+
+    @Test("a foreign kind 5 does not delete someone else's message")
+    func foreignDeletionIgnored() async throws {
+        let store = try EventStore()
+        let author = try Fixture()
+        let attacker = try Fixture()
+
+        let message = try author.message("still here", at: 1000)
+        _ = try await store.ingest([
+            message,
+            try attacker.event(.deletion, "", tags: [["e", message.id]], at: 1100),
+        ])
+
+        let row = try #require(try store.timeline(channel: "room-1").first)
+        #expect(!row.isDeleted)
+    }
+
+    @Test("a moderator tombstone deletes regardless of author")
+    func moderatorDeletionHonoured() async throws {
+        // Kind 9005 is the relay's moderation surface: in NIP-29 the relay is
+        // the group authority, so a 9005 it accepted is followed.
+        let store = try EventStore()
+        let author = try Fixture()
+        let moderator = try Fixture()
+
+        let message = try author.message("moderated away", at: 1000)
+        _ = try await store.ingest([
+            message,
+            try moderator.event(
+                .groupDeleteEvent, "",
+                tags: [["h", "room-1"], ["e", message.id]], at: 1100
+            ),
+        ])
+
+        let row = try #require(try store.timeline(channel: "room-1").first)
+        #expect(row.isDeleted)
+    }
+
+    @Test("a foreign kind 5 cannot erase someone else's reaction")
+    func foreignReactionDeletionIgnored() async throws {
+        let store = try EventStore()
+        let author = try Fixture()
+        let reactor = try Fixture()
+        let attacker = try Fixture()
+
+        let message = try author.message("react to me", at: 1000)
+        let reaction = try reactor.event(
+            .reaction, "🔥", tags: [["e", message.id]], at: 1100
+        )
+        _ = try await store.ingest([
+            message,
+            reaction,
+            try attacker.event(.deletion, "", tags: [["e", reaction.id]], at: 1200),
+        ])
+
+        let tallies = try store.reactions(for: [message.id], me: nil)
+        #expect(tallies[message.id]?.first?.count == 1)
+    }
+
+    @Test("a foreign kind 5 does not blank the channel preview or unread")
+    func foreignDeletionDoesNotTouchSummaries() async throws {
+        let store = try EventStore()
+        let author = try Fixture()
+        let attacker = try Fixture()
+
+        _ = try await store.ingest([
+            try author.event(.groupMetadata, #"{"name":"General"}"#, tags: [["d", "room-1"]], at: 900),
+        ])
+        let message = try author.message("the preview", at: 1000)
+        _ = try await store.ingest([
+            message,
+            try attacker.event(.deletion, "", tags: [["e", message.id]], at: 1100),
+        ])
+
+        let summary = try #require(try store.channelSummaries(me: "").first)
+        #expect(summary.lastMessage == "the preview")
+        #expect(summary.unreadCount == 1)
+    }
+}

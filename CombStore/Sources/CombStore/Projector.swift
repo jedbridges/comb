@@ -177,20 +177,25 @@ enum Projector {
 
     // MARK: - Deletions
 
-    /// Kind 5 (self-deletion) and kind 9005 (moderator deletion).
+    /// Records a deletion without judging it. Whether it takes effect is
+    /// decided at read time, where the target's author is known: a kind 5
+    /// only erases its own author's events, while a kind 9005 is the relay's
+    /// moderation tombstone and is honoured from anyone the relay accepted,
+    /// because in NIP-29 the relay is the group's moderation authority.
     ///
-    /// Authority is not checked here. The relay decides whether a deletion is
-    /// permitted; a client that enforced its own rules would disagree with what
-    /// other members see.
+    /// Without that read-time check, any member of a plain NIP-29 relay could
+    /// publish a valid kind 5 naming someone else's message and blank it on
+    /// every Comb screen. Hosted Buzz rejects those server-side; Comb cannot
+    /// assume every relay it meets does.
     private static func projectDeletion(_ event: NostrEvent, into db: Database) throws {
         for target in event.referencedEventIDs {
             try db.execute(
                 sql: """
-                    INSERT INTO deletion (event_id, target_id, deleted_by, created_at)
-                    VALUES (?, ?, ?, ?)
+                    INSERT INTO deletion (event_id, target_id, deleted_by, kind, created_at)
+                    VALUES (?, ?, ?, ?, ?)
                     ON CONFLICT(event_id) DO NOTHING
                     """,
-                arguments: [event.id, target, event.pubkey, event.createdAt]
+                arguments: [event.id, target, event.pubkey, event.kind.rawValue, event.createdAt]
             )
         }
     }

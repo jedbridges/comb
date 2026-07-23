@@ -232,6 +232,15 @@ public extension EventStore {
 
     /// A message from the log, with its author, edits and thread position.
     ///
+    /// Ownership is enforced here, at read time, not at ingest: an edit only
+    /// applies when its signer is the message's author, and a kind 5 deletion
+    /// only when it names its own author's event. Kind 9005 is the relay's
+    /// moderation tombstone and is honoured from anyone the relay accepted,
+    /// because in NIP-29 the relay is the group's moderation authority.
+    /// Hosted Buzz enforces all of this server-side; a plain NIP-29 relay may
+    /// not, and without these predicates any member there could rewrite or
+    /// blank anyone else's messages on every Comb screen.
+    ///
     /// The reply tallies exclude deleted replies: a thread whose only reply was
     /// removed should stop advertising one.
     private static func eventBranch(where predicate: String) -> String {
@@ -242,9 +251,12 @@ public extension EventStore {
                e.content           AS content,
                (SELECT ed.content FROM edit ed
                  WHERE ed.target_id = e.id
+                   AND ed.pubkey = e.pubkey
                  ORDER BY ed.created_at DESC, ed.event_id DESC
                  LIMIT 1)          AS edited,
-               EXISTS(SELECT 1 FROM deletion d WHERE d.target_id = e.id) AS deleted,
+               EXISTS(SELECT 1 FROM deletion d
+                       WHERE d.target_id = e.id
+                         AND (d.kind = 9005 OR d.deleted_by = e.pubkey)) AS deleted,
                rc.payload          AS rich,
                p.display_name      AS display_name,
                p.picture           AS picture,
@@ -254,12 +266,16 @@ public extension EventStore {
                (SELECT COUNT(*) FROM thread tc
                  WHERE tc.root_id = e.id
                    AND NOT EXISTS (
-                         SELECT 1 FROM deletion dc WHERE dc.target_id = tc.event_id
+                         SELECT 1 FROM deletion dc
+                          WHERE dc.target_id = tc.event_id
+                            AND (dc.kind = 9005 OR dc.deleted_by = tc.pubkey)
                        )) AS reply_count,
                (SELECT MAX(tl.created_at) FROM thread tl
                  WHERE tl.root_id = e.id
                    AND NOT EXISTS (
-                         SELECT 1 FROM deletion dl WHERE dl.target_id = tl.event_id
+                         SELECT 1 FROM deletion dl
+                          WHERE dl.target_id = tl.event_id
+                            AND (dl.kind = 9005 OR dl.deleted_by = tl.pubkey)
                        )) AS last_reply_at,
                e.tags              AS tags,
                'sent'              AS state,
@@ -348,7 +364,9 @@ public extension EventStore {
                    MAX(pubkey = ?) AS mine
             FROM reaction
             WHERE target_id IN (\(placeholders))
-              AND NOT EXISTS (SELECT 1 FROM deletion d WHERE d.target_id = reaction.event_id)
+              AND NOT EXISTS (SELECT 1 FROM deletion d
+                               WHERE d.target_id = reaction.event_id
+                                 AND (d.kind = 9005 OR d.deleted_by = reaction.pubkey))
             GROUP BY target_id, emoji
             ORDER BY n DESC, emoji ASC
             """
@@ -384,7 +402,9 @@ public extension EventStore {
             try String.fetchOne(db, sql: """
                 SELECT event_id FROM reaction
                 WHERE target_id = ? AND emoji = ? AND pubkey = ?
-                  AND NOT EXISTS (SELECT 1 FROM deletion d WHERE d.target_id = reaction.event_id)
+                  AND NOT EXISTS (SELECT 1 FROM deletion d
+                                   WHERE d.target_id = reaction.event_id
+                                     AND (d.kind = 9005 OR d.deleted_by = reaction.pubkey))
                 LIMIT 1
                 """, arguments: [target, emoji, pubkey])
         }
