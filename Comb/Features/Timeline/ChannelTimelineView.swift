@@ -26,9 +26,17 @@ struct ChannelTimelineView: View {
     @State private var toast: String?
     @Environment(\.dismiss) private var dismiss
 
-    init(session: CommunitySession, channel: ChannelSummary) {
+    /// A message to scroll to and briefly flag on open, from a deep link.
+    let scrollToMessageID: String?
+    /// The row currently flashed as "you jumped here". Cleared on a timer, so
+    /// the highlight fades rather than staying stuck to a message the reader
+    /// has moved on from.
+    @State private var highlightedID: String?
+
+    init(session: CommunitySession, channel: ChannelSummary, scrollToMessageID: String? = nil) {
         self.session = session
         self.channel = channel
+        self.scrollToMessageID = scrollToMessageID
         _model = State(initialValue: ChannelTimeline(session: session, channel: channel.id))
         _tray = State(initialValue: AttachmentTray(session: session))
         _loader = State(initialValue: MediaLoader(session: session))
@@ -115,7 +123,18 @@ struct ChannelTimelineView: View {
                                 }
                             }
                         )
-                        // The anchor the jump-to-bottom pill scrolls to.
+                        // A brief wash when a deep link lands here, so the eye
+                        // finds the message it jumped to. Transient, unlike the
+                        // (removed) persistent mention wash.
+                        .background {
+                            if entry.row.id == highlightedID {
+                                RoundedRectangle(cornerRadius: Radii.bubble)
+                                    .fill(Palette.chartreuse.opacity(0.12))
+                                    .padding(.horizontal, -Space.xs)
+                            }
+                        }
+                        // The anchor the jump-to-bottom pill and deep links
+                        // scroll to.
                         .id(entry.row.id)
                     }
                 }
@@ -152,6 +171,10 @@ struct ChannelTimelineView: View {
                     jumpToBottom(proxy)
                 }
             }
+            // A deep link opened this channel: land on the message once the
+            // rows are loaded. Runs on first populate and, if the message was
+            // not in the first page, again as more history arrives.
+            .task(id: model.displayRows.count) { jumpToDeepLink(proxy) }
             }
 
             if model.displayRows.isEmpty {
@@ -283,6 +306,31 @@ struct ChannelTimelineView: View {
     ) -> (() -> Void)? {
         guard row.pubkey == session.me.hex, !row.isDeleted else { return nil }
         return action
+    }
+
+    /// Scrolls to a deep-linked message and flashes it, once.
+    ///
+    /// Guarded on `highlightedID` so the repeated `.task(id:)` firings as
+    /// history streams in do not re-scroll after the reader has arrived. If the
+    /// message is not in the loaded window it simply does nothing this pass; a
+    /// later firing, once older history has loaded, catches it.
+    private func jumpToDeepLink(_ proxy: ScrollViewProxy) {
+        guard let scrollToMessageID, highlightedID == nil,
+              model.displayRows.contains(where: { $0.row.id == scrollToMessageID })
+        else { return }
+
+        withAnimation(Motion.standard) {
+            proxy.scrollTo(scrollToMessageID, anchor: .center)
+        }
+        highlightedID = scrollToMessageID
+
+        // The flash fades on its own: a highlight that stayed would just be a
+        // second, permanent kind of mention wash, which is the thing already
+        // cut from this screen.
+        Task {
+            try? await Task.sleep(for: .seconds(2))
+            withAnimation(Motion.standard) { highlightedID = nil }
+        }
     }
 
     /// The way back to now, present only once the reader has left it.

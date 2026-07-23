@@ -82,6 +82,35 @@ final class AppModel {
         openOnArrival = nil
     }
 
+    /// A message to open, from a tapped `buzz://message` link or a mention
+    /// notification. The channel list watches this, resolves the channel, and
+    /// scrolls the timeline to it.
+    private(set) var pendingMessage: MessageLink.Target?
+
+    /// Routes to a message, switching community first if the link names a
+    /// different host than the one open.
+    ///
+    /// `host` comes from a notification, which knows which community it woke
+    /// for; an in-app "Copy link" tap has no host because the target is always
+    /// the community already on screen.
+    func route(to target: MessageLink.Target, host: String?) async {
+        if let host,
+           case .active(let current) = stage,
+           current.relayURL.host?.lowercased() != host.lowercased(),
+           let community = CommunityRegistry.all().first(where: { $0.host == host }) {
+            await openCommunity(community)
+        }
+        // Set after any switch, so the list that observes it is the newly
+        // opened community's.
+        pendingMessage = target
+    }
+
+    /// Consumed once the channel has been pushed, so returning to the list
+    /// later does not re-navigate.
+    func consumePendingMessage() {
+        pendingMessage = nil
+    }
+
     /// Every community this device has joined, most recent first.
     var communities: [JoinedCommunity] {
         #if DEBUG

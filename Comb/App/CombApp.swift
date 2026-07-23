@@ -1,12 +1,89 @@
 import CombNet
 import SwiftUI
+import UIKit
 import UserNotifications
+
+/// Receives notification taps, which SwiftUI has no native hook for.
+///
+/// The delegate must be set before a tap can be delivered, so it is installed
+/// in `didFinishLaunching`; a tap that launched the app cold is held by the
+/// system until the delegate is ready. It only translates the tap into a
+/// message target and hands it up; the routing itself is the model's.
+@MainActor
+final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
+    /// Set by the app once the scene exists. Optional because a cold-launch tap
+    /// can arrive before the SwiftUI layer has wired it up; the pending value
+    /// below covers that gap.
+    var onMessageTap: ((MessageLink.Target, String?) -> Void)? {
+        didSet { flushPending() }
+    }
+
+    /// A tap that arrived before `onMessageTap` was set, replayed the moment it is.
+    private var pending: (MessageLink.Target, String?)?
+
+    nonisolated func application(
+        _ application: UIApplication,
+        didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
+    ) -> Bool {
+        // The center's delegate is nonisolated-safe to set here; the delegate
+        // callbacks below hop to the main actor themselves.
+        UNUserNotificationCenter.current().delegate = self
+        return true
+    }
+
+    /// A notification tapped. The message link is carried in `userInfo`, and
+    /// the host beside it so a tap can switch to the community it woke for.
+    ///
+    /// `nonisolated` because the system calls it off the main actor; only the
+    /// plain String values cross the hop, which are Sendable.
+    nonisolated func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        didReceive response: UNNotificationResponse,
+        withCompletionHandler completionHandler: @escaping () -> Void
+    ) {
+        let info = response.notification.request.content.userInfo
+        let link = info["comb.messageLink"] as? String
+        let host = info["comb.host"] as? String
+        if let link, let target = MessageLink.parse(link) {
+            Task { @MainActor in deliver(target, host) }
+        }
+        // Called on the delegate's own thread, immediately: the routing is
+        // dispatched above and does not gate completion.
+        completionHandler()
+    }
+
+    /// A notification arriving while the app is foregrounded still shows, so a
+    /// mention is not silently swallowed just because Comb happens to be open
+    /// on another channel.
+    nonisolated func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification,
+        withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+    ) {
+        completionHandler([.banner, .sound])
+    }
+
+    private func deliver(_ target: MessageLink.Target, _ host: String?) {
+        if let onMessageTap {
+            onMessageTap(target, host)
+        } else {
+            pending = (target, host)
+        }
+    }
+
+    private func flushPending() {
+        guard let pending, let onMessageTap else { return }
+        onMessageTap(pending.0, pending.1)
+        self.pending = nil
+    }
+}
 
 @main
 struct CombApp: App {
     @State private var model = AppModel()
     @State private var pendingInvite: String?
     @Environment(\.scenePhase) private var scenePhase
+    @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     init() {
         // Must run before launch finishes, per BGTaskScheduler. Registering the
@@ -34,12 +111,26 @@ struct CombApp: App {
                 }
             }
             .onOpenURL { url in
+                // A message link routes to the message; an invite opens the
+                // join flow. Message is checked first because both share the
+                // buzz:// scheme and only the host tells them apart.
+                if let target = MessageLink.parse(url.absoluteString) {
+                    Task { await model.route(to: target, host: nil) }
+                    return
+                }
                 // buzz:// and comb:// join links, honoured in either stage:
                 // signed out they open the welcome join flow, signed in they
                 // present the join sheet over the open community. Silently
                 // ignoring a tapped invite is never the right answer.
                 guard InviteLink.parse(url.absoluteString) != nil else { return }
                 pendingInvite = url.absoluteString
+            }
+            .onAppear {
+                // A notification tapped while the app was closed routes through
+                // the delegate; wire it to the model once the scene exists.
+                appDelegate.onMessageTap = { target, host in
+                    Task { await model.route(to: target, host: host) }
+                }
             }
         }
     }
@@ -94,6 +185,8 @@ private struct CommunityRoot: View {
                 },
                 onJoined: { model.adopt($0, landingInBusiestChannel: true) },
                 pendingInvite: $pendingInvite,
+                pendingMessage: model.pendingMessage,
+                onMessageConsumed: { model.consumePendingMessage() },
                 onDisconnect: {
                     Task { await model.signOut() }
                 }

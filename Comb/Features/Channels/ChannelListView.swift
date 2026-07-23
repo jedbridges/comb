@@ -21,6 +21,10 @@ struct ChannelListView: View {
     /// An invite link tapped while this community is open. Routes into the
     /// join sheet rather than being silently dropped.
     @Binding var pendingInvite: String?
+    /// A message to open, from a deep link or a mention notification. Resolved
+    /// to a channel and pushed, with the timeline scrolling to it.
+    var pendingMessage: MessageLink.Target?
+    var onMessageConsumed: () -> Void = {}
 
     @State private var model: ChannelListModel
     @State private var isShowingSettings = false
@@ -30,6 +34,15 @@ struct ChannelListView: View {
     @State private var isBrowsing = false
     @State private var isAddingByInvite = false
     @State private var arrivalChannel: ChannelSummary?
+    @State private var deepLink: DeepLinkChannel?
+
+    /// A resolved deep-link destination: the channel to push, and the message
+    /// to scroll to once it is on screen.
+    struct DeepLinkChannel: Hashable, Identifiable {
+        let channel: ChannelSummary
+        let messageID: String
+        var id: String { channel.id + messageID }
+    }
 
     init(
         session: CommunitySession,
@@ -39,6 +52,8 @@ struct ChannelListView: View {
         onSwitch: @escaping (JoinedCommunity) -> Void = { _ in },
         onJoined: @escaping (CommunitySession) -> Void = { _ in },
         pendingInvite: Binding<String?> = .constant(nil),
+        pendingMessage: MessageLink.Target? = nil,
+        onMessageConsumed: @escaping () -> Void = {},
         onDisconnect: @escaping () -> Void
     ) {
         self.session = session
@@ -48,6 +63,8 @@ struct ChannelListView: View {
         self.onSwitch = onSwitch
         self.onJoined = onJoined
         self._pendingInvite = pendingInvite
+        self.pendingMessage = pendingMessage
+        self.onMessageConsumed = onMessageConsumed
         self.onDisconnect = onDisconnect
         _model = State(initialValue: ChannelListModel(
             store: session.store,
@@ -151,11 +168,27 @@ struct ChannelListView: View {
         .navigationDestination(item: $arrivalChannel) { channel in
             ChannelTimelineView(session: session, channel: channel)
         }
+        .navigationDestination(item: $deepLink) { link in
+            ChannelTimelineView(
+                session: session,
+                channel: link.channel,
+                scrollToMessageID: link.messageID
+            )
+        }
         .onAppear {
             guard let openOnArrival, arrivalChannel == nil else { return }
             arrivalChannel = openOnArrival
             onArrivalConsumed()
         }
+        .onChange(of: pendingMessage) { _, target in
+            resolveDeepLink(target)
+        }
+        .onChange(of: model.channels) { _, _ in
+            // The channel may not have loaded when the link arrived on a cold
+            // launch; retry the resolve once the list populates.
+            if deepLink == nil { resolveDeepLink(pendingMessage) }
+        }
+        .task { resolveDeepLink(pendingMessage) }
         #if DEBUG
         .onAppear {
             if ProcessInfo.processInfo.arguments.contains("--open-settings") {
@@ -169,6 +202,28 @@ struct ChannelListView: View {
             }
         }
         #endif
+    }
+
+    /// Turns a pending message target into a pushed channel, once the channel
+    /// it names is known to the store.
+    ///
+    /// Best-effort by design: a link to a channel this device has never seen
+    /// resolves to nothing rather than pushing an empty screen, and the target
+    /// is consumed either way so a dead link does not retry forever. A pop back
+    /// to a channel already showing the message is left alone.
+    private func resolveDeepLink(_ target: MessageLink.Target?) {
+        guard let target, deepLink == nil else { return }
+        guard let channel = model.channels.first(where: { $0.id == target.channelID }) else {
+            // The list has not loaded this channel yet. Leave the target
+            // pending; the onChange(of: model.channels) above retries. Only
+            // give up once the list has loaded and still lacks it.
+            if model.hasLoaded {
+                onMessageConsumed()
+            }
+            return
+        }
+        deepLink = DeepLinkChannel(channel: channel, messageID: target.messageID)
+        onMessageConsumed()
     }
 
     /// Switching and adding. A menu rather than a sheet: the list is short, and

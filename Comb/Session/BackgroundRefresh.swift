@@ -168,7 +168,7 @@ enum BackgroundRefresh {
         let mentions = (try? session.store.mentions(of: me, since: since)) ?? []
         guard let newest = mentions.map(\.createdAt).max() else { return unread }
 
-        await post(mentions: mentions, community: community.displayName)
+        await post(mentions: mentions, community: community.displayName, host: community.host)
         NotificationSettings.setLastNotified(newest, host: community.host)
         return unread
     }
@@ -176,7 +176,7 @@ enum BackgroundRefresh {
     /// One notification per community per wake, coalesced. Background wakes
     /// deliver in batches, so three separate buzzes for three mentions that
     /// arrived together is noise; one that says "3 mentions" is the signal.
-    private static func post(mentions: [MentionNotice], community: String) async {
+    private static func post(mentions: [MentionNotice], community: String, host: String) async {
         guard let latest = mentions.last else { return }
 
         let content = UNMutableNotificationContent()
@@ -196,7 +196,10 @@ enum BackgroundRefresh {
                 channelID: latest.channelID,
                 messageID: latest.id,
                 threadRootID: nil
-            )
+            ),
+            // The link is hostless by design (Buzz's format), so the community
+            // to switch to on tap rides alongside it.
+            "comb.host": host,
         ]
 
         let request = UNNotificationRequest(
