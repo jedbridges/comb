@@ -62,6 +62,7 @@ struct ChannelTimelineView: View {
             }
             .defaultScrollAnchor(.bottom)
             .scrollDismissesKeyboard(.interactively)
+            .softScrollEdges()
         }
         .safeAreaInset(edge: .bottom) {
             ComposeBar(draft: $draft, attachments: tray) {
@@ -402,7 +403,9 @@ struct ComposeBar: View {
                 AttachmentTrayView(tray: attachments)
             }
 
-            HStack(alignment: .bottom, spacing: Space.xs) {
+            // Bottom-aligned so the buttons stay pinned to the last line as the
+            // field grows, rather than drifting to the middle of a tall field.
+            HStack(alignment: .bottom, spacing: Space.xxs) {
                 if attachments != nil {
                     PhotosPicker(
                         selection: $picked,
@@ -414,8 +417,9 @@ struct ComposeBar: View {
                         // closure is not main-actor isolated.
                         Image(systemName: "photo.on.rectangle.angled")
                             .font(Typography.actionSecondary)
-                            .foregroundStyle(Palette.text)
+                            .foregroundStyle(Palette.subtext)
                             .frame(width: Sizing.hitTarget, height: Sizing.hitTarget)
+                            .contentShape(.rect)
                     }
                     .accessibilityLabel("Add a photo")
                 }
@@ -425,27 +429,37 @@ struct ComposeBar: View {
                     .font(Typography.body)
                     .foregroundStyle(Palette.text)
                     .padding(.horizontal, Space.sm)
-                    .padding(.vertical, Space.xs)
-                    .background(Palette.surface.opacity(0.45), in: .rect(cornerRadius: Radii.card))
+                    // The field matches the buttons' height exactly, so all
+                    // three sit on one line instead of a small field floating
+                    // beside a larger button.
+                    .frame(minHeight: Sizing.hitTarget)
+                    .background(
+                        Palette.surface.opacity(0.45),
+                        in: .rect(cornerRadius: Radii.composeField)
+                    )
 
                 Button(action: onSend) {
                     Image(systemName: "arrow.up")
                         .font(Typography.action)
                         .foregroundStyle(Palette.ink)
-                        // 44pt is Apple's minimum comfortable target; the glyph
-                        // stays visually small inside it.
                         .frame(width: Sizing.hitTarget, height: Sizing.hitTarget)
                 }
                 .accessibilityLabel("Send message")
                 .buttonStyle(.glassProminent)
+                // Circular rather than the style's default capsule: a 44pt
+                // capsule around a 44pt frame reads as a lozenge next to a
+                // rounded field, and the circle is what makes the send action
+                // the one distinct shape in the bar.
+                .buttonBorderShape(.circle)
                 .tint(Palette.chartreuse)
                 .disabled(!canSend)
             }
         }
-        .padding(.horizontal, Space.sm)
-        .padding(.vertical, Space.xs)
+        // Space.xxs all round, which is what makes the field's corner
+        // concentric with the shell's: 24 outer, 4 padding, 20 inner.
+        .padding(Space.xxs)
         .glassEffect(in: .rect(cornerRadius: Radii.sheet))
-        .padding(.horizontal, Space.xs)
+        .padding(.horizontal, Space.sm)
         .padding(.bottom, Space.xxs)
         .onChange(of: picked) { _, items in
             guard let attachments, !items.isEmpty else { return }

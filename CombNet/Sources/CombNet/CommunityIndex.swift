@@ -25,9 +25,15 @@ public struct CommunityIndex: Equatable, Sendable, Decodable {
         public let icon: URL?
         public let tags: [String]
         public let join: Join
+        /// The day the entry landed in the index, `YYYY-MM-DD`. The only
+        /// honest recency signal available: relays deliberately refuse to
+        /// disclose member counts or activity, so "newest listed" is the one
+        /// time-based sort the data can support.
+        public let listedAt: String?
 
         enum CodingKeys: String, CodingKey {
             case id, name, description, relay, icon, tags, join
+            case listedAt = "listed_at"
         }
 
         public init(from decoder: any Decoder) throws {
@@ -39,6 +45,12 @@ public struct CommunityIndex: Equatable, Sendable, Decodable {
             icon = try container.decodeIfPresent(URL.self, forKey: .icon)
             tags = try container.decodeIfPresent([String].self, forKey: .tags) ?? []
             join = try container.decodeIfPresent(Join.self, forKey: .join) ?? .init(kind: "request_only", url: nil)
+            listedAt = try container.decodeIfPresent(String.self, forKey: .listedAt)
+        }
+
+        /// Whether tapping join can succeed right now without outside help.
+        public var isJoinableNow: Bool {
+            join.kind == "open" || (join.kind == "invite_url" && join.url != nil)
         }
 
         /// What actually happens when the join button is tapped. Carried in the
@@ -115,7 +127,12 @@ public actor CommunityIndexService {
               let index = try? Self.decode(data)
         else { return seeded }
 
-        return index.communities.filter(\.isValid)
+        let live = index.communities.filter(\.isValid)
+        // An empty live document never beats a non-empty seed. A blank answer
+        // is far more often staleness (a CDN cache, a not-yet-pushed commit)
+        // than every community delisting at once, and the app shipping with
+        // entries it then hides would look broken for no visible reason.
+        return live.isEmpty ? seeded : live
     }
 
     static func decode(_ data: Data) throws -> CommunityIndex {

@@ -113,12 +113,18 @@ struct AvatarView: View {
 
     var body: some View {
         ZStack {
-            Circle().fill(Palette.surface.opacity(0.8))
+            Circle().fill(Palette.glyphSurface)
             Text(name.prefix(1).uppercased())
                 .font(Typography.name)
-                .foregroundStyle(Palette.text)
+                .foregroundStyle(Palette.glyphTint)
                 .minimumScaleFactor(0.7)
         }
+        // Same fills and blend treatment as ChannelGlyph: composited as one
+        // badge, then shifted into the light behind it, so avatars and channel
+        // cells read as one family instead of the avatars sitting as flat
+        // opaque discs beside blended hexagons.
+        .compositingGroup()
+        .luminousChrome()
         .frame(width: size, height: size)
         // The initial is a stand-in for a face, not information: the row's
         // label already says who spoke.
@@ -155,6 +161,18 @@ struct CombFormStyle: ViewModifier {
         content
             .scrollContentBackground(.hidden)
             .background(Palette.backgroundGradient.ignoresSafeArea())
+            .softScrollEdges()
+    }
+}
+
+extension View {
+    /// Soft scroll edges, top and bottom, on every scrolling screen.
+    ///
+    /// Content dissolves under the bars instead of being cut by a hard line,
+    /// which matters here more than in most apps: every screen sits on the
+    /// gradient, and a hard clip edge against it reads as a seam.
+    func softScrollEdges() -> some View {
+        scrollEdgeEffectStyle(.soft, for: .all)
     }
 }
 

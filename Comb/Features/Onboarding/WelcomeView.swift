@@ -22,23 +22,33 @@ struct WelcomeView: View {
     var body: some View {
         NavigationStack(path: $path) {
             Backdrop {
+                // Centred, deliberately. An asymmetric version was tried and
+                // read worse: the identity block wants the optical centre, and
+                // pushing it to a corner only opened a hole in the middle of
+                // the screen. The composition work that stuck is the staggered
+                // arrival below.
                 VStack(spacing: 0) {
                     Spacer()
 
                     VStack(spacing: Space.md) {
-                        WelcomeSymbol().frame(width: Sizing.heroMark, height: Sizing.heroMark)
-                        // Lowercase as a wordmark, not a sentence: the app is
-                        // still called Comb everywhere it is written as prose.
-                        Text(verbatim: "comb")
-                            .font(Typography.display)
-                            .kerning(Kerning.display)
-                            .foregroundStyle(Palette.text)
-                            .accessibilityLabel("Comb")
-                        Text("Join a community.")
-                            .font(Typography.secondary)
-                            .foregroundStyle(Palette.subtext)
+                        WelcomeSymbol()
+                            .frame(width: Sizing.heroMark, height: Sizing.heroMark)
+                            .arrival(true)
+
+                        VStack(spacing: Space.xxs) {
+                            // Lowercase as a wordmark, not a sentence: the app
+                            // is still called Comb everywhere it is prose.
+                            Text(verbatim: "comb")
+                                .font(Typography.display)
+                                .kerning(Kerning.display)
+                                .foregroundStyle(Palette.text)
+                                .accessibilityLabel("Comb")
+                            Text("Join a community.")
+                                .font(Typography.secondary)
+                                .foregroundStyle(Palette.subtext)
+                        }
+                        .arrival(true, delay: 0.08)
                     }
-                    .arrival(true)
 
                     Spacer()
 
@@ -56,17 +66,24 @@ struct WelcomeView: View {
                             path.append(.browse)
                         }
 
-                        // Deliberately small and last: this is the door for
-                        // people who already live in this world, and a
-                        // first-time user's eye should slide past it.
+                        // Last, but legible. The original plan had this near
+                        // invisible so a first-timer's eye slid past it; in
+                        // practice that made returning users hunt for the only
+                        // door that leads anywhere for them. Still third in the
+                        // hierarchy, by weight and position rather than by
+                        // being hard to read.
                         Button("Already have an account? Restore it") {
                             path.append(.restore)
                         }
-                        .font(Typography.label)
-                        .foregroundStyle(Palette.subtext)
-                        .padding(.top, Space.xs)
+                        .font(Typography.actionSecondary)
+                        .foregroundStyle(Palette.text)
+                        .luminousChrome()
+                        .padding(.top, Space.sm)
+                        .frame(minHeight: Sizing.hitTarget)
                     }
-                    .arrival(true, delay: 0.1)
+                    // Last in the stagger: the eye lands on the identity, then
+                    // the way in.
+                    .arrival(true, delay: 0.16)
                     .padding(.horizontal, Space.xl)
                     .padding(.bottom, Space.xxxl)
                 }

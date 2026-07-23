@@ -27,7 +27,7 @@ struct SettingsView: View {
                     NavigationLink {
                         RecoveryCodeView(host: host)
                     } label: {
-                        Label("Recovery code", systemImage: "key.horizontal")
+                        Label("Private key", systemImage: "key.horizontal")
                     }
                 } header: {
                     Text("Your account")
@@ -148,9 +148,9 @@ struct RecoveryCodeView: View {
                         }
                     }
                 } header: {
-                    Text("Recovery code (nsec)")
+                    Text("Private key (nsec)")
                 } footer: {
-                    Text("This code is your account: anyone who has it can post as you, and losing it means losing the account if this iPhone is lost. Copies expire from the clipboard after a minute. Store it in a password manager, not a screenshot.")
+                    Text("This key is your account: anyone who has it can post as you, and losing it means losing the account if this iPhone is lost. Copies expire from the clipboard after a minute. Store it in a password manager, not a screenshot.")
                 }
 
                 Section {
@@ -158,20 +158,20 @@ struct RecoveryCodeView: View {
                         .font(Typography.monoSmall)
                         .textSelection(.enabled)
                 } header: {
-                    Text("Public identity (npub)")
+                    Text("Public key (npub)")
                 } footer: {
                     Text("The public half is safe to share. It is how other clients and communities recognize you.")
                 }
             } else {
                 Section {
-                    Label("No account key found on this device.", systemImage: "exclamationmark.triangle.fill")
+                    Label("No private key found on this device.", systemImage: "exclamationmark.triangle.fill")
                         .foregroundStyle(Palette.danger)
                 }
             }
         }
         .scrollContentBackground(.hidden)
         .background(Palette.backgroundGradient.ignoresSafeArea())
-        .navigationTitle("Recovery code")
+        .navigationTitle("Private key")
         .navigationBarTitleDisplayMode(.inline)
     }
 }

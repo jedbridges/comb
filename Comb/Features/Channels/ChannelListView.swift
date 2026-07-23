@@ -16,11 +16,15 @@ struct ChannelListView: View {
     var communities: [JoinedCommunity] = []
     var onSwitch: (JoinedCommunity) -> Void = { _ in }
     var onAddCommunity: () -> Void = {}
+    /// A community joined from the in-app browse sheet, adopted without
+    /// passing through the welcome flow.
+    var onJoined: (CommunitySession) -> Void = { _ in }
 
     @State private var model: ChannelListModel
     @State private var isShowingSettings = false
     @State private var connection: ConnectionState = .idle
     @State private var isSearching = false
+    @State private var isBrowsing = false
     @State private var arrivalChannel: ChannelSummary?
 
     init(
@@ -30,6 +34,7 @@ struct ChannelListView: View {
         communities: [JoinedCommunity] = [],
         onSwitch: @escaping (JoinedCommunity) -> Void = { _ in },
         onAddCommunity: @escaping () -> Void = {},
+        onJoined: @escaping (CommunitySession) -> Void = { _ in },
         onDisconnect: @escaping () -> Void
     ) {
         self.session = session
@@ -38,6 +43,7 @@ struct ChannelListView: View {
         self.communities = communities
         self.onSwitch = onSwitch
         self.onAddCommunity = onAddCommunity
+        self.onJoined = onJoined
         self.onDisconnect = onDisconnect
         _model = State(initialValue: ChannelListModel(
             store: session.store,
@@ -101,6 +107,16 @@ struct ChannelListView: View {
         .sheet(isPresented: $isSearching) {
             SearchView(session: session)
         }
+        // The same screen onboarding shows, one tap from anywhere: discovery
+        // is not something you should have to sign out to reach.
+        .sheet(isPresented: $isBrowsing) {
+            NavigationStack {
+                BrowseView(onJoined: { joined in
+                    isBrowsing = false
+                    onJoined(joined)
+                })
+            }
+        }
         .sheet(isPresented: $isShowingSettings) {
             SettingsView(session: session, onSignOut: onDisconnect)
         }
@@ -153,7 +169,10 @@ struct ChannelListView: View {
                     }
                 }
             }
-            Button("Add community", systemImage: "plus", action: onAddCommunity)
+            Button("Browse communities", systemImage: "square.grid.2x2") {
+                isBrowsing = true
+            }
+            Button("Add by invite link", systemImage: "plus", action: onAddCommunity)
         } label: {
             Image(systemName: "square.grid.2x2")
                 .font(Typography.actionSecondary)
@@ -186,11 +205,12 @@ struct ChannelListView: View {
             .padding(.horizontal, Space.md)
             .padding(.vertical, Space.sm)
         }
+        .softScrollEdges()
     }
 
     private var emptyState: some View {
         VStack(spacing: Space.sm) {
-            Mark()
+            WelcomeSymbol()
                 .frame(width: Sizing.inlineMark, height: Sizing.inlineMark)
                 .opacity(0.5)
                 .accessibilityHidden(true)
@@ -212,61 +232,101 @@ private struct ChannelRow: View {
 
     @ScaledMetric(relativeTo: .subheadline) private var cellSize: CGFloat = Sizing.channelCell
 
+    /// How alive a channel is, which decides how much room its row takes.
+    ///
+    /// A list where every row has the same height and the same parts makes a
+    /// dead channel look exactly like a busy one, and nine rooms that have
+    /// never been used each repeat an identical "No messages yet". Giving the
+    /// three states different shapes is what lets the eye find the conversation
+    /// without reading anything.
+    private enum Activity {
+        /// Something new is waiting.
+        case unread
+        /// Has been talked in, and you are caught up.
+        case settled
+        /// Never used. Present so it can be opened, and otherwise out of the way.
+        case quiet
+    }
+
+    private var activity: Activity {
+        if channel.hasUnread { return .unread }
+        return preview == nil ? .quiet : .settled
+    }
+
     var body: some View {
         HStack(spacing: Space.sm) {
-            cell
+            // Same size in every state, so the left edge stays a straight line
+            // down the list and only the weight changes.
+            ChannelGlyph(name: channel.name, size: cellSize)
+                .opacity(activity == .quiet ? 0.45 : 1)
 
             VStack(alignment: .leading, spacing: Space.hairline) {
-                HStack(alignment: .firstTextBaseline) {
-                    Text(channel.name)
-                        // Unread channels carry more weight, which is the
-                        // scanning cue: you should find what is new without
-                        // reading a single word.
-                        .font(channel.hasUnread ? Typography.bodyEmphasis : Typography.name)
-                        .foregroundStyle(Palette.text)
-                        .lineLimit(1)
-
-                    Spacer(minLength: Space.xs)
-
-                    if let when = channel.lastActivityDate {
-                        Text(when, format: .relative(presentation: .named))
-                            .font(Typography.caption)
-                            .foregroundStyle(Palette.subtext)
-                            .luminousChrome()
-                    }
-                }
-
-                HStack(spacing: Space.xxs) {
-                    if let preview {
-                        Text(preview)
-                            .font(Typography.secondary)
-                            .foregroundStyle(channel.hasUnread ? Palette.text : Palette.subtext)
-                            .lineLimit(1)
-                    } else {
-                        Text("No messages yet")
-                            .font(Typography.secondary.italic())
-                            .foregroundStyle(Palette.subtext.opacity(0.7))
-                    }
-
-                    Spacer(minLength: Space.xs)
-
-                    if channel.hasUnread {
-                        UnreadBadge(count: channel.unreadCount)
-                    } else if channel.memberCount > 0 {
-                        Label("\(channel.memberCount)", systemImage: "person.2")
-                            .font(Typography.count)
-                            .labelStyle(.titleAndIcon)
-                            .foregroundStyle(Palette.subtext)
-                            .luminousChrome()
-                    }
-                }
+                titleLine
+                // A quiet channel drops its second line entirely rather than
+                // filling it with a sentence saying there is nothing to say.
+                if activity != .quiet { previewLine }
             }
         }
         .padding(.horizontal, Space.md)
-        .padding(.vertical, Space.sm)
+        .padding(.vertical, activity == .quiet ? Space.xs : Space.sm)
         .contentShape(.rect)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityDescription)
+    }
+
+    private var titleLine: some View {
+        HStack(alignment: .firstTextBaseline, spacing: Space.xs) {
+            Text(channel.name)
+                // Weight is the scanning cue: you should find what is new
+                // without reading a single word.
+                .font(activity == .unread ? Typography.bodyEmphasis : Typography.name)
+                .foregroundStyle(activity == .quiet ? Palette.subtext : Palette.text)
+                .lineLimit(1)
+
+            Spacer(minLength: Space.xs)
+
+            switch activity {
+            case .unread, .settled:
+                if let when = channel.lastActivityDate {
+                    Text(when, format: .relative(presentation: .named))
+                        .font(Typography.caption)
+                        .foregroundStyle(Palette.subtext)
+                        .luminousChrome()
+                }
+            case .quiet:
+                // With no second line, the member count rides up here rather
+                // than costing the row another whole line of height.
+                memberCount
+            }
+        }
+    }
+
+    private var previewLine: some View {
+        HStack(spacing: Space.xxs) {
+            Text(preview ?? "")
+                .font(Typography.secondary)
+                .foregroundStyle(activity == .unread ? Palette.text : Palette.subtext)
+                .lineLimit(1)
+
+            Spacer(minLength: Space.xs)
+
+            if channel.hasUnread {
+                UnreadBadge(count: channel.unreadCount)
+            } else {
+                memberCount
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var memberCount: some View {
+        if channel.memberCount > 0 {
+            Label("\(channel.memberCount)", systemImage: "person.2")
+                .font(Typography.count)
+                .labelStyle(.titleAndIcon)
+                .foregroundStyle(Palette.subtext.opacity(activity == .quiet ? 0.7 : 1))
+                .luminousChrome()
+        }
     }
 
     private var accessibilityDescription: String {

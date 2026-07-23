@@ -53,6 +53,7 @@ struct ThreadView: View {
             }
             .defaultScrollAnchor(.bottom)
             .scrollDismissesKeyboard(.interactively)
+            .softScrollEdges()
         }
         .safeAreaInset(edge: .bottom) {
             ComposeBar(draft: $draft, placeholder: "Reply", attachments: tray) {

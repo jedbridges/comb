@@ -40,15 +40,19 @@ struct RestoreView: View {
             .combRows()
 
             Section {
-                SecureField("nsec1… or 64 hex characters", text: $model.secretKey)
+                SecureField("nsec1…", text: $model.secretKey)
                     .font(Typography.mono)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     .focused($focus, equals: .key)
             } header: {
-                Text("Recovery code")
+                // "Private key" because that is what Buzz calls it, and this
+                // screen exists to receive a key copied out of Buzz. A softer
+                // word here would send people looking for something that does
+                // not exist on the other side.
+                Text("Private key")
             } footer: {
-                Text("Stored in this iPhone's Keychain, on this device only. Sent nowhere.")
+                Text("Paste the key from Buzz, or 64 hex characters. It stays on this iPhone and is sent nowhere.")
             }
             .combRows()
 
@@ -130,7 +134,7 @@ final class RestoreModel {
         do {
             key = try Self.parseKey(secretKey)
         } catch {
-            failure = "Could not read that code. Paste an nsec1… or 64 hex characters."
+            failure = "That does not look like a private key. Paste an nsec1 key, or 64 hex characters."
             return nil
         }
 

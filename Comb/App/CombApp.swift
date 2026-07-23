@@ -31,6 +31,7 @@ struct CombApp: App {
                             onAddCommunity: {
                                 Task { await model.addCommunity() }
                             },
+                            onJoined: { model.adopt($0, landingInBusiestChannel: true) },
                             onDisconnect: {
                                 Task { await model.signOut() }
                             }
@@ -58,7 +59,10 @@ private struct LaunchingView: View {
 
     var body: some View {
         Backdrop {
-            Mark()
+            // The same artwork as the app icon and the welcome screen, so
+            // launch, icon and cold start read as one identity. The drawn Mark
+            // remains only as WelcomeSymbol's fallback.
+            WelcomeSymbol()
                 .frame(width: Sizing.heroMark, height: Sizing.heroMark)
                 .opacity(isBreathing ? 1 : 0.6)
                 // A forever-repeating pulse is exactly what Reduce Motion is

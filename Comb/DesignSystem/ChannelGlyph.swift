@@ -18,13 +18,15 @@ struct ChannelGlyph: View {
             Image(systemName: ChannelSymbol.forName(name))
                 .font(.system(size: size * 0.42, weight: .medium))
                 .foregroundStyle(Palette.glyphTint)
-                // Burned into the cell rather than sitting on top of it, so the
-                // symbol reads as part of the badge instead of a sticker.
-                .blendMode(.plusDarker)
         }
-        // Contains the blend to the cell: without this the symbol would burn
-        // through to the list surface behind the glyph as well.
+        // Composited first, then blended as one badge: cell and symbol together
+        // shift the light behind them instead of sitting on top as a flat
+        // indigo patch fighting the gradient's hue. Same rule as every other
+        // piece of chrome over the gradient, and the reason it is the shared
+        // token rather than a fixed blend mode: a dark symbol burned into an
+        // already-dark cell in dark mode collapses the contrast.
         .compositingGroup()
+        .luminousChrome()
         .frame(width: size, height: size)
         // The channel's name is right beside it; the glyph is atmosphere.
         .accessibilityHidden(true)

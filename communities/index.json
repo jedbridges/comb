@@ -1,4 +1,23 @@
 {
   "version": 1,
-  "communities": []
+  "communities": [
+    {
+      "id": "designers",
+      "name": "designers",
+      "description": "Working designers talking shop: critique, fonts, jobs, passion projects.",
+      "relay": "wss://designers.communities.buzz.xyz",
+      "tags": ["design", "critique", "jobs"],
+      "listed_at": "2026-07-23",
+      "join": { "kind": "request_only", "url": null }
+    },
+    {
+      "id": "bitcoiners",
+      "name": "bitcoiners",
+      "description": "Bitcoin builders and users on a Buzz relay.",
+      "relay": "wss://bitcoiners.communities.buzz.xyz",
+      "tags": ["bitcoin", "lightning"],
+      "listed_at": "2026-07-23",
+      "join": { "kind": "request_only", "url": null }
+    }
+  ]
 }
