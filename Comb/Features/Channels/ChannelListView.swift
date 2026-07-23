@@ -18,6 +18,9 @@ struct ChannelListView: View {
     /// A community joined from the in-app browse sheet, adopted without
     /// passing through the welcome flow.
     var onJoined: (CommunitySession) -> Void = { _ in }
+    /// An invite link tapped while this community is open. Routes into the
+    /// join sheet rather than being silently dropped.
+    @Binding var pendingInvite: String?
 
     @State private var model: ChannelListModel
     @State private var isShowingSettings = false
@@ -34,6 +37,7 @@ struct ChannelListView: View {
         communities: [JoinedCommunity] = [],
         onSwitch: @escaping (JoinedCommunity) -> Void = { _ in },
         onJoined: @escaping (CommunitySession) -> Void = { _ in },
+        pendingInvite: Binding<String?> = .constant(nil),
         onDisconnect: @escaping () -> Void
     ) {
         self.session = session
@@ -42,6 +46,7 @@ struct ChannelListView: View {
         self.communities = communities
         self.onSwitch = onSwitch
         self.onJoined = onJoined
+        self._pendingInvite = pendingInvite
         self.onDisconnect = onDisconnect
         _model = State(initialValue: ChannelListModel(
             store: session.store,
@@ -120,11 +125,18 @@ struct ChannelListView: View {
         // the one you are in.
         .sheet(isPresented: $isAddingByInvite) {
             NavigationStack {
-                JoinView(prefilledInvite: nil, onJoined: { joined in
+                JoinView(prefilledInvite: pendingInvite, onJoined: { joined in
                     isAddingByInvite = false
                     onJoined(joined)
                 })
             }
+        }
+        .onChange(of: pendingInvite) { _, invite in
+            guard invite != nil else { return }
+            isAddingByInvite = true
+        }
+        .onChange(of: isAddingByInvite) { _, presented in
+            if !presented { pendingInvite = nil }
         }
         .sheet(isPresented: $isShowingSettings) {
             SettingsView(session: session, onSignOut: onDisconnect)

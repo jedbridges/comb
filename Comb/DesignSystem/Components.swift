@@ -200,12 +200,25 @@ extension View {
     func combRows() -> some View {
         listRowBackground(
             RoundedRectangle(cornerRadius: Radii.bubble)
-                .fill(Color.white.opacity(0.07))
+                .fill(Palette.liftOnGradient)
                 .overlay(
                     RoundedRectangle(cornerRadius: Radii.bubble)
-                        .strokeBorder(Color.white.opacity(0.10), lineWidth: 0.5)
+                        .strokeBorder(Palette.hairlineOnGradient, lineWidth: 0.5)
                 )
         )
+    }
+
+    /// The capsule chip: a luminance lift in a pill, for tags, date breaks,
+    /// and any other small floating label on the gradient. One modifier so
+    /// the treatment cannot be re-derived slightly differently per screen.
+    func combChip() -> some View {
+        padding(.horizontal, Space.xs)
+            .padding(.vertical, Space.hairline)
+            .background(Palette.liftOnGradient, in: .capsule)
+            .overlay(
+                Capsule().strokeBorder(Palette.hairlineOnGradient, lineWidth: 0.5)
+            )
+            .luminousChrome()
     }
 }
 

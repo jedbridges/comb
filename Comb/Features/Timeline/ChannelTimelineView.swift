@@ -467,13 +467,7 @@ struct DayBreak: View {
             Text(label)
                 .font(Typography.caption)
                 .foregroundStyle(Palette.subtext)
-                .padding(.horizontal, Space.sm)
-                .padding(.vertical, Space.xxs)
-                .background(Color.white.opacity(0.07), in: .capsule)
-                .overlay(
-                    Capsule().strokeBorder(Color.white.opacity(0.10), lineWidth: 0.5)
-                )
-                .luminousChrome()
+                .combChip()
             Spacer()
         }
         .padding(.vertical, Space.xs)

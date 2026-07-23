@@ -10,6 +10,10 @@ import SwiftUI
 /// today and inheriting whatever iOS looks like next year.
 struct JoinView: View {
     let prefilledInvite: String?
+    /// The community this join was opened for, when it came from browse.
+    /// Without it, tapping "designers" landed on a screen that never said
+    /// designers, and the tap felt like it had not worked.
+    var communityName: String? = nil
     let onJoined: (CommunitySession) -> Void
 
     @State private var model = JoinModel()
@@ -26,6 +30,20 @@ struct JoinView: View {
                     .autocorrectionDisabled()
                     .focused($focus, equals: .invite)
                     .onChange(of: model.inviteText) { _, _ in model.parseInvite() }
+                if model.inviteText.isEmpty {
+                    // Native paste, no permission prompt: the most likely
+                    // reason anyone is here is a link sitting on the
+                    // clipboard.
+                    PasteButton(payloadType: String.self) { strings in
+                        Task { @MainActor in
+                            model.inviteText = strings.first ?? ""
+                            model.parseInvite()
+                        }
+                    }
+                    .buttonBorderShape(.capsule)
+                    .controlSize(.small)
+                    .tint(Palette.chartreuse)
+                }
             } header: {
                 Text("Invite link")
             } footer: {
@@ -34,6 +52,8 @@ struct JoinView: View {
                         .foregroundStyle(Palette.success)
                 } else if !model.inviteText.isEmpty {
                     Text("Paste the whole link, including the https:// part.")
+                } else if let communityName {
+                    Text("\(communityName) is invite only. Paste the invite a member sent you.")
                 }
             }
             .combRows()
@@ -45,7 +65,9 @@ struct JoinView: View {
             } header: {
                 Text("What should people call you?")
             } footer: {
-                Text("Comb keeps your account on this iPhone.")
+                // The consequence of skipping it, stated: without a name the
+                // channel shows a code where a person should be.
+                Text("Without a name, people see a code instead of you. Comb keeps your account on this iPhone.")
             }
             .combRows()
 
@@ -75,7 +97,7 @@ struct JoinView: View {
             .padding(.horizontal, Space.lg)
             .padding(.bottom, Space.xs)
         }
-        .navigationTitle("Join")
+        .navigationTitle(communityName.map { "Join \($0)" } ?? "Join")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
             if let text = prefilledInvite, model.inviteText.isEmpty {

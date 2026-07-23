@@ -18,7 +18,14 @@ struct BrowseView: View {
 
     @State private var entries: [CommunityIndex.Entry] = []
     @State private var hasLoaded = false
-    @State private var selectedInvite: String?
+    @State private var joinRequest: JoinRequest?
+
+    /// What the join screen needs to know about where the tap came from.
+    struct JoinRequest: Hashable, Identifiable {
+        let invite: String
+        let communityName: String?
+        var id: String { invite + (communityName ?? "") }
+    }
     @State private var order: Order = .newest
     @State private var query = ""
 
@@ -87,8 +94,12 @@ struct BrowseView: View {
                 sortMenu
             }
         }
-        .navigationDestination(item: $selectedInvite) { invite in
-            JoinView(prefilledInvite: invite, onJoined: onJoined)
+        .navigationDestination(item: $joinRequest) { request in
+            JoinView(
+                prefilledInvite: request.invite.isEmpty ? nil : request.invite,
+                communityName: request.communityName,
+                onJoined: onJoined
+            )
         }
         .task {
             let service = CommunityIndexService(bundledData: Self.bundledIndex)
@@ -154,17 +165,7 @@ struct BrowseView: View {
                             Text(tag)
                                 .font(Typography.caption)
                                 .foregroundStyle(Palette.subtext)
-                                .padding(.horizontal, Space.xs)
-                                .padding(.vertical, Space.hairline)
-                                .background(
-                                    Color.white.opacity(0.07),
-                                    in: .capsule
-                                )
-                                .overlay(
-                                    Capsule()
-                                        .strokeBorder(Color.white.opacity(0.10), lineWidth: 0.5)
-                                )
-                                .luminousChrome()
+                                .combChip()
                         }
                     }
                     .padding(.top, Space.xxs)
@@ -179,7 +180,10 @@ struct BrowseView: View {
             // The affordance stays honest to what the relay will allow.
             if entry.isJoinableNow {
                 Button("Join") {
-                    selectedInvite = entry.join.url?.absoluteString ?? ""
+                    joinRequest = JoinRequest(
+                        invite: entry.join.url?.absoluteString ?? "",
+                        communityName: entry.name
+                    )
                 }
                 .font(Typography.actionSecondary)
                 .buttonStyle(.glass)
@@ -196,9 +200,10 @@ struct BrowseView: View {
         // reads as broken; an invite-only community opens the join screen,
         // where the field is waiting for the invite a member sends.
         .onTapGesture {
-            selectedInvite = entry.isJoinableNow
-                ? (entry.join.url?.absoluteString ?? "")
-                : ""
+            joinRequest = JoinRequest(
+                invite: entry.isJoinableNow ? (entry.join.url?.absoluteString ?? "") : "",
+                communityName: entry.name
+            )
         }
         .accessibilityElement(children: .combine)
         .accessibilityHint(
@@ -250,10 +255,7 @@ struct BrowseView: View {
             Text("Communities show up here once they add themselves to Comb's public index. Most are invite only.")
         } actions: {
             Button("I have an invite link") {
-                // Empty rather than nil: nil means "no destination" to
-                // `navigationDestination(item:)`, so this opens the join
-                // screen with the field blank and focused.
-                selectedInvite = ""
+                joinRequest = JoinRequest(invite: "", communityName: nil)
             }
             .buttonStyle(.glassProminent)
             .tint(Palette.chartreuse)

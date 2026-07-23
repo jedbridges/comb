@@ -29,6 +29,7 @@ struct CombApp: App {
                                 Task { await model.openCommunity(community) }
                             },
                             onJoined: { model.adopt($0, landingInBusiestChannel: true) },
+                            pendingInvite: $pendingInvite,
                             onDisconnect: {
                                 Task { await model.signOut() }
                             }
@@ -38,11 +39,11 @@ struct CombApp: App {
             }
             .task { await model.bootstrap() }
             .onOpenURL { url in
-                // buzz:// and comb:// join links. Only honoured before a
-                // community is open; multi-community switching is later work.
-                guard InviteLink.parse(url.absoluteString) != nil,
-                      case .welcome = model.stage
-                else { return }
+                // buzz:// and comb:// join links, honoured in either stage:
+                // signed out they open the welcome join flow, signed in they
+                // present the join sheet over the open community. Silently
+                // ignoring a tapped invite is never the right answer.
+                guard InviteLink.parse(url.absoluteString) != nil else { return }
                 pendingInvite = url.absoluteString
             }
         }
