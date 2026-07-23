@@ -348,7 +348,23 @@ struct MessageRow: View {
 
     /// The quick palette, shared with the reaction bar's add button so the
     /// two ways to react can never disagree. A full picker is later polish.
-    static let quickReactions = ["🐝", "👍", "❤️", "🔥", "😂"]
+    /// What a person reaches for before they have reached for anything.
+    ///
+    /// Three, not five: the row is a palette inside a menu, and every extra
+    /// one pushes the actions further down the screen.
+    static let defaultQuickReactions = ["❤️", "🤙", "😄"]
+
+    /// The three most recently used, topped up from the defaults so the row is
+    /// never short on a new install. Read fresh each time the menu opens,
+    /// which is exactly when it matters.
+    static var quickReactions: [String] {
+        var picks: [String] = []
+        for emoji in EmojiRecents.load() + defaultQuickReactions where !picks.contains(emoji) {
+            picks.append(emoji)
+            if picks.count == 3 { break }
+        }
+        return picks
+    }
 
     /// Matches AvatarView's scaled frame so continuation lines in a run stay
     /// aligned with the first at every text size.
@@ -507,12 +523,25 @@ struct MessageRow: View {
             Button("Try again", systemImage: "arrow.clockwise", action: onRetry)
             Button("Discard", systemImage: "trash", role: .destructive, action: onDiscard)
         } else if !entry.row.isDeleted {
-            ForEach(Self.quickReactions, id: \.self) { emoji in
-                Button(emoji) { onReact(emoji) }
+            // A ControlGroup in a menu lays its children out as one horizontal
+            // palette instead of a stack of rows. Five emoji stacked made the
+            // menu tall enough to cover the message it belonged to, which is
+            // the one thing a message menu must not do.
+            ControlGroup {
+                ForEach(Self.quickReactions, id: \.self) { emoji in
+                    Button(emoji) {
+                        // Recorded here too, not just in the picker, or the
+                        // row could never learn from the taps people
+                        // actually make.
+                        EmojiRecents.record(emoji)
+                        onReact(emoji)
+                    }
+                }
+                if let onPickEmoji {
+                    Button("More", systemImage: "face.smiling", action: onPickEmoji)
+                }
             }
-            if let onPickEmoji {
-                Button("More", systemImage: "face.smiling.inverse", action: onPickEmoji)
-            }
+            .controlGroupStyle(.compactMenu)
             if let onReply {
                 Divider()
                 Button("Reply in thread", systemImage: "arrowshape.turn.up.left", action: onReply)
