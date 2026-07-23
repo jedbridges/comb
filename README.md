@@ -51,26 +51,50 @@ project.yml        XcodeGen source of truth. Comb.xcodeproj is generated and
 
 ## Status
 
-Early. The protocol core is implemented and tested. Nothing is shippable yet.
+Working against live Buzz communities, from a simulator. Not on TestFlight yet:
+that needs a device pass for measured contrast and VoiceOver, which no
+simulator can honestly stand in for.
+
+**Protocol and storage**
 
 - [x] Hex, bech32, NIP-19 `npub` / `nsec`
 - [x] secp256k1 keys, BIP-340 signing and verification
 - [x] NIP-01 events, canonical serialization, id computation, validation
 - [x] Filters including dynamic tag filters and p-gated kind detection
 - [x] Client and relay wire messages, NIP-42 auth events
-- [x] NIP-98 HTTP auth, signer abstraction, project and CI scaffolding
+- [x] NIP-98 HTTP auth, Blossom BUD-01/02 media auth, signer abstraction
 - [x] Append-only event log, verified ingest, rebuildable projections
 - [x] Timeline queries with stable pagination, and the optimistic send outbox
 - [x] Relay connection, NIP-42 auth, subscriptions, reconnection
-- [ ] Channel list, message history, sending
-- [ ] Onboarding, community discovery
-- [ ] Keychain storage and the `nostrpair://` pairing handshake
-- [ ] Media, search
-- [ ] Zaps (NIP-57), with sender-attested receipts on membership-gated relays
 
-Notifications are not in v1. Buzz's hosted push gateway verifies Apple App Attest
-against a single hardcoded app identifier, so no third-party client can register
-with it. Adding push means an upstream change to make that list configurable.
+**The app**
+
+- [x] Channel list with unread state, message history, sending
+- [x] Onboarding, community discovery with search and sorting
+- [x] Keychain storage and the `nostrpair://` pairing handshake
+- [x] Threads, reactions with a full emoji picker, editing and deleting
+- [x] Mentions: `@name` autocomplete, highlighting, and `p` tags
+- [x] Images: Blossom upload, inline rendering, metadata stripped before send
+- [x] Search, profiles, member lists, link detection, date separators
+- [x] Zaps (NIP-57) by `lightning:` deep link
+- [ ] Typing indicators and presence
+- [ ] Video playback for received attachments
+- [ ] Notifications
+- [ ] Nostr Wallet Connect (NIP-47) for in-app zaps
+
+Two protocol details are worth knowing if you are reading the code. **Edits and
+deletions are authorised at read time**, not at ingest: a kind 5 only erases its
+own author's events and a kind 40003 only rewrites its author's own, because
+both arrive validly signed and hosted Buzz's server-side checks do not exist on
+a plain NIP-29 relay. And **images are re-encoded before upload**, never passed
+through, because a photo out of the library carries EXIF that routinely includes
+GPS.
+
+Notifications are not shipped. Buzz's hosted push gateway verifies Apple App
+Attest against a single hardcoded app identifier, so no third-party client can
+register with it. Adding real push means an upstream change to make that list
+configurable. A background-fetch fallback that posts local notifications is
+possible without any server and is the likely first step.
 
 ## Building
 

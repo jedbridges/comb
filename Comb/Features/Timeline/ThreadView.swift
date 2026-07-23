@@ -97,6 +97,7 @@ struct ThreadView: View {
             .onChange(of: draft) { _, new in
                 model.updateMentionSuggestions(for: new)
             }
+
         }
         .navigationTitle("Thread with \(root.displayName)")
         .navigationBarTitleDisplayMode(.inline)

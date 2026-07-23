@@ -146,8 +146,11 @@ struct ChannelTimelineView: View {
                 }
             }
             .onChange(of: draft) { _, new in
-                model.updateMentionSuggestions(for: new)
+                model.draftChanged(new)
             }
+        }
+        .safeAreaInset(edge: .bottom) {
+            TypingStrip(summary: model.typingSummary)
         }
         .confirmationDialog(
             "Delete this message?",
@@ -651,6 +654,33 @@ struct ReactionBar: View {
     }
 }
 
+/// Who is typing, just above the compose bar.
+///
+/// Reserves no space when silent and animates in, so a channel does not
+/// twitch every time someone starts and stops typing. Deliberately quiet:
+/// this is the least important thing on the screen and should never pull
+/// the eye off the conversation.
+struct TypingStrip: View {
+    let summary: String?
+
+    var body: some View {
+        Group {
+            if let summary {
+                Text(summary)
+                    .font(Typography.caption)
+                    .foregroundStyle(Palette.subtext)
+                    .luminousChrome()
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, Space.lg)
+                    .padding(.bottom, Space.xxs)
+                    .transition(.opacity)
+                    .accessibilityAddTraits(.updatesFrequently)
+            }
+        }
+        .animation(Motion.fast, value: summary)
+    }
+}
+
 /// The message input, glass over the gradient.
 struct ComposeBar: View {
     @Binding var draft: String
@@ -922,13 +952,23 @@ final class ChannelTimeline {
     private let channel: String
     private var visibleLimit = 80
     private var observation: Task<Void, Never>?
+    private var ephemeralObservation: Task<Void, Never>?
     private let mentions: MentionComposer
+    private let typing: TypingMonitor
 
     init(session: CommunitySession, channel: String) {
         self.session = session
         self.channel = channel
         self.mentions = MentionComposer(store: session.store, channelID: channel)
+        self.typing = TypingMonitor(
+            store: session.store,
+            channelID: channel,
+            me: session.me.hex
+        )
     }
+
+    /// "Mat is typing", or nil when nobody is.
+    var typingSummary: String? { typing.summary }
 
     var mentionSuggestions: [ProfileSummary] { mentions.suggestions }
     /// Every roster name, for highlighting mentions in rendered messages.
@@ -949,8 +989,30 @@ final class ChannelTimeline {
 
     func activate() async {
         observe()
+        observeEphemeral()
         mentions.loadCandidates()
         await markRead()
+    }
+
+    /// Publishes our own typing, throttled. Called on every keystroke; the
+    /// monitor decides whether anything actually goes out.
+    func draftChanged(_ draft: String) {
+        mentions.update(for: draft)
+
+        guard !draft.isEmpty, typing.shouldPublish() else { return }
+        typing.didPublish()
+        Task { await session.sendTyping(in: channel) }
+    }
+
+    private func observeEphemeral() {
+        ephemeralObservation?.cancel()
+        ephemeralObservation = Task { [weak self] in
+            guard let stream = self?.session.ephemeralEvents() else { return }
+            for await events in stream {
+                guard !Task.isCancelled else { return }
+                for event in events { self?.typing.received(event) }
+            }
+        }
     }
 
     /// Marks the channel read on open, and again whenever new messages land
@@ -961,6 +1023,9 @@ final class ChannelTimeline {
     }
 
     func send(_ text: String, attachments: [Blossom.Descriptor] = []) async {
+        // Our own indicator is suppressed briefly: the message itself already
+        // says what the indicator was promising.
+        typing.didSendMessage()
         await session.send(
             text,
             in: channel,
@@ -1024,6 +1089,12 @@ final class ChannelTimeline {
                     me: me
                 ) {
                     guard !Task.isCancelled else { return }
+                    // A sender's own message retires their indicator, so
+                    // "Mat is typing" never lingers under the message Mat
+                    // just sent.
+                    if let newest = value.rows.first, newest.id != self?.snapshot.rows.first?.id {
+                        self?.typing.messageArrived(from: newest.pubkey)
+                    }
                     self?.snapshot = value
                     await self?.markRead()
                 }

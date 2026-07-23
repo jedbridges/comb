@@ -43,7 +43,9 @@ final class TypingMonitor {
         self.me = me
     }
 
-    deinit { pruneTask?.cancel() }
+    // No `deinit` cancel: `deinit` is nonisolated and cannot touch
+    // main-actor state, and the prune loop already holds `self` weakly, so it
+    // exits on its own the moment this object goes away.
 
     /// Records an indicator from the relay.
     func received(_ event: NostrEvent) {
