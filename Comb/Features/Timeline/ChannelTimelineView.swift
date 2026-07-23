@@ -428,26 +428,12 @@ struct MessageRow: View {
         // A new speaker gets real air above them; a continuation line stays
         // close to what it continues.
         .padding(.top, entry.showsHeader ? Space.sm : 0)
-        .padding(.vertical, mentionsMe ? Space.xs : 0)
-        .background {
-            // Being named is the one thing worth finding while scanning, so
-            // it gets a wash rather than only a coloured word inside the
-            // text. Chartreuse at low opacity: the accent stays scarce.
-            if mentionsMe {
-                RoundedRectangle(cornerRadius: Radii.bubble)
-                    .fill(Palette.chartreuse.opacity(0.07))
-                    .overlay(alignment: .leading) {
-                        // A marked edge as well as a wash. The wash alone read
-                        // as an unexplained tint; an edge says a rule was
-                        // applied, and survives for anyone who cannot separate
-                        // the wash from the gradient behind it.
-                        Rectangle()
-                            .fill(Palette.chartreuse.opacity(0.7))
-                            .frame(width: 3)
-                    }
-                    .clipShape(.rect(cornerRadius: Radii.bubble))
-            }
-        }
+        // No row-level treatment for being mentioned. A wash and a leading
+        // edge were both tried: the wash read as an unexplained tint on a
+        // message nobody could see a reason for, and the edge collided with
+        // the avatar sitting against it. The `@name` inside the text is
+        // already chartreuse and emphasised, which is the signal, and
+        // VoiceOver still announces "Mentions you" first.
         .opacity(entry.row.delivery == .pending ? 0.55 : 1)
     }
 
@@ -601,9 +587,10 @@ private struct ThreadAffordance: View {
 
     var body: some View {
         Button(action: action) {
+            // No leading icon. A filled speech bubble carried more weight than
+            // the words beside it, and "2 replies" plus a chevron already says
+            // both what this is and that it goes somewhere.
             HStack(spacing: Space.xxs) {
-                Image(systemName: "bubble.left.and.bubble.right.fill")
-                    .font(Typography.icon)
                 Text(count == 1 ? "1 reply" : "\(count) replies")
                     .font(Typography.label)
                 Image(systemName: "chevron.right")
