@@ -27,10 +27,13 @@ struct WelcomeView: View {
 
                     VStack(spacing: Space.md) {
                         WelcomeSymbol().frame(width: Sizing.heroMark, height: Sizing.heroMark)
-                        Text("Comb")
+                        // Lowercase as a wordmark, not a sentence: the app is
+                        // still called Comb everywhere it is written as prose.
+                        Text(verbatim: "comb")
                             .font(Typography.display)
                             .kerning(Kerning.display)
                             .foregroundStyle(Palette.text)
+                            .accessibilityLabel("Comb")
                         Text("Join a community.")
                             .font(Typography.secondary)
                             .foregroundStyle(Palette.subtext)
