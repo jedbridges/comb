@@ -95,12 +95,24 @@ struct WelcomeView: View {
                                 .multilineTextAlignment(.center)
                         }
 
-                        PrimaryButton(title: "I have an invite link") {
-                            path.append(.enterInvite)
+                        // Browse leads, because it is the one door a newcomer
+                        // with nothing in hand can always walk through. The old
+                        // primary was "I have an invite link", which shouted
+                        // loudest at exactly the person least able to act on it:
+                        // someone who found Comb without an invite tapped the
+                        // brightest button into a flow they could not finish.
+                        // "Find" rather than "Browse": the affirmative verb
+                        // frames a beginning, not a catalogue.
+                        PrimaryButton(title: "Find a community") {
+                            path.append(.browse)
                         }
 
-                        SecondaryButton(title: "Browse communities") {
-                            path.append(.browse)
+                        // Still one tap, and still second, because most people
+                        // who reach this screen were handed a link. It simply no
+                        // longer competes with the identity for the loudest
+                        // colour.
+                        SecondaryButton(title: "I have an invite link") {
+                            path.append(.enterInvite)
                         }
 
                         // Last, but legible. The question reads as prose in

@@ -24,6 +24,7 @@ struct BrowseView: View {
     struct JoinRequest: Hashable, Identifiable {
         let invite: String
         let communityName: String?
+        let communityDescription: String?
         var id: String { invite + (communityName ?? "") }
     }
     @State private var order: Order = .newest
@@ -104,6 +105,7 @@ struct BrowseView: View {
             JoinView(
                 prefilledInvite: request.invite.isEmpty ? nil : request.invite,
                 communityName: request.communityName,
+                communityDescription: request.communityDescription,
                 onJoined: onJoined
             )
         }
@@ -187,7 +189,8 @@ struct BrowseView: View {
                 Button("Join") {
                     joinRequest = JoinRequest(
                         invite: entry.join.url?.absoluteString ?? "",
-                        communityName: entry.name
+                        communityName: entry.name,
+                        communityDescription: entry.description
                     )
                 }
                 .font(Typography.actionSecondary)
@@ -207,7 +210,8 @@ struct BrowseView: View {
         .onTapGesture {
             joinRequest = JoinRequest(
                 invite: entry.isJoinableNow ? (entry.join.url?.absoluteString ?? "") : "",
-                communityName: entry.name
+                communityName: entry.name,
+                communityDescription: entry.description
             )
         }
         .accessibilityElement(children: .combine)
@@ -259,7 +263,7 @@ struct BrowseView: View {
             Text("Communities show up here once they add themselves to Comb's public index. Most are invite only.")
         } actions: {
             Button("I have an invite link") {
-                joinRequest = JoinRequest(invite: "", communityName: nil)
+                joinRequest = JoinRequest(invite: "", communityName: nil, communityDescription: nil)
             }
             .buttonStyle(.glassProminent)
             .tint(Palette.chartreuse)
