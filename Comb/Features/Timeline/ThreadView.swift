@@ -19,6 +19,7 @@ struct ThreadView: View {
     @State private var profileTarget: ProfileTarget?
     @State private var zapTarget: TimelineRow?
     @State private var reactingTo: TimelineRow?
+    @State private var reactorsOf: ReactorsTarget?
     @FocusState private var isComposing: Bool
     @State private var tray: AttachmentTray
     @State private var loader: MediaLoader
@@ -110,6 +111,13 @@ struct ThreadView: View {
                 Task { await model.toggleReaction(emoji, on: row.id) }
             }
         }
+        .sheet(item: $reactorsOf) { target in
+            ReactorsSheet(
+                session: session,
+                messageID: target.messageID,
+                focusedEmoji: target.emoji
+            )
+        }
         .sheet(item: $zapTarget) { row in
             if let address = row.authorLightningAddress,
                let recipient = PublicKey(hex: row.pubkey) {
@@ -138,7 +146,10 @@ struct ThreadView: View {
             onDiscard: { Task { await model.discard(entry.row.id) } },
             onZap: entry.row.authorLightningAddress == nil ? nil : { zapTarget = entry.row },
             onOpenAuthor: { profileTarget = ProfileTarget(pubkey: entry.row.pubkey) },
-            onPickEmoji: entry.row.isDeleted ? nil : { reactingTo = entry.row }
+            onPickEmoji: entry.row.isDeleted ? nil : { reactingTo = entry.row },
+            onShowReactors: { emoji in
+                reactorsOf = ReactorsTarget(messageID: entry.row.id, emoji: emoji)
+            }
             // No `onOpenThread` or `onReply`: this is already the thread, and
             // threads do not nest. The compose bar below is the way to reply.
         )

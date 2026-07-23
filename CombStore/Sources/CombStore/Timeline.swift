@@ -106,6 +106,25 @@ public struct TimelineCursor: Sendable, Equatable {
     }
 }
 
+/// One person who reacted.
+public struct Reactor: Sendable, Equatable, Identifiable {
+    public let pubkey: String
+    /// Already resolved, falling back to a short key: the sheet should never
+    /// have to decide how to name someone.
+    public let name: String
+    public let picture: String?
+
+    public var id: String { pubkey }
+}
+
+/// Everyone who reacted with one emoji.
+public struct ReactionGroup: Sendable, Equatable, Identifiable {
+    public let emoji: String
+    public let reactors: [Reactor]
+
+    public var id: String { emoji }
+}
+
 /// A reaction tally for one message.
 public struct ReactionSummary: Sendable, Equatable, Identifiable {
     public let emoji: String
@@ -415,6 +434,52 @@ public extension EventStore {
             )
         }
         return out
+    }
+
+    /// Everyone who reacted to a message, grouped by emoji.
+    ///
+    /// Ordered by count so the biggest pile leads, and within a pile by who
+    /// reacted first, which reads as the order it actually happened in.
+    /// Names resolve through `profile`, so this falls back to a short key the
+    /// same way every other surface does rather than inventing its own.
+    nonisolated func reactors(for targetID: String) throws -> [ReactionGroup] {
+        try reader.read { db in
+            let rows = try Row.fetchAll(db, sql: """
+                SELECT r.emoji AS emoji,
+                       r.pubkey AS pubkey,
+                       r.created_at AS created_at,
+                       p.display_name AS display_name,
+                       p.picture AS picture
+                FROM reaction r
+                LEFT JOIN profile p ON p.pubkey = r.pubkey
+                WHERE r.target_id = :target
+                  AND NOT EXISTS (SELECT 1 FROM deletion d
+                                   WHERE d.target_id = r.event_id
+                                     AND (d.kind = 9005 OR d.deleted_by = r.pubkey))
+                ORDER BY r.created_at ASC, r.event_id ASC
+                """, arguments: ["target": targetID])
+
+            var order: [String] = []
+            var byEmoji: [String: [Reactor]] = [:]
+
+            for row in rows {
+                let emoji: String = row["emoji"]
+                if byEmoji[emoji] == nil { order.append(emoji) }
+                let name: String? = row["display_name"]
+                let pubkey: String = row["pubkey"]
+                byEmoji[emoji, default: []].append(
+                    Reactor(
+                        pubkey: pubkey,
+                        name: name?.isEmpty == false ? name! : String(pubkey.prefix(8)),
+                        picture: row["picture"]
+                    )
+                )
+            }
+
+            return order
+                .map { ReactionGroup(emoji: $0, reactors: byEmoji[$0] ?? []) }
+                .sorted { $0.reactors.count > $1.reactors.count }
+        }
     }
 
     /// The id of the caller's own live reaction with this emoji, for toggling:

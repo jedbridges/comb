@@ -237,15 +237,17 @@ extension View {
         )
     }
 
-    /// The glyph treatment: composited as one badge, then blended into the
-    /// light behind it.
+    /// The glyph treatment, shared by channel cells and avatars so the two
+    /// read as one family.
     ///
-    /// Shared by channel cells and avatars so the two read as one family. It
-    /// has to be one modifier: they were assembled separately once and drifted
-    /// into looking like different systems.
+    /// Deliberately opaque, with no blend. Blending a badge into the light
+    /// behind it looks better in isolation and fails in a list: the gradient
+    /// runs olive to blue down the screen, so a column of avatars inherits a
+    /// different colour per row and reads as a dozen unrelated tints rather
+    /// than one repeated element. A fixed fill is the same everywhere, which
+    /// is what a repeated element needs to be.
     func glyphChrome(size: CGFloat) -> some View {
         compositingGroup()
-            .luminousChrome()
             .frame(width: size, height: size)
     }
 

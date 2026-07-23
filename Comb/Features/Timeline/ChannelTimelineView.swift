@@ -18,6 +18,7 @@ struct ChannelTimelineView: View {
     @State private var editing: TimelineRow?
     @State private var deleting: TimelineRow?
     @State private var reactingTo: TimelineRow?
+    @State private var reactorsOf: ReactorsTarget?
     @FocusState private var isComposing: Bool
     @State private var scrollPosition = ScrollPosition()
     @State private var isAwayFromBottom = false
@@ -76,7 +77,13 @@ struct ChannelTimelineView: View {
                                 draft = entry.row.displayContent
                             },
                             onDelete: ownMessageAction(entry.row) { deleting = entry.row },
-                            onPickEmoji: entry.row.isDeleted ? nil : { reactingTo = entry.row }
+                            onPickEmoji: entry.row.isDeleted ? nil : { reactingTo = entry.row },
+                            onShowReactors: { emoji in
+                                reactorsOf = ReactorsTarget(
+                                    messageID: entry.row.id,
+                                    emoji: emoji
+                                )
+                            }
                         )
                     }
                 }
@@ -202,6 +209,13 @@ struct ChannelTimelineView: View {
                 Task { await model.toggleReaction(emoji, on: row.id) }
             }
         }
+        .sheet(item: $reactorsOf) { target in
+            ReactorsSheet(
+                session: session,
+                messageID: target.messageID,
+                focusedEmoji: target.emoji
+            )
+        }
         .sheet(item: $zapTarget) { entry in
             if let address = entry.row.authorLightningAddress,
                let recipient = PublicKey(hex: entry.row.pubkey) {
@@ -316,6 +330,8 @@ struct MessageRow: View {
     var onDelete: (() -> Void)?
     /// Opens the full emoji picker for this message.
     var onPickEmoji: (() -> Void)?
+    /// Long-press on a reaction chip: shows who reacted.
+    var onShowReactors: ((String) -> Void)?
 
     /// The quick palette, shared with the reaction bar's add button so the
     /// two ways to react can never disagree. A full picker is later polish.
@@ -388,7 +404,8 @@ struct MessageRow: View {
                     ReactionBar(
                         reactions: reactions,
                         onTap: onReact,
-                        onPickEmoji: onPickEmoji
+                        onPickEmoji: onPickEmoji,
+                        onShowReactors: onShowReactors
                     )
                 }
 
@@ -589,6 +606,8 @@ struct ReactionBar: View {
     let onTap: (String) -> Void
     /// Opens the full picker. The quick palette is a menu when absent.
     var onPickEmoji: (() -> Void)?
+    /// Long-press on a chip, carrying the emoji pressed.
+    var onShowReactors: ((String) -> Void)?
 
     var body: some View {
         HStack(spacing: Space.xs) {
@@ -596,6 +615,12 @@ struct ReactionBar: View {
                 // Tapping a chip toggles: join the pile, or withdraw your own.
                 Button { onTap(reaction.emoji) } label: { chip(reaction) }
                     .buttonStyle(.plain)
+                    // Long-press shows who. Kept off the tap so the primary
+                    // gesture stays what it has always been: join the pile or
+                    // take yours back.
+                    .onLongPressGesture {
+                        onShowReactors?(reaction.emoji)
+                    }
                     .accessibilityLabel(
                         "\(reaction.emoji), \(reaction.count)"
                             + (reaction.includesMe ? ", including yours" : "")
@@ -603,6 +628,11 @@ struct ReactionBar: View {
                     .accessibilityHint(
                         reaction.includesMe ? "Removes your reaction" : "Adds your reaction"
                     )
+                    // VoiceOver has no long press, so the same destination is
+                    // offered as a rotor action or it is unreachable by ear.
+                    .accessibilityAction(named: "See who reacted") {
+                        onShowReactors?(reaction.emoji)
+                    }
             }
 
             // The visible way in, once a pile exists. Before this, reacting
@@ -652,6 +682,14 @@ struct ReactionBar: View {
             in: .capsule
         )
     }
+}
+
+/// A message and the chip that was pressed on it.
+struct ReactorsTarget: Identifiable, Hashable {
+    let messageID: String
+    let emoji: String
+
+    var id: String { messageID + emoji }
 }
 
 /// Who is typing, just above the compose bar.
