@@ -93,7 +93,47 @@ actor CommunitySession {
         await retryPendingSends()
     }
 
+    /// Connects without holding up the caller, retrying until it works or
+    /// the session stops.
+    ///
+    /// This is what makes launch instant: the store is on disk and every
+    /// screen reads from it, so nothing on the critical path needs the
+    /// network. The connection banner narrates the attempt, and the built-in
+    /// reconnect machinery takes over once a connection has been established
+    /// at least once. The retry loop here exists because an *initial* failure
+    /// (launching in airplane mode, a dead spot) never reaches that
+    /// machinery; without it, one failed first attempt would leave the app
+    /// silently offline forever.
+    func startResilient() {
+        guard connectTask == nil else { return }
+        connectTask = Task { [weak self] in
+            // Modest and capped: waking from airplane mode should reconnect
+            // within seconds, and a dead relay should not be hammered.
+            let delays: [Duration] = [.seconds(1), .seconds(2), .seconds(5), .seconds(15)]
+            var attempt = 0
+
+            while !Task.isCancelled {
+                do {
+                    try await self?.start()
+                    return
+                } catch {
+                    DiagnosticsBuffer.report(
+                        "session",
+                        "connect attempt \(attempt + 1) failed: \(error)"
+                    )
+                    let delay = delays[min(attempt, delays.count - 1)]
+                    attempt += 1
+                    try? await Task.sleep(for: delay)
+                }
+            }
+        }
+    }
+
+    private var connectTask: Task<Void, Never>?
+
     func stop() async {
+        connectTask?.cancel()
+        connectTask = nil
         await relay.stop()
     }
 

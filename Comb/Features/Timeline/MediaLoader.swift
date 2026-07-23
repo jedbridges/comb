@@ -1,5 +1,6 @@
 import CombCore
 import CombNet
+import ImageIO
 import SwiftUI
 import UIKit
 
@@ -77,12 +78,42 @@ actor MediaLoader {
         if let cached = memory.object(forKey: key) { return cached }
 
         let data = try await data(for: attachment)
-        guard let image = UIImage(data: data) else {
+        guard let image = Self.decodeDownsampled(data) else {
             throw BlossomClient.Failure.malformedResponse
         }
 
-        memory.setObject(image, forKey: key, cost: data.count)
+        // Cost is the decoded bitmap, not the file: a 1.5 MB JPEG decodes to
+        // ~25 MB of pixels, and costing by file size let the "64 MB" cache
+        // quietly hold half a gigabyte of bitmaps.
+        let cost = (image.cgImage?.bytesPerRow ?? 0) * (image.cgImage?.height ?? 0)
+        memory.setObject(image, forKey: key, cost: max(cost, data.count))
         return image
+    }
+
+    /// Decodes at most 2048px on the long edge, straight from ImageIO.
+    ///
+    /// `UIImage(data:)` decodes the full bitmap: a 12-megapixel photograph
+    /// becomes ~48 MB of memory to fill a 260pt slot. Thumbnailing at decode
+    /// time caps the cost per image regardless of what arrives, and 2048px
+    /// still over-fills the full-screen viewer on a 3x display.
+    private static func decodeDownsampled(_ data: Data, maxPixel: Int = 2048) -> UIImage? {
+        let sourceOptions = [kCGImageSourceShouldCache: false] as CFDictionary
+        guard let source = CGImageSourceCreateWithData(data as CFData, sourceOptions) else {
+            return nil
+        }
+
+        let thumbnailOptions = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            // Applies EXIF orientation while decoding, so the bitmap is
+            // upright and no transform survives into rendering.
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixel,
+        ] as [CFString: Any] as CFDictionary
+
+        guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, thumbnailOptions)
+        else { return nil }
+        return UIImage(cgImage: cgImage)
     }
 
     private func data(for attachment: Blossom.Attachment) async throws -> Data {

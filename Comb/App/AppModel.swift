@@ -43,14 +43,18 @@ final class AppModel {
         }
 
         do {
+            // Straight to channels: everything on screen reads from the disk
+            // store, so the launch has no reason to wait on a socket. The
+            // connection proceeds behind the banner, and offline launch shows
+            // readable history instead of a dead welcome screen, which is the
+            // offline-first promise actually kept.
             let session = try CommunitySession(url: community.relay, key: key)
-            try await session.start()
             stage = .active(session)
+            await session.startResilient()
         } catch {
-            // Offline is the common cause. The store is on disk, so a session
-            // that fails to connect could still read; that offline-first launch
-            // is Phase 8 polish. For now the welcome screen says what happened.
-            launchNotice = "Could not reach \(community.displayName). Check the connection and try again."
+            // Only disk failure lands here now, and that genuinely has no app
+            // to show.
+            launchNotice = "Could not open \(community.displayName)'s local data."
             stage = .welcome
         }
     }
@@ -110,13 +114,14 @@ final class AppModel {
             await current.stop()
         }
 
-        stage = .launching
         do {
+            // Same instant switch as launch: the other community's history is
+            // already on disk, so the swap is a screen change, not a spinner.
             let session = try CommunitySession(url: community.relay, key: key)
-            try await session.start()
             stage = .active(session)
+            await session.startResilient()
         } catch {
-            launchNotice = "Could not reach \(community.displayName)."
+            launchNotice = "Could not open \(community.displayName)'s local data."
             stage = .welcome
         }
     }

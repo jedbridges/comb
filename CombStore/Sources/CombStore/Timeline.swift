@@ -183,7 +183,7 @@ public extension EventStore {
             "limit": limit,
         ])
 
-        return rows.map(Self.makeRow)
+        return Self.makeRows(rows)
     }
 
     /// A whole thread: the message that opened it, then every reply, oldest
@@ -218,7 +218,7 @@ public extension EventStore {
             "root": root,
             "kind": EventKind.groupChatMessage.rawValue,
         ])
-        return rows.map(Self.makeRow)
+        return Self.makeRows(rows)
     }
 
     // MARK: - Shared query pieces
@@ -303,19 +303,32 @@ public extension EventStore {
         """
     }
 
+    /// One decoder for the whole page rather than one per row: this runs on
+    /// every observation fire, and allocating eighty decoders per incoming
+    /// message was pure waste. Not shared wider than a fetch, because
+    /// `JSONDecoder` makes no thread-safety promise and the reader pool is
+    /// concurrent.
+    private static func makeRows(_ rows: [Row]) -> [TimelineRow] {
+        let decoder = JSONDecoder()
+        return rows.map { makeRow($0, decoder: decoder) }
+    }
+
     /// Decodes `imeta` attachments from a row's stored tag JSON.
     ///
     /// Done in Swift rather than SQL: the tags are already JSON, the page is at
     /// most a screenful, and pushing JSON parsing into SQLite would buy nothing
     /// but an unreadable query.
-    private static func attachments(inTagsJSON json: String?) -> [Blossom.Attachment] {
+    private static func attachments(
+        inTagsJSON json: String?,
+        decoder: JSONDecoder
+    ) -> [Blossom.Attachment] {
         guard let json,
-              let tags = try? JSONDecoder().decode([[String]].self, from: Data(json.utf8))
+              let tags = try? decoder.decode([[String]].self, from: Data(json.utf8))
         else { return [] }
         return Blossom.attachments(in: tags)
     }
 
-    private static func makeRow(_ row: Row) -> TimelineRow {
+    private static func makeRow(_ row: Row, decoder: JSONDecoder) -> TimelineRow {
         let edited: String? = row["edited"]
         return TimelineRow(
             id: row["id"],
@@ -333,7 +346,7 @@ public extension EventStore {
             replyCount: row["reply_count"] ?? 0,
             lastReplyAt: row["last_reply_at"],
             richContent: row["rich"],
-            attachments: Self.attachments(inTagsJSON: row["tags"])
+            attachments: Self.attachments(inTagsJSON: row["tags"], decoder: decoder)
         )
     }
 
