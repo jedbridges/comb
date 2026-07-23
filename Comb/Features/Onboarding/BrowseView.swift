@@ -196,9 +196,17 @@ struct BrowseView: View {
                 .font(Typography.actionSecondary)
                 .buttonStyle(.glass)
             } else {
-                Text("Invite only")
-                    .font(Typography.caption)
-                    .foregroundStyle(Palette.subtext)
+                // A chevron, not just grey text. "Invite only" alone read as a
+                // locked door, but the row leads somewhere useful: the join
+                // screen, which now shows the community and says how to get in.
+                // The affordance has to promise that.
+                HStack(spacing: Space.xxs) {
+                    Text("Invite only")
+                        .font(Typography.caption)
+                    Image(systemName: "chevron.right")
+                        .font(Typography.icon)
+                }
+                .foregroundStyle(Palette.subtext)
             }
         }
         .padding(.vertical, Space.sm)

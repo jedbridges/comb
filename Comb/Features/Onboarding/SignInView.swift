@@ -14,46 +14,68 @@ struct SignInView: View {
 
     @State private var model = SignInModel()
     @FocusState private var focus: Field?
+    /// The manual URL + key path, collapsed by default. Scanning is the route
+    /// that carries both pieces for you; typing a wss:// address and a key from
+    /// memory is the fallback, so it lives behind a disclosure rather than
+    /// facing every returning user with two intimidating fields.
+    @State private var showsManual = false
 
     private enum Field { case url, key }
 
     var body: some View {
         Form {
+            // The recommended way in, given its own prominent card rather than
+            // a plain row: pairing needs no typing, and a returning Buzz user
+            // rarely has their relay address memorised.
             Section {
                 NavigationLink {
                     PairingView(onPaired: onSignedIn)
                 } label: {
-                    Label("Scan a code instead", systemImage: "qrcode")
-                }
-            } footer: {
-                Text("Sign in by scanning a code from Buzz on your computer.")
-            }
-            .combRows()
+                    HStack(spacing: Space.md) {
+                        Image(systemName: "qrcode")
+                            .font(.system(size: Sizing.avatar * 0.7))
+                            .foregroundStyle(Palette.chartreuse)
+                            .frame(width: Sizing.avatar * 1.2, height: Sizing.avatar * 1.2)
 
-            Section("Community address") {
-                TextField("wss://…", text: $model.relayURL)
-                    .font(Typography.mono)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                    .keyboardType(.URL)
-                    .focused($focus, equals: .url)
+                        VStack(alignment: .leading, spacing: Space.xxs) {
+                            Text("Scan the code from Buzz")
+                                .font(Typography.name)
+                                .foregroundStyle(Palette.text)
+                            Text("Open Buzz on your computer and show the pairing code. Nothing to type.")
+                                .font(Typography.caption)
+                                .foregroundStyle(Palette.subtext)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    .padding(.vertical, Space.xxs)
+                }
             }
             .combRows()
 
             Section {
-                SecureField("nsec1…", text: $model.secretKey)
-                    .font(Typography.mono)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                    .focused($focus, equals: .key)
-            } header: {
-                // "Private key" because that is what Buzz calls it, and this
-                // screen exists to receive a key copied out of Buzz. A softer
-                // word here would send people looking for something that does
-                // not exist on the other side.
-                Text("Private key")
+                DisclosureGroup("Enter it manually instead", isExpanded: $showsManual) {
+                    TextField("Community address (wss://…)", text: $model.relayURL)
+                        .font(Typography.mono)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .keyboardType(.URL)
+                        .focused($focus, equals: .url)
+
+                    SecureField("Private key (nsec1…)", text: $model.secretKey)
+                        .font(Typography.mono)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .focused($focus, equals: .key)
+                }
+                .tint(Palette.chartreuse)
             } footer: {
-                Text("Paste the key from Buzz, or 64 hex characters. It stays on this iPhone and is sent nowhere.")
+                if showsManual {
+                    // "Private key" because that is what Buzz calls it, and
+                    // this screen exists to receive a key copied out of Buzz. A
+                    // softer word would send people looking for something that
+                    // does not exist on the other side.
+                    Text("Paste the address and the key from Buzz. They stay on this iPhone and are sent nowhere.")
+                }
             }
             .combRows()
 
@@ -82,20 +104,27 @@ struct SignInView: View {
         .background(Palette.backgroundGradient.ignoresSafeArea())
         .scrollDismissesKeyboard(.interactively)
         .safeAreaInset(edge: .bottom) {
-            PrimaryButton(
-                title: model.isSigningIn ? "Signing in…" : "Sign in",
-                isDisabled: model.secretKey.isEmpty || model.isSigningIn
-            ) {
-                focus = nil
-                Task {
-                    if let session = await model.signIn() {
-                        onSignedIn(session)
+            // Only present once the manual path is open. Scanning has its own
+            // way forward (the pairing screen), so a permanent "Sign in" button
+            // over an empty form would imply typing is the expected route.
+            if showsManual {
+                PrimaryButton(
+                    title: model.isSigningIn ? "Signing in…" : "Sign in",
+                    isDisabled: model.secretKey.isEmpty || model.isSigningIn
+                ) {
+                    focus = nil
+                    Task {
+                        if let session = await model.signIn() {
+                            onSignedIn(session)
+                        }
                     }
                 }
+                .padding(.horizontal, Space.lg)
+                .padding(.bottom, Space.xs)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
             }
-            .padding(.horizontal, Space.lg)
-            .padding(.bottom, Space.xs)
         }
+        .animation(Motion.standard, value: showsManual)
         .navigationTitle("Sign in")
         .navigationBarTitleDisplayMode(.inline)
     }
