@@ -153,6 +153,24 @@ struct IMetaTests {
         #expect(Blossom.attachments(in: tags).isEmpty)
     }
 
+    @Test("a hostile aspect ratio is treated as unknown")
+    func hostileAspectRatio() {
+        // `dim` arrives in a tag anyone can write. Trusting 100000x1 would
+        // reserve a layout thousands of points wide before a byte loads.
+        let wide = Blossom.Attachment(
+            url: "u", mimeType: "image/png", sha256: "a", width: 100_000, height: 1
+        )
+        let tall = Blossom.Attachment(
+            url: "u", mimeType: "image/png", sha256: "b", width: 1, height: 100_000
+        )
+        let sane = Blossom.Attachment(
+            url: "u", mimeType: "image/png", sha256: "c", width: 1280, height: 720
+        )
+        #expect(wide.aspectRatio == nil)
+        #expect(tall.aspectRatio == nil)
+        #expect(sane.aspectRatio != nil)
+    }
+
     @Test("malformed dimensions do not sink the attachment")
     func badDimensions() {
         let tags = [[

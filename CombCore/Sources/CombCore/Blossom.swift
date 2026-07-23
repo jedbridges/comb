@@ -90,7 +90,13 @@ public enum Blossom {
 
         public var aspectRatio: Double? {
             guard let width, let height, width > 0, height > 0 else { return nil }
-            return Double(width) / Double(height)
+            // Clamped: the dimensions arrive in a tag anyone can write, and a
+            // declared "100000x1" would otherwise become a reserved layout
+            // thousands of points wide. Real photographs live well inside
+            // 1:5 to 5:1; anything outside is treated as unknown.
+            let ratio = Double(width) / Double(height)
+            guard (0.2...5.0).contains(ratio) else { return nil }
+            return ratio
         }
     }
 

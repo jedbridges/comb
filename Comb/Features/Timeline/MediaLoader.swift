@@ -30,10 +30,45 @@ actor MediaLoader {
 
     private let directory: URL
 
+    /// The disk cache's ceiling. Trimmed lazily on first use per session, so
+    /// a channel full of photographs cannot grow the cache without bound.
+    private static let maxDiskBytes: Int64 = 256 * 1024 * 1024
+
     init(session: CommunitySession) {
         self.session = session
         self.directory = URL.cachesDirectory.appending(path: "Media", directoryHint: .isDirectory)
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        Task { await trimDiskCache() }
+    }
+
+    /// Evicts oldest-accessed files until the cache fits under the ceiling.
+    ///
+    /// Access order rather than write order: the image someone opens daily
+    /// should outlive fifty scrolled past once. The OS may also purge Caches
+    /// entirely under pressure, which is fine; everything here is refetchable.
+    private func trimDiskCache() {
+        let keys: [URLResourceKey] = [.contentAccessDateKey, .totalFileAllocatedSizeKey]
+        guard let files = try? FileManager.default.contentsOfDirectory(
+            at: directory, includingPropertiesForKeys: keys
+        ) else { return }
+
+        var entries: [(url: URL, accessed: Date, size: Int64)] = files.compactMap { url in
+            guard let values = try? url.resourceValues(forKeys: Set(keys)) else { return nil }
+            return (
+                url,
+                values.contentAccessDate ?? .distantPast,
+                Int64(values.totalFileAllocatedSize ?? 0)
+            )
+        }
+
+        var total = entries.reduce(0) { $0 + $1.size }
+        guard total > Self.maxDiskBytes else { return }
+
+        entries.sort { $0.accessed < $1.accessed }
+        for entry in entries where total > Self.maxDiskBytes {
+            try? FileManager.default.removeItem(at: entry.url)
+            total -= entry.size
+        }
     }
 
     /// The image for an attachment, from memory, then disk, then the relay.

@@ -9,6 +9,11 @@ import Foundation
 /// app owns the join. Events flow relay → sink → verified ingest → observation
 /// → UI, and the UI never touches the socket.
 actor CommunitySession {
+    /// The relay's own content ceiling (64 KB, `check_content` in Buzz's
+    /// SDK). Enforced client-side too, so an over-long message is stopped at
+    /// the send button instead of failing after a round trip.
+    static let maxMessageBytes = 64 * 1024
+
     /// Accessible without await: an actor's immutable Sendable storage crosses
     /// isolation freely, and the store is itself an actor.
     nonisolated let store: EventStore

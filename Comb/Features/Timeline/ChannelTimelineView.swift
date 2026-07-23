@@ -228,9 +228,13 @@ struct MessageRow: View {
                     if entry.showsHeader {
                         HStack(alignment: .firstTextBaseline, spacing: Space.xs) {
                             Button(action: onOpenAuthor) {
+                                // One line: a 200-character display name is
+                                // someone else's choice, and it must not shove
+                                // the timestamp off the screen.
                                 Text(entry.row.displayName)
                                     .font(Typography.name)
                                     .foregroundStyle(Palette.text)
+                                    .lineLimit(1)
                             }
                             .buttonStyle(.plain)
                             Text(entry.row.date, format: .dateTime.hour().minute())
@@ -420,7 +424,13 @@ struct ReactionBar: View {
 
     private func chip(_ reaction: ReactionSummary) -> some View {
         HStack(spacing: Space.xxs) {
-            Text(reaction.emoji).font(Typography.label)
+            // Clamped: reaction content arrives from anyone, and rendering a
+            // paragraph-long "emoji" would hand every member a banner ad slot.
+            // Two grapheme clusters cover every real emoji including flags and
+            // family sequences.
+            Text(String(reaction.emoji.prefix(2)))
+                .font(Typography.label)
+                .lineLimit(1)
             Text("\(reaction.count)")
                 .font(Typography.count)
                 .foregroundStyle(
@@ -451,8 +461,15 @@ struct ComposeBar: View {
 
     @State private var picked: [PhotosPickerItem] = []
 
+    /// Over the relay's 64 KB content ceiling. Practically unreachable by
+    /// typing, very reachable by pasting; without this gate the message fails
+    /// after a round trip instead of before it.
+    private var isTooLong: Bool {
+        draft.utf8.count > CommunitySession.maxMessageBytes
+    }
+
     private var canSend: Bool {
-        guard attachments?.isUploading != true else { return false }
+        guard attachments?.isUploading != true, !isTooLong else { return false }
         // Keyed on what would actually be sent, not on the tray being
         // non-empty: an attachment that failed to upload contributes nothing,
         // and enabling Send for it gives a button that does nothing.
@@ -492,6 +509,17 @@ struct ComposeBar: View {
 
             if let attachments, !attachments.isEmpty {
                 AttachmentTrayView(tray: attachments)
+            }
+
+            if isTooLong {
+                Label(
+                    "Too long for one message. Trim it or split it up.",
+                    systemImage: "exclamationmark.circle"
+                )
+                .font(Typography.caption)
+                .foregroundStyle(Palette.danger)
+                .padding(.horizontal, Space.sm)
+                .padding(.top, Space.xxs)
             }
 
             // Centred, not bottom-aligned: the glass button style pads its

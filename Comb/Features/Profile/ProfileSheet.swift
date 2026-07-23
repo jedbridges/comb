@@ -65,6 +65,7 @@ struct ProfileSheet: View {
                         Text(profile.name)
                             .font(Typography.screenTitle)
                             .foregroundStyle(Palette.text)
+                            .lineLimit(2)
                         if let nip05 = profile.nip05, !nip05.isEmpty {
                             Label(nip05, systemImage: "checkmark.seal")
                                 .font(Typography.caption)
@@ -164,6 +165,7 @@ struct MemberListView: View {
                 Text(member.name)
                     .font(Typography.name)
                     .foregroundStyle(Palette.text)
+                    .lineLimit(1)
                 if member.messageCount > 0 {
                     Text("\(member.messageCount) messages")
                         .font(Typography.caption)
