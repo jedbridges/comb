@@ -68,6 +68,14 @@ targets:
         # variant of it was never finished. Shipping a half-built appearance is
         # worse than shipping one.
         UIUserInterfaceStyle: Dark
+        # Background refresh wakes the app to check for mentions while it is
+        # closed, since hosted Buzz's push gateway will not enrol a third-party
+        # client. The identifier must match BackgroundRefresh.taskIdentifier.
+        UIBackgroundModes:
+          - fetch
+          - processing
+        BGTaskSchedulerPermittedIdentifiers:
+          - dev.jedbridges.comb.refresh
         CFBundleURLTypes:
           - CFBundleURLName: dev.jedbridges.comb.join
             CFBundleURLSchemes:

@@ -17,6 +17,8 @@ struct SettingsView: View {
     @State private var isConfirmingSignOut = false
     @State private var isReportingProblem = false
     @State private var displayName = ""
+    @State private var notifyMentions = NotificationSettings.isEnabled
+    @State private var systemDenied = false
 
     private var host: String { session.relayURL.host ?? "" }
     /// The subdomain reads as the community; the full host is the address.
@@ -82,6 +84,39 @@ struct SettingsView: View {
                     Text("Community")
                 } footer: {
                     Text(host).font(Typography.monoSmall)
+                }
+                .combRows()
+
+                Section {
+                    Toggle("Notify me about mentions", isOn: $notifyMentions)
+                        .tint(Palette.chartreuse)
+                        .onChange(of: notifyMentions) { _, wantsOn in
+                            Task {
+                                if wantsOn {
+                                    let ok = await BackgroundRefresh.enable()
+                                    // Spring the switch back if the system
+                                    // prompt was declined: an "on" toggle that
+                                    // delivers nothing is a lie.
+                                    if !ok { notifyMentions = false }
+                                    systemDenied = !ok
+                                } else {
+                                    await BackgroundRefresh.disable()
+                                    systemDenied = false
+                                }
+                            }
+                        }
+                } header: {
+                    Text("Notifications")
+                } footer: {
+                    if systemDenied {
+                        Text("Notifications are off for Comb in iOS Settings. Turn them on there first.")
+                            .foregroundStyle(Palette.danger)
+                    } else {
+                        // The latency is stated, not hidden. Comb has no push
+                        // server, so this is a periodic background check, and
+                        // promising more than that would be dishonest.
+                        Text("Comb has no notification server, so it checks in the background every so often. A mention can arrive a while after it was sent.")
+                    }
                 }
                 .combRows()
 

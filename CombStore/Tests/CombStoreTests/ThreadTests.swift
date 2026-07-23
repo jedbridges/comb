@@ -189,6 +189,72 @@ struct ThreadTests {
     }
 }
 
+@Suite("Mention notices", .timeLimit(.minutes(1)))
+struct MentionNoticeTests {
+    /// A message in `room-1` that p-tags `target`.
+    private func mention(
+        _ author: Fixture,
+        of target: String,
+        _ content: String,
+        at seconds: Int64
+    ) throws -> NostrEvent {
+        try author.event(
+            .groupChatMessage,
+            content,
+            tags: [["h", "room-1"], ["p", target]],
+            at: seconds
+        )
+    }
+
+    @Test("returns only mentions newer than the watermark")
+    func newerThanWatermark() async throws {
+        let store = try EventStore()
+        let me = try Fixture()
+        let other = try Fixture()
+
+        _ = try await store.ingest([
+            try mention(other, of: me.pubkey, "old news", at: 1000),
+            try mention(other, of: me.pubkey, "fresh ping", at: 5000),
+        ])
+
+        let notices = try store.mentions(of: me.pubkey, since: 3000)
+        #expect(notices.map(\.text) == ["fresh ping"])
+    }
+
+    @Test("never notifies you about your own mention of yourself")
+    func excludesOwnMessages() async throws {
+        let store = try EventStore()
+        let me = try Fixture()
+        _ = try await store.ingest([try mention(me, of: me.pubkey, "note to self", at: 5000)])
+        #expect(try store.mentions(of: me.pubkey, since: 1000).isEmpty)
+    }
+
+    @Test("a deleted mention does not ping")
+    func excludesDeleted() async throws {
+        let store = try EventStore()
+        let me = try Fixture()
+        let other = try Fixture()
+
+        let msg = try mention(other, of: me.pubkey, "oops", at: 5000)
+        _ = try await store.ingest([msg])
+        // The author deletes their own message (kind 5).
+        _ = try await store.ingest([
+            try other.event(.deletion, "", tags: [["e", msg.id]], at: 5001)
+        ])
+
+        #expect(try store.mentions(of: me.pubkey, since: 1000).isEmpty)
+    }
+
+    @Test("a message that does not tag you is not a mention")
+    func requiresTag() async throws {
+        let store = try EventStore()
+        let me = try Fixture()
+        let other = try Fixture()
+        _ = try await store.ingest([try other.message("just chatting", at: 5000)])
+        #expect(try store.mentions(of: me.pubkey, since: 1000).isEmpty)
+    }
+}
+
 @Suite("Message text")
 struct MessageTextTests {
     @Test("strips the media markdown Buzz appends")

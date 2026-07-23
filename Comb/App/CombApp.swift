@@ -1,15 +1,38 @@
 import CombNet
 import SwiftUI
+import UserNotifications
 
 @main
 struct CombApp: App {
     @State private var model = AppModel()
     @State private var pendingInvite: String?
+    @Environment(\.scenePhase) private var scenePhase
+
+    init() {
+        // Must run before launch finishes, per BGTaskScheduler. Registering the
+        // handler is free; whether a wake is ever scheduled depends on the
+        // notification toggle.
+        BackgroundRefresh.register()
+    }
 
     var body: some Scene {
         WindowGroup {
             stageView
             .task { await model.bootstrap() }
+            .onChange(of: scenePhase) { _, phase in
+                switch phase {
+                case .active:
+                    // Opening the app is the moment the badge is certainly
+                    // stale: the user is now looking at the unread it counted.
+                    Task { try? await UNUserNotificationCenter.current().setBadgeCount(0) }
+                case .background:
+                    // Line up the next check as we leave, so a fresh wake is
+                    // always pending while notifications are on.
+                    BackgroundRefresh.schedule()
+                default:
+                    break
+                }
+            }
             .onOpenURL { url in
                 // buzz:// and comb:// join links, honoured in either stage:
                 // signed out they open the welcome join flow, signed in they
