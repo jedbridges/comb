@@ -125,8 +125,7 @@ struct BrowseView: View {
         } label: {
             Image(systemName: "arrow.up.arrow.down")
                 .font(Typography.actionSecondary)
-                .foregroundStyle(Palette.text)
-                .luminousChrome()
+                .foregroundStyle(Palette.chrome)
         }
         .accessibilityLabel("Sort communities")
     }

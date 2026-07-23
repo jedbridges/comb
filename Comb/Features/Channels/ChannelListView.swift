@@ -100,8 +100,7 @@ struct ChannelListView: View {
                 } label: {
                     Image(systemName: "gearshape")
                         .font(Typography.actionSecondary)
-                        .foregroundStyle(Palette.text)
-                        .luminousChrome()
+                        .foregroundStyle(Palette.chrome)
                 }
                 .accessibilityLabel("Settings")
             }
@@ -195,8 +194,7 @@ struct ChannelListView: View {
         } label: {
             Image(systemName: "square.grid.2x2")
                 .font(Typography.actionSecondary)
-                .foregroundStyle(Palette.text)
-                .luminousChrome()
+                .foregroundStyle(Palette.chrome)
         }
         .accessibilityLabel("Communities")
         .accessibilityHint("Switch between communities or add another")

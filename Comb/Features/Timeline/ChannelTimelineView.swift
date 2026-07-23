@@ -192,8 +192,7 @@ struct ChannelTimelineView: View {
                     } label: {
                         Label("\(channel.memberCount)", systemImage: "person.2")
                             .font(Typography.count)
-                            .foregroundStyle(Palette.text)
-                            .luminousChrome()
+                            .foregroundStyle(Palette.chrome)
                     }
                     .accessibilityLabel("\(channel.memberCount) members")
                 }
@@ -625,25 +624,11 @@ struct ReactionBar: View {
                 // the tap too and toggled the reaction instead of opening the
                 // sheet. Replacing the Button outright is worse still, because
                 // the row stops laying out inside the lazy stack.
-                Button { onTap(reaction.emoji) } label: { chip(reaction) }
-                    .buttonStyle(.plain)
-                    .simultaneousGesture(
-                        LongPressGesture(minimumDuration: 0.4).onEnded { _ in
-                            onShowReactors?(reaction.emoji)
-                        }
-                    )
-                    .accessibilityLabel(
-                        "\(reaction.emoji), \(reaction.count)"
-                            + (reaction.includesMe ? ", including yours" : "")
-                    )
-                    .accessibilityHint(
-                        reaction.includesMe ? "Removes your reaction" : "Adds your reaction"
-                    )
-                    // VoiceOver has no long press, so the same destination is
-                    // offered as a rotor action or it is unreachable by ear.
-                    .accessibilityAction(named: "See who reacted") {
-                        onShowReactors?(reaction.emoji)
-                    }
+                ReactionChip(
+                    reaction: reaction,
+                    onTap: { onTap(reaction.emoji) },
+                    onShowReactors: { onShowReactors?(reaction.emoji) }
+                )
             }
 
             // The visible way in, once a pile exists. Before this, reacting
@@ -669,7 +654,65 @@ struct ReactionBar: View {
         .padding(.top, Space.xxs)
     }
 
-    private func chip(_ reaction: ReactionSummary) -> some View {
+}
+
+/// One reaction pile, and what happens when you join it.
+///
+/// Its own view rather than a function on `ReactionBar` because it now holds
+/// state: a chip has to remember that it is mid-burst, and a `@State` cannot
+/// live in a view builder.
+private struct ReactionChip: View {
+    let reaction: ReactionSummary
+    let onTap: () -> Void
+    let onShowReactors: () -> Void
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    /// The swarm in flight, if any. Nil between bursts, so nothing is drawn
+    /// and no timeline is running on a resting chip.
+    @State private var burst: Burst?
+    /// Bumped on every join, driving both the chip's spring and the first
+    /// haptic. Separate from `burst` so the spring still fires under Reduce
+    /// Motion, where there are no particles to schedule.
+    @State private var joins = 0
+    /// Bumped when the swarm reaches the top of its arc, for the second,
+    /// softer haptic.
+    @State private var apex = 0
+
+    private struct Burst: Equatable {
+        let id: UUID
+        let emoji: String
+        let particles: [BurstParticle]
+        let start: Date
+
+        static func == (lhs: Burst, rhs: Burst) -> Bool { lhs.id == rhs.id }
+    }
+
+    var body: some View {
+        Button(action: join) { chip }
+            .buttonStyle(.plain)
+            .simultaneousGesture(
+                LongPressGesture(minimumDuration: 0.4).onEnded { _ in onShowReactors() }
+            )
+            // Two beats rather than one. The first is the tap landing, the
+            // second is the swarm cresting, and the gap between them is what
+            // makes the burst feel like it has weight rather than being a
+            // single click with a picture attached.
+            .sensoryFeedback(.impact(flexibility: .solid, intensity: 0.75), trigger: joins)
+            .sensoryFeedback(.impact(flexibility: .soft, intensity: 0.4), trigger: apex)
+            .accessibilityLabel(
+                "\(reaction.emoji), \(reaction.count)"
+                    + (reaction.includesMe ? ", including yours" : "")
+            )
+            .accessibilityHint(
+                reaction.includesMe ? "Removes your reaction" : "Adds your reaction"
+            )
+            // VoiceOver has no long press, so the same destination is
+            // offered as a rotor action or it is unreachable by ear.
+            .accessibilityAction(named: "See who reacted", onShowReactors)
+    }
+
+    private var chip: some View {
         HStack(spacing: Space.xxs) {
             // Clamped: reaction content arrives from anyone, and rendering a
             // paragraph-long "emoji" would hand every member a banner ad slot.
@@ -689,12 +732,71 @@ struct ReactionBar: View {
         }
         .padding(.horizontal, Space.xs)
         .padding(.vertical, Space.xxs)
+        // The same lift the glyphs use, for the same reason: a Catppuccin grey
+        // is a literal grey and fights the gradient's hue instead of belonging
+        // to it, so an unjoined pile read as a dead slab dropped on the wash.
         .background(
             reaction.includesMe
                 ? AnyShapeStyle(Palette.chartreuse)
-                : AnyShapeStyle(Palette.surface.opacity(0.5)),
+                : AnyShapeStyle(Palette.glyphLift),
             in: .capsule
         )
+        .overlay {
+            if !reaction.includesMe {
+                Capsule().strokeBorder(Palette.glyphHairline, lineWidth: 0.75)
+            }
+        }
+        // The thing you touched responds, whatever else happens. Overshoot
+        // then settle, on two springs rather than one, so the recovery is
+        // slower than the strike.
+        .keyframeAnimator(initialValue: 1.0, trigger: joins) { view, scale in
+            view.scaleEffect(scale)
+        } keyframes: { _ in
+            SpringKeyframe(1.18, duration: 0.12, spring: .snappy)
+            SpringKeyframe(1.0, duration: 0.3, spring: .bouncy)
+        }
+        // Drawn over the chip and allowed to overflow it, so the swarm leaves
+        // the capsule instead of being trimmed to it.
+        .overlay {
+            if let burst {
+                ReactionBurst(
+                    emoji: burst.emoji,
+                    particles: burst.particles,
+                    start: burst.start
+                )
+            }
+        }
+    }
+
+    /// Tapping toggles: join the pile, or withdraw your own.
+    private func join() {
+        onTap()
+        joins += 1
+
+        // Nothing to celebrate on the way out: withdrawing should be quiet.
+        guard !reaction.includesMe else { return }
+        // A shower of tumbling emoji is precisely what Reduce Motion exists to
+        // switch off. The haptics stay: they are not motion.
+        guard !reduceMotion else { return }
+
+        let started = Burst(
+            id: UUID(),
+            emoji: reaction.emoji,
+            particles: BurstParticle.swarm(),
+            start: Date()
+        )
+        burst = started
+
+        Task { @MainActor in
+            // Roughly the top of the arc, where the swarm is widest.
+            try? await Task.sleep(for: .milliseconds(200))
+            apex += 1
+
+            try? await Task.sleep(for: .seconds(BurstParticle.maxDuration))
+            // Only tear down our own burst: a second tap during the first must
+            // not have its swarm cancelled by the first one's timer.
+            if burst?.id == started.id { burst = nil }
+        }
     }
 }
 
@@ -832,7 +934,11 @@ struct ComposeBar: View {
                     .textFieldStyle(.plain)
                     .focused(focus)
                     .padding(.horizontal, Space.xs)
-                    .padding(.top, Space.xxs)
+                    // Balanced against the gap below the controls rather than
+                    // hugging the top edge. The first line of a draft sat
+                    // almost against the bar's rim, which read as the text
+                    // having overflowed upward.
+                    .padding(.top, Space.sm)
                     // The field is one line tall inside a two-row bar, so
                     // most of the bar is not the field. Without this, tapping
                     // the obvious place to type does nothing.

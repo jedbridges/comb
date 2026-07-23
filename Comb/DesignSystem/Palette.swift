@@ -40,6 +40,17 @@ enum Palette {
     static let liftOnGradient = Color.white.opacity(0.07)
     static let hairlineOnGradient = Color.white.opacity(0.10)
 
+    /// Nav-bar and toolbar glyphs. Solid, and never blended.
+    ///
+    /// These used to be `text` plus `luminousChrome`, and `plusLighter` adds
+    /// the source to whatever happens to be behind it. On the channel list the
+    /// bar sits on bare olive gradient and the glyph blew out toward white; on
+    /// a timeline it sits over scrolled message content and came back warm.
+    /// Same code, two colours, which is what made the app's own chrome look
+    /// like it had been drawn by two people. A fixed warm off-white renders
+    /// identically wherever the bar lands.
+    static let chrome = adaptive(light: 0x3A3728, dark: 0xF1EDDB)
+
     // MARK: - Glyphs
 
     /// A channel badge and an avatar are the same object wearing two shapes,
