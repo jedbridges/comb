@@ -15,6 +15,7 @@ struct SettingsView: View {
 
     @Environment(\.dismiss) private var dismiss
     @State private var isConfirmingSignOut = false
+    @State private var displayName = ""
 
     private var host: String { session.relayURL.host ?? "" }
     /// The subdomain reads as the community; the full host is the address.
@@ -24,6 +25,13 @@ struct SettingsView: View {
         NavigationStack {
             Form {
                 Section {
+                    // Who you are, finally visible somewhere. The name was
+                    // asked for once at join and then never shown again, which
+                    // read as the app forgetting it.
+                    TextField("Your name", text: $displayName)
+                        .textContentType(.nickname)
+                        .onSubmit { saveName() }
+
                     NavigationLink {
                         RecoveryCodeView(host: host)
                     } label: {
@@ -32,7 +40,7 @@ struct SettingsView: View {
                 } header: {
                     Text("Your account")
                 } footer: {
-                    Text("The only copy of this account is on this iPhone.")
+                    Text("Your name is what people see in channels. The only copy of this account is on this iPhone.")
                 }
                 .combRows()
 
@@ -44,17 +52,21 @@ struct SettingsView: View {
                         Label(communityName, systemImage: "checkmark.seal")
                     }
 
-                    Button(role: .destructive) {
+                    // Not a destructive role: nothing is destroyed. The key
+                    // survives in the Keychain and rejoining picks it back up,
+                    // so red would claim a danger the copy right below denies.
+                    Button {
                         isConfirmingSignOut = true
                     } label: {
                         Label("Sign out", systemImage: "rectangle.portrait.and.arrow.right")
+                            .foregroundStyle(Palette.text)
                     }
                     .confirmationDialog(
                         "Sign out of \(communityName)?",
                         isPresented: $isConfirmingSignOut,
                         titleVisibility: .visible
                     ) {
-                        Button("Sign out", role: .destructive) {
+                        Button("Sign out") {
                             dismiss()
                             onSignOut()
                         }
@@ -90,12 +102,24 @@ struct SettingsView: View {
             .background(Palette.backgroundGradient.ignoresSafeArea())
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
+            .task {
+                let profile = try? session.store.profile(pubkey: session.me.hex)
+                displayName = profile?.displayName ?? ""
+            }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Done") { dismiss() }
                 }
             }
         }
+    }
+
+    /// Publishes the new name. Kind 0 is replaceable, so this is idempotent
+    /// and safe to call on every submit.
+    private func saveName() {
+        let trimmed = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        Task { await session.setProfile(displayName: trimmed) }
     }
 
     private var appVersion: String {
@@ -152,6 +176,7 @@ struct RecoveryCodeView: View {
                 } footer: {
                     Text("This key is your account: anyone who has it can post as you, and losing it means losing the account if this iPhone is lost. Copies expire from the clipboard after a minute. Store it in a password manager, not a screenshot.")
                 }
+                .combRows()
 
                 Section {
                     Text(key.publicKey.npub)
@@ -162,15 +187,16 @@ struct RecoveryCodeView: View {
                 } footer: {
                     Text("The public half is safe to share. It is how other clients and communities recognize you.")
                 }
+                .combRows()
             } else {
                 Section {
                     Label("No private key found on this device.", systemImage: "exclamationmark.triangle.fill")
                         .foregroundStyle(Palette.danger)
                 }
+                .combRows()
             }
         }
-        .scrollContentBackground(.hidden)
-        .background(Palette.backgroundGradient.ignoresSafeArea())
+        .combForm()
         .navigationTitle("Private key")
         .navigationBarTitleDisplayMode(.inline)
     }

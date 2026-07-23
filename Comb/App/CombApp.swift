@@ -28,9 +28,6 @@ struct CombApp: App {
                             onSwitch: { community in
                                 Task { await model.openCommunity(community) }
                             },
-                            onAddCommunity: {
-                                Task { await model.addCommunity() }
-                            },
                             onJoined: { model.adopt($0, landingInBusiestChannel: true) },
                             onDisconnect: {
                                 Task { await model.signOut() }
@@ -54,12 +51,10 @@ struct CombApp: App {
 
 /// The instant between launch and knowing whether a community opens silently.
 ///
-/// One orchestrated entrance rather than scattered effects, on the same
-/// arrival curve as everything else in the app: a bloom of the brand colour
-/// wakes the gradient, the icon settles into place through it with a slight
-/// overshoot, and the wordmark resolves underneath. If the session opens
-/// quickly the whole thing is a subliminal flash of brand; if the relay is
-/// slow, a gentle breath keeps the screen alive without nagging.
+/// One entrance, flat and quick: the icon lands with a single spring, the
+/// wordmark resolves underneath. If the session opens quickly the whole thing
+/// is a subliminal flash of brand; if the relay is slow, a gentle breath keeps
+/// the screen alive without nagging.
 private struct LaunchingView: View {
     @State private var phase: Phase = .void
     @State private var isBreathing = false
@@ -74,40 +69,23 @@ private struct LaunchingView: View {
 
     var body: some View {
         Backdrop {
-            ZStack {
-                // The bloom: chartreuse light opening behind the icon, blended
-                // into the gradient the way all chrome is, so it reads as the
-                // background waking up rather than a sticker of glow.
-                Circle()
-                    .fill(
-                        RadialGradient(
-                            colors: [Palette.chartreuse.opacity(0.45), .clear],
-                            center: .center,
-                            startRadius: 0,
-                            endRadius: Sizing.heroMark * 2.2
-                        )
-                    )
-                    .frame(width: Sizing.heroMark * 4.4, height: Sizing.heroMark * 4.4)
-                    .luminousChrome()
-                    .scaleEffect(phase == .landed ? 1 : 0.4)
+            // Flat and quick: the icon lands with one spring, the wordmark
+            // resolves under it, nothing else. A glow bloom was tried here and
+            // cut as decoration; the artwork carries the moment on its own.
+            VStack(spacing: Space.md) {
+                // The same artwork as the app icon, so launch, icon and cold
+                // start read as one identity. The drawn Mark remains only as
+                // WelcomeSymbol's fallback.
+                WelcomeSymbol()
+                    .frame(width: Sizing.heroMark, height: Sizing.heroMark)
+                    .scaleEffect(iconScale)
                     .opacity(phase == .landed ? 1 : 0)
 
-                VStack(spacing: Space.md) {
-                    // The same artwork as the app icon, so launch, icon and
-                    // cold start read as one identity. The drawn Mark remains
-                    // only as WelcomeSymbol's fallback.
-                    WelcomeSymbol()
-                        .frame(width: Sizing.heroMark, height: Sizing.heroMark)
-                        .scaleEffect(iconScale)
-                        .opacity(phase == .landed ? 1 : 0)
-                        .blur(radius: phase == .landed ? 0 : Motion.arrivalBlur * 3)
-
-                    Text(verbatim: "comb")
-                        .font(Typography.display)
-                        .kerning(Kerning.display)
-                        .foregroundStyle(Palette.text)
-                        .arrival(phase == .landed, delay: 0.25)
-                }
+                Text(verbatim: "comb")
+                    .font(Typography.display)
+                    .kerning(Kerning.display)
+                    .foregroundStyle(Palette.text)
+                    .arrival(phase == .landed, delay: 0.12)
             }
         }
         .accessibilityElement()
@@ -121,10 +99,7 @@ private struct LaunchingView: View {
                 return
             }
 
-            // One beat of just the gradient makes the landing an event instead
-            // of a state the app booted into.
-            try? await Task.sleep(for: .milliseconds(80))
-            withAnimation(.spring(duration: 0.55, bounce: 0.28)) { phase = .landed }
+            withAnimation(.spring(duration: 0.4, bounce: 0.22)) { phase = .landed }
 
             // If we are still here after the entrance, the relay is slow:
             // settle into a quiet breath so the screen reads as alive.
@@ -135,9 +110,10 @@ private struct LaunchingView: View {
         }
     }
 
-    /// Lands with a spring overshoot, then breathes at ±2% if kept waiting.
+    /// Lands with a small spring overshoot, then breathes at ±2% if kept
+    /// waiting on a slow relay.
     private var iconScale: CGFloat {
-        guard phase == .landed else { return 0.62 }
+        guard phase == .landed else { return 0.85 }
         return isBreathing ? 1.02 : 1
     }
 }

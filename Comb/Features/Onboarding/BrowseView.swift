@@ -191,12 +191,30 @@ struct BrowseView: View {
         }
         .padding(.vertical, Space.sm)
         .padding(.horizontal, Space.xs)
+        .contentShape(.rect)
+        // The whole row leads somewhere either way. A dead row under a finger
+        // reads as broken; an invite-only community opens the join screen,
+        // where the field is waiting for the invite a member sends.
+        .onTapGesture {
+            selectedInvite = entry.isJoinableNow
+                ? (entry.join.url?.absoluteString ?? "")
+                : ""
+        }
         .accessibilityElement(children: .combine)
+        .accessibilityHint(
+            entry.isJoinableNow ? "Joins this community" : "Invite only. Opens the join screen."
+        )
     }
 
     /// The growth loop, and deliberately loud: every listed community makes
     /// this screen worth opening for the next person.
     private var listYourCommunity: some View {
+        GlassCard(padding: Space.md) {
+            listYourCommunityContent
+        }
+    }
+
+    private var listYourCommunityContent: some View {
         VStack(spacing: Space.sm) {
             Text("Run a community?")
                 .font(Typography.bodyEmphasis)
@@ -220,7 +238,7 @@ struct BrowseView: View {
             .buttonStyle(.glassProminent)
             .tint(Palette.chartreuse)
         }
-        .padding(Space.md)
+        // No extra padding: the GlassCard wrapping this supplies it.
     }
 
     /// A dead end otherwise: it says to get an invite link and then offers no

@@ -190,6 +190,50 @@ actor CommunitySession {
         }
     }
 
+    /// Rewrites one of our own messages, Buzz-style: a kind 40003 event whose
+    /// content replaces the target's. The original stays in the log and the
+    /// timeline renders the newest edit, so this cannot lose history.
+    ///
+    /// Published directly rather than queued: an outbox row renders as a
+    /// timeline message, so a queued edit would appear as a phantom message
+    /// while in flight.
+    func edit(_ messageID: String, to newText: String, in channel: String) async {
+        let trimmed = newText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+
+        do {
+            let event = try await signer.sign(
+                kind: .buzzEdit,
+                content: trimmed,
+                tags: [["h", channel], ["e", messageID]]
+            )
+            try await relay.publish(event)
+            _ = try await store.ingest([event])
+        } catch {
+            // Dropped on failure; the message simply stays as it was and the
+            // next attempt tries again. Nothing is lost because nothing was
+            // replaced locally until the relay accepted it.
+        }
+    }
+
+    /// Removes one of our own messages: a kind 5 deletion carrying the `h` tag
+    /// Buzz requires so channel-scoped subscriptions observe it. The timeline
+    /// shows "Message deleted" rather than closing the hole, which is honest:
+    /// others may have read it already.
+    func deleteMessage(_ messageID: String, in channel: String) async {
+        do {
+            let deletion = try await signer.sign(
+                kind: .deletion,
+                content: "",
+                tags: [["h", channel], ["e", messageID]]
+            )
+            try await relay.publish(deletion)
+            _ = try await store.ingest([deletion])
+        } catch {
+            // Same policy as reactions: dropped, retry by tapping again.
+        }
+    }
+
     /// Publishes the user's profile. Kind 0 is replaceable per pubkey, so this
     /// overwrites any previous name; both `name` and `display_name` are set
     /// because clients disagree about which one they read.

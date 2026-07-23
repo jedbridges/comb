@@ -22,6 +22,10 @@ struct WelcomeView: View {
     var body: some View {
         NavigationStack(path: $path) {
             Backdrop {
+                // Bees over the gradient, behind everything readable.
+                BeeSwarmView()
+                    .ignoresSafeArea()
+
                 // Centred, deliberately. An asymmetric version was tried and
                 // read worse: the identity block wants the optical centre, and
                 // pushing it to a corner only opened a hole in the middle of

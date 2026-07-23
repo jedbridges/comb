@@ -38,13 +38,13 @@ enum Radii {
     static let card: CGFloat = 16
     /// 24pt. Sheets, dialogs, and the compose bar shell.
     static let sheet: CGFloat = 24
-    /// 20pt. The compose field inside the compose shell.
+    /// 16pt. The compose field inside the compose shell.
     ///
     /// Concentric by construction: `sheet` minus the shell's own padding
-    /// (`Space.xxs`). Nesting a 16pt corner inside a 24pt one leaves the gap
-    /// between them visibly uneven around the curve, which is the tell that a
-    /// bar was assembled rather than drawn.
-    static let composeField: CGFloat = 20
+    /// (`Space.xs`). A corner that is not derived this way leaves the gap
+    /// between the two curves visibly uneven, which is the tell that a bar
+    /// was assembled rather than drawn.
+    static let composeField: CGFloat = 16
 }
 
 /// Fixed element sizes that recur across screens.

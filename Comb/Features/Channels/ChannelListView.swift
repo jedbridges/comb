@@ -15,7 +15,6 @@ struct ChannelListView: View {
     var onArrivalConsumed: () -> Void = {}
     var communities: [JoinedCommunity] = []
     var onSwitch: (JoinedCommunity) -> Void = { _ in }
-    var onAddCommunity: () -> Void = {}
     /// A community joined from the in-app browse sheet, adopted without
     /// passing through the welcome flow.
     var onJoined: (CommunitySession) -> Void = { _ in }
@@ -25,6 +24,7 @@ struct ChannelListView: View {
     @State private var connection: ConnectionState = .idle
     @State private var isSearching = false
     @State private var isBrowsing = false
+    @State private var isAddingByInvite = false
     @State private var arrivalChannel: ChannelSummary?
 
     init(
@@ -33,7 +33,6 @@ struct ChannelListView: View {
         onArrivalConsumed: @escaping () -> Void = {},
         communities: [JoinedCommunity] = [],
         onSwitch: @escaping (JoinedCommunity) -> Void = { _ in },
-        onAddCommunity: @escaping () -> Void = {},
         onJoined: @escaping (CommunitySession) -> Void = { _ in },
         onDisconnect: @escaping () -> Void
     ) {
@@ -42,7 +41,6 @@ struct ChannelListView: View {
         self.onArrivalConsumed = onArrivalConsumed
         self.communities = communities
         self.onSwitch = onSwitch
-        self.onAddCommunity = onAddCommunity
         self.onJoined = onJoined
         self.onDisconnect = onDisconnect
         _model = State(initialValue: ChannelListModel(
@@ -117,6 +115,17 @@ struct ChannelListView: View {
                 })
             }
         }
+        // A sheet over the current community, not a trip through the welcome
+        // flow: adding a community must never look like being signed out of
+        // the one you are in.
+        .sheet(isPresented: $isAddingByInvite) {
+            NavigationStack {
+                JoinView(prefilledInvite: nil, onJoined: { joined in
+                    isAddingByInvite = false
+                    onJoined(joined)
+                })
+            }
+        }
         .sheet(isPresented: $isShowingSettings) {
             SettingsView(session: session, onSignOut: onDisconnect)
         }
@@ -172,7 +181,9 @@ struct ChannelListView: View {
             Button("Browse communities", systemImage: "square.grid.2x2") {
                 isBrowsing = true
             }
-            Button("Add by invite link", systemImage: "plus", action: onAddCommunity)
+            Button("Add by invite link", systemImage: "plus") {
+                isAddingByInvite = true
+            }
         } label: {
             Image(systemName: "square.grid.2x2")
                 .font(Typography.actionSecondary)

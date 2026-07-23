@@ -15,6 +15,8 @@ struct ChannelTimelineView: View {
     @State private var threadRoot: TimelineRow?
     @State private var tray: AttachmentTray
     @State private var loader: MediaLoader
+    @State private var editing: TimelineRow?
+    @State private var deleting: TimelineRow?
 
     init(session: CommunitySession, channel: ChannelSummary) {
         self.session = session
@@ -53,7 +55,12 @@ struct ChannelTimelineView: View {
                             // Replying opens the thread rather than composing in
                             // place: the reply belongs there, and landing in the
                             // thread shows what is already being said.
-                            onReply: entry.row.isDeleted ? nil : { threadRoot = entry.row }
+                            onReply: entry.row.isDeleted ? nil : { threadRoot = entry.row },
+                            onEdit: ownMessageAction(entry.row) {
+                                editing = entry.row
+                                draft = entry.row.displayContent
+                            },
+                            onDelete: ownMessageAction(entry.row) { deleting = entry.row }
                         )
                     }
                 }
@@ -65,13 +72,43 @@ struct ChannelTimelineView: View {
             .softScrollEdges()
         }
         .safeAreaInset(edge: .bottom) {
-            ComposeBar(draft: $draft, attachments: tray) {
+            ComposeBar(
+                draft: $draft,
+                attachments: tray,
+                editingPreview: editing?.displayContent,
+                onCancelEdit: {
+                    editing = nil
+                    draft = ""
+                }
+            ) {
                 let text = draft
-                let media = tray.readyDescriptors
                 draft = ""
-                tray.clear()
-                Task { await model.send(text, attachments: media) }
+                if let editing {
+                    self.editing = nil
+                    Task { await model.edit(editing.id, to: text) }
+                } else {
+                    let media = tray.readyDescriptors
+                    tray.clear()
+                    Task { await model.send(text, attachments: media) }
+                }
             }
+        }
+        .confirmationDialog(
+            "Delete this message?",
+            isPresented: Binding(
+                get: { deleting != nil },
+                set: { if !$0 { deleting = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Delete message", role: .destructive) {
+                if let deleting {
+                    Task { await model.deleteMessage(deleting.id) }
+                }
+                deleting = nil
+            }
+        } message: {
+            Text("It disappears for everyone in the channel, though people may already have read it.")
         }
         .navigationTitle(channel.name)
         .navigationBarTitleDisplayMode(.inline)
@@ -115,6 +152,15 @@ struct ChannelTimelineView: View {
         }
     }
 
+    /// The action, only when the message is the viewer's own and not deleted.
+    private func ownMessageAction(
+        _ row: TimelineRow,
+        _ action: @escaping () -> Void
+    ) -> (() -> Void)? {
+        guard row.pubkey == session.me.hex, !row.isDeleted else { return nil }
+        return action
+    }
+
     private var loadOlderControl: some View {
         HStack {
             Spacer()
@@ -150,6 +196,9 @@ struct MessageRow: View {
     /// there is nowhere further to go.
     var onOpenThread: (() -> Void)?
     var onReply: (() -> Void)?
+    /// Present only on the viewer's own messages.
+    var onEdit: (() -> Void)?
+    var onDelete: (() -> Void)?
 
     /// The quick palette. A full picker is later polish.
     private static let quickReactions = ["🐝", "👍", "❤️", "🔥", "😂"]
@@ -289,6 +338,17 @@ struct MessageRow: View {
             if let onZap {
                 Button("Zap", systemImage: "bolt.fill", action: onZap)
             }
+            if onEdit != nil || onDelete != nil {
+                Divider()
+            }
+            if let onEdit {
+                Button("Edit", systemImage: "pencil", action: onEdit)
+            }
+            if let onDelete {
+                // Destructive is earned here, unlike sign-out: the message
+                // really is removed for everyone.
+                Button("Delete", systemImage: "trash", role: .destructive, action: onDelete)
+            }
         }
     }
 
@@ -384,6 +444,9 @@ struct ComposeBar: View {
     var placeholder: String = "Message"
     /// Attachment state, owned by the caller so the send action can clear it.
     var attachments: AttachmentTray?
+    /// A preview of the message being edited, when the bar is in edit mode.
+    var editingPreview: String?
+    var onCancelEdit: () -> Void = {}
     let onSend: () -> Void
 
     @State private var picked: [PhotosPickerItem] = []
@@ -399,13 +462,43 @@ struct ComposeBar: View {
 
     var body: some View {
         VStack(spacing: Space.xs) {
+            if let editingPreview {
+                HStack(spacing: Space.xs) {
+                    Image(systemName: "pencil")
+                        .font(Typography.caption)
+                        .foregroundStyle(Palette.chartreuse)
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text("Editing")
+                            .font(Typography.captionEmphasis)
+                            .foregroundStyle(Palette.text)
+                        Text(editingPreview)
+                            .font(Typography.caption)
+                            .foregroundStyle(Palette.subtext)
+                            .lineLimit(1)
+                    }
+                    Spacer(minLength: Space.xs)
+                    Button {
+                        onCancelEdit()
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(Palette.subtext)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Cancel editing")
+                }
+                .padding(.horizontal, Space.sm)
+                .padding(.top, Space.xxs)
+            }
+
             if let attachments, !attachments.isEmpty {
                 AttachmentTrayView(tray: attachments)
             }
 
-            // Bottom-aligned so the buttons stay pinned to the last line as the
-            // field grows, rather than drifting to the middle of a tall field.
-            HStack(alignment: .bottom, spacing: Space.xxs) {
+            // Centred, not bottom-aligned: the glass button style pads its
+            // label, so the send circle renders taller than the field, and
+            // bottom alignment visibly hangs the field off its foot. Centring
+            // absorbs the style's extra height evenly on both sides.
+            HStack(alignment: .center, spacing: Space.xs) {
                 if attachments != nil {
                     PhotosPicker(
                         selection: $picked,
@@ -455,12 +548,14 @@ struct ComposeBar: View {
                 .disabled(!canSend)
             }
         }
-        // Space.xxs all round, which is what makes the field's corner
-        // concentric with the shell's: 24 outer, 4 padding, 20 inner.
-        .padding(Space.xxs)
+        // Space.xs all round, which is what makes the field's corner
+        // concentric with the shell's: 24 outer, 8 padding, 16 inner. The
+        // same 8pt then separates the bar from the screen edge, so the bar
+        // does not sit hard against the home indicator.
+        .padding(Space.xs)
         .glassEffect(in: .rect(cornerRadius: Radii.sheet))
         .padding(.horizontal, Space.sm)
-        .padding(.bottom, Space.xxs)
+        .padding(.bottom, Space.xs)
         .onChange(of: picked) { _, items in
             guard let attachments, !items.isEmpty else { return }
             picked = []
@@ -589,6 +684,14 @@ final class ChannelTimeline {
 
     func send(_ text: String, attachments: [Blossom.Descriptor] = []) async {
         await session.send(text, in: channel, attachments: attachments)
+    }
+
+    func edit(_ messageID: String, to newText: String) async {
+        await session.edit(messageID, to: newText, in: channel)
+    }
+
+    func deleteMessage(_ messageID: String) async {
+        await session.deleteMessage(messageID, in: channel)
     }
 
     func toggleReaction(_ emoji: String, on messageID: String) async {

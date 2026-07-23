@@ -123,12 +123,6 @@ final class AppModel {
 
     /// Leaves the current community open and sends the user to onboarding to
     /// add another.
-    func addCommunity() async {
-        if case .active(let session) = stage { await session.stop() }
-        launchNotice = nil
-        stage = .welcome
-    }
-
     /// Steps out of the community. The registry entry and key survive, so the
     /// next launch reconnects; this is the door, not the shredder.
     func signOut() async {

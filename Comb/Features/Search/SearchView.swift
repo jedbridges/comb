@@ -24,6 +24,10 @@ struct SearchView: View {
                     resultList
                 }
             }
+            // The one surface that lacked the gradient: the empty state has no
+            // Form behind it, so without this it sat on raw system black and
+            // read as a different app.
+            .background(Palette.backgroundGradient.ignoresSafeArea())
             .navigationTitle("Search")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
