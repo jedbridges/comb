@@ -224,6 +224,40 @@ struct MessageTextTests {
         #expect(MessageText.withoutMediaMarkdown("no media here") == "no media here")
         #expect(MessageText.withoutMediaMarkdown("") == "")
     }
+
+    @Test("unwraps a Markdown autolink")
+    func unwrapsAutolink() {
+        // Buzz's composer writes these and its own client hides them, so a
+        // link arriving in brackets is markup we failed to strip, not
+        // punctuation the author typed.
+        let body = "This vid explains it <https://www.youtube.com/watch?v=abc>"
+        #expect(
+            MessageText.display(body)
+                == "This vid explains it https://www.youtube.com/watch?v=abc"
+        )
+    }
+
+    @Test("unwraps several autolinks in one message")
+    func unwrapsSeveralAutolinks() {
+        let body = "<https://a.example/x> and <http://b.example/y>"
+        #expect(MessageText.display(body) == "https://a.example/x and http://b.example/y")
+    }
+
+    @Test("leaves angle brackets that are not autolinks")
+    func leavesOrdinaryAngleBrackets() {
+        // The regex is narrow so ordinary writing survives: comparisons, a
+        // stray emoticon, and a bracketed address with no scheme.
+        #expect(MessageText.display("a < b and c > d") == "a < b and c > d")
+        #expect(MessageText.display("<3") == "<3")
+        #expect(MessageText.display("<not a url>") == "<not a url>")
+        #expect(MessageText.display("< https://spaced.example >") == "< https://spaced.example >")
+    }
+
+    @Test("strips media markdown and unwraps autolinks together")
+    func displayDoesBoth() {
+        let body = "shot <https://example.com/a>\n![image](https://relay.example/m/1.png)"
+        #expect(MessageText.display(body) == "shot https://example.com/a")
+    }
 }
 
 @Suite("Ownership of edits and deletions", .timeLimit(.minutes(1)))

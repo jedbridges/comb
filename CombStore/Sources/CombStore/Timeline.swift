@@ -45,7 +45,7 @@ public struct TimelineRow: Sendable, Hashable, Identifiable {
     /// fallback for clients that cannot read NIP-92. Comb renders the
     /// attachment itself, so showing the markdown too would put a wall of
     /// relay URL in the middle of the conversation.
-    public var displayContent: String { MessageText.withoutMediaMarkdown(content) }
+    public var displayContent: String { MessageText.display(content) }
 
     /// Whether this message opens a thread worth offering a way into.
     public var hasThread: Bool { replyCount > 0 }

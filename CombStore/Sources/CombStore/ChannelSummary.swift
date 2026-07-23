@@ -77,7 +77,7 @@ public extension EventStore {
                 // Stripped here too: a channel whose newest message is a
                 // picture would otherwise preview as a relay URL.
                 lastMessage: (row["last_message"] as String?)
-                    .map(MessageText.withoutMediaMarkdown),
+                    .map(MessageText.display),
                 lastAuthor: row["last_author"],
                 lastActivity: row["last_at"],
                 unreadCount: row["unread"] ?? 0
@@ -303,7 +303,7 @@ public extension EventStore {
                         channelID: row["h"] ?? "",
                         channelName: row["channel_name"] ?? "",
                         author: row["author"] ?? "",
-                        content: MessageText.withoutMediaMarkdown(row["content"]),
+                        content: MessageText.display(row["content"]),
                         createdAt: row["created_at"]
                     )
                 }
