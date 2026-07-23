@@ -24,12 +24,12 @@ struct PairingView: View {
             case .comparing(let code):
                 comparePane(code)
             case .transferring, .validating:
-                statusPane("Setting up your account…", systemImage: "checkmark.shield")
+                statusPane("Signing you in…", systemImage: "checkmark.shield")
             case .failed(let message):
                 failurePane(message)
             }
         }
-        .navigationTitle("Pair a device")
+        .navigationTitle("Scan to sign in")
         .navigationBarTitleDisplayMode(.inline)
         .onChange(of: model.pairedSession != nil) { _, ready in
             // CommunitySession is an actor and not Equatable, so the readiness
@@ -284,7 +284,7 @@ final class PairingModel {
         case .invalidPayload:
             "The other device sent something unexpected."
         case .credentialsRejected:
-            "The account did not work against its community."
+            "That account is not a member of this community."
         }
     }
 }

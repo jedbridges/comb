@@ -143,7 +143,7 @@ enum DemoSeed {
 
         let refused = try NostrEvent.signed(
             kind: .groupChatMessage,
-            content: "This one the relay refused.",
+            content: "This one did not send.",
             tags: [["h", channel]],
             createdAt: date(now - 30),
             with: me

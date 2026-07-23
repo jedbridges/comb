@@ -160,7 +160,7 @@ final class JoinModel {
 
             let claim = try await InviteClient().claim(invite, signer: signer)
             guard claim.isMember else {
-                failure = "That invite was turned down. Ask for a fresh one."
+                failure = "That community did not accept the invite. Ask for a fresh one."
                 return nil
             }
 

@@ -193,7 +193,7 @@ struct ChannelListView: View {
             Button("Browse communities", systemImage: "square.grid.2x2") {
                 isBrowsing = true
             }
-            Button("Add by invite link", systemImage: "plus") {
+            Button("I have an invite link", systemImage: "plus") {
                 isAddingByInvite = true
             }
         } label: {

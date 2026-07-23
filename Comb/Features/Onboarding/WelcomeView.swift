@@ -16,7 +16,7 @@ struct WelcomeView: View {
     enum Destination: Hashable {
         case enterInvite
         case browse
-        case restore
+        case signIn
     }
 
     var body: some View {
@@ -77,7 +77,7 @@ struct WelcomeView: View {
                         // white; only the action itself carries the accent, so
                         // the tappable part is the part that glows.
                         Button {
-                            path.append(.restore)
+                            path.append(.signIn)
                         } label: {
                             // Interpolated rather than `Text + Text`, which is
                             // deprecated on iOS 26.
@@ -101,8 +101,8 @@ struct WelcomeView: View {
                     JoinView(prefilledInvite: pendingInvite, onJoined: onJoined)
                 case .browse:
                     BrowseView(onJoined: onJoined)
-                case .restore:
-                    RestoreView(onRestored: onJoined)
+                case .signIn:
+                    SignInView(onSignedIn: onJoined)
                 }
             }
             .onChange(of: pendingInvite) { _, invite in

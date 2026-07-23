@@ -3,15 +3,16 @@ import CombNet
 import CombStore
 import SwiftUI
 
-/// The door for people who already have an account: relay plus recovery code.
+/// The door for people who already have an account: community address plus
+/// their key.
 ///
 /// This screen is where the technical vocabulary is allowed to exist, because
 /// anyone arriving here brought it with them. Restoring persists custody the
 /// same as joining does, so the next launch opens straight into channels.
-struct RestoreView: View {
-    let onRestored: (CommunitySession) -> Void
+struct SignInView: View {
+    let onSignedIn: (CommunitySession) -> Void
 
-    @State private var model = RestoreModel()
+    @State private var model = SignInModel()
     @FocusState private var focus: Field?
 
     private enum Field { case url, key }
@@ -20,16 +21,16 @@ struct RestoreView: View {
         Form {
             Section {
                 NavigationLink {
-                    PairingView(onPaired: onRestored)
+                    PairingView(onPaired: onSignedIn)
                 } label: {
-                    Label("Pair with a device", systemImage: "qrcode")
+                    Label("Scan a code instead", systemImage: "qrcode")
                 }
             } footer: {
-                Text("Scan a code from Buzz on your computer to move your account across.")
+                Text("Sign in by scanning a code from Buzz on your computer.")
             }
             .combRows()
 
-            Section("Community relay") {
+            Section("Community address") {
                 TextField("wss://…", text: $model.relayURL)
                     .font(Typography.mono)
                     .textInputAutocapitalization(.never)
@@ -69,7 +70,7 @@ struct RestoreView: View {
                 Button("Preview with sample data") {
                     Task {
                         if let session = await model.demo() {
-                            onRestored(session)
+                            onSignedIn(session)
                         }
                     }
                 }
@@ -82,27 +83,27 @@ struct RestoreView: View {
         .scrollDismissesKeyboard(.interactively)
         .safeAreaInset(edge: .bottom) {
             PrimaryButton(
-                title: model.isRestoring ? "Restoring…" : "Restore",
-                isDisabled: model.secretKey.isEmpty || model.isRestoring
+                title: model.isSigningIn ? "Signing in…" : "Sign in",
+                isDisabled: model.secretKey.isEmpty || model.isSigningIn
             ) {
                 focus = nil
                 Task {
-                    if let session = await model.restore() {
-                        onRestored(session)
+                    if let session = await model.signIn() {
+                        onSignedIn(session)
                     }
                 }
             }
             .padding(.horizontal, Space.lg)
             .padding(.bottom, Space.xs)
         }
-        .navigationTitle("Restore")
+        .navigationTitle("Sign in")
         .navigationBarTitleDisplayMode(.inline)
     }
 }
 
 @MainActor
 @Observable
-final class RestoreModel {
+final class SignInModel {
     /// Empty in release: prefilling one community's address would send
     /// everyone else's restore to the wrong place. The debug build keeps a
     /// default so testing does not mean retyping it every launch.
@@ -113,20 +114,20 @@ final class RestoreModel {
     #endif
     var secretKey = ""
 
-    private(set) var isRestoring = false
+    private(set) var isSigningIn = false
     private(set) var failure: String?
 
-    func restore() async -> CommunitySession? {
-        guard !isRestoring else { return nil }
-        isRestoring = true
+    func signIn() async -> CommunitySession? {
+        guard !isSigningIn else { return nil }
+        isSigningIn = true
         failure = nil
-        defer { isRestoring = false }
+        defer { isSigningIn = false }
 
         guard let url = URL(string: relayURL.trimmingCharacters(in: .whitespacesAndNewlines)),
               let scheme = url.scheme?.lowercased(), scheme == "wss" || scheme == "ws",
               let host = url.host
         else {
-            failure = "That does not look like a relay URL."
+            failure = "That does not look like a community address. It should start with wss://"
             return nil
         }
 
@@ -190,18 +191,20 @@ final class RestoreModel {
 
     static func describe(_ error: Error) -> String {
         switch error {
-        case RelayError.authenticationFailed(let reason):
-            "The relay rejected this account: \(reason)"
+        case RelayError.authenticationFailed:
+            // The relay's own reason is protocol text; what the person needs to
+            // know is that this key is not a member here.
+            "That community did not recognise this key."
         case RelayError.timedOut:
-            "The relay did not answer in time."
+            "The community did not answer in time."
         case RelayError.notConnected:
-            "Could not reach the relay."
+            "Could not reach that community."
         case RelayError.subscriptionClosed(let reason):
             reason
         default:
             // Never the raw Swift error: it names types the reader has no way
             // to act on. The diagnostics screen is where the detail lives.
-            "Could not restore this account. Check the address and the code, then try again."
+            "Could not sign in. Check the address and the key, then try again."
         }
     }
 }
