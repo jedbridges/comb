@@ -241,6 +241,26 @@ struct UnreadTests {
         #expect(try store.channelSummaries(me: "").first?.unreadCount == 0)
     }
 
+    @Test("marking unread reopens a read channel from a chosen message")
+    func markUnreadReopens() async throws {
+        let store = try EventStore()
+        let other = try Fixture()
+        try await seed(store, other)
+
+        let target = try other.message("come back to this", at: 5000)
+        _ = try await store.ingest([
+            target,
+            try other.message("and this", at: 6000),
+            try other.message("and this too", at: 7000),
+        ])
+        try await store.markRead(channel: "room-1")
+        #expect(try store.channelSummaries(me: "").first?.unreadCount == 0)
+
+        // From the target down: the target and the two after it, three unread.
+        try await store.markUnread(channel: "room-1", from: target.createdAt)
+        #expect(try store.channelSummaries(me: "").first?.unreadCount == 3)
+    }
+
     @Test("observation re-fires when a channel is marked read")
     func observationFires() async throws {
         let store = try EventStore()

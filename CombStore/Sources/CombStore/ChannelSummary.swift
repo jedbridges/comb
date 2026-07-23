@@ -169,6 +169,25 @@ public extension EventStore {
         }
     }
 
+    /// Marks a channel unread from one message onward, so it can be come back
+    /// to later.
+    ///
+    /// Deliberately not `MAX`-guarded the way `markRead` is: moving the marker
+    /// backwards is the entire point, and the guard that protects `markRead`
+    /// from late-arriving history would silently make this a no-op.
+    ///
+    /// One second before the message, so the message itself lands on the
+    /// unread side of the line rather than just outside it.
+    func markUnread(channel: String, from createdAt: Int64) throws {
+        try writer.write { db in
+            try db.execute(sql: """
+                INSERT INTO read_state (channel_id, last_read_at) VALUES (?, ?)
+                ON CONFLICT(channel_id) DO UPDATE SET
+                    last_read_at = excluded.last_read_at
+                """, arguments: [channel, max(0, createdAt - 1)])
+        }
+    }
+
     /// Total unread across every channel, for a badge.
     nonisolated func totalUnread(me: String = "") throws -> Int {
         try reader.read { db in

@@ -66,6 +66,11 @@ struct ChannelListView: View {
 
             if !query.isEmpty {
                 searchResults
+            } else if !model.hasLoaded {
+                // Nothing, deliberately. The store answers from disk in
+                // milliseconds, so a spinner here would flash rather than
+                // inform, and the empty state would be a lie for one frame.
+                Color.clear
             } else if model.channels.isEmpty {
                 emptyState
             } else {
@@ -509,6 +514,12 @@ private struct UnreadBadge: View {
 @Observable
 final class ChannelListModel {
     private(set) var channels: [ChannelSummary] = []
+    /// Whether the store has reported once.
+    ///
+    /// Without this the list rendered its empty state for the frame before the
+    /// first snapshot arrived and then swapped to the real rows, which read as
+    /// the screen rearranging itself on every open.
+    private(set) var hasLoaded = false
     private let store: EventStore
     private let me: String
 
@@ -521,6 +532,7 @@ final class ChannelListModel {
         do {
             for try await summaries in store.observeChannelSummaries(me: me) {
                 channels = summaries
+                hasLoaded = true
             }
         } catch {
             // Observation only fails if the database does, which the app

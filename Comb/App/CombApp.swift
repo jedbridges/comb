@@ -29,6 +29,7 @@ struct CombApp: App {
                     WelcomeView(
                         notice: model.launchNotice,
                         onJoined: { model.adopt($0, landingInBusiestChannel: true) },
+                        onSignedIn: { model.adopt($0) },
                         pendingInvite: $pendingInvite
                     )
                 case .active(let session):

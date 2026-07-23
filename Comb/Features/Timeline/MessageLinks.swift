@@ -74,7 +74,51 @@ enum MessageLinks {
                 }
             }
         }
+
+        shortenBareLinks(in: &attributed)
         return attributed
+    }
+
+    /// How many characters of a bare URL survive.
+    ///
+    /// Sized from the narrowest layout the app has to work in, not the
+    /// widest. A message body on a 375pt device sits in roughly 315pt once the
+    /// avatar and padding are taken out, and 16pt body text averages a shade
+    /// under 9pt per character on the dense mixed-case runs URLs are made of,
+    /// so a line holds about 35. One and a half lines is therefore about 52,
+    /// and 49 keeps a comfortable margin on the tightest case while still
+    /// filling well over a line on a Pro Max.
+    private static let linkHead = 40
+    private static let linkTail = 8
+    private static var maxLinkCharacters: Int { linkHead + linkTail + 1 }
+
+    /// Elides the middle of any link whose visible text is just its URL.
+    ///
+    /// A signed invite token is 300 characters of base64 and rendered in full
+    /// it buried the sentence around it under eight lines of noise. The middle
+    /// goes rather than the tail, because the host is the part a reader needs
+    /// to decide whether to tap and the tail is what distinguishes two links
+    /// to the same host.
+    ///
+    /// Only bare URLs are touched. An inline link's label is what the author
+    /// chose to write, and shortening someone's prose is not this function's
+    /// business.
+    private static func shortenBareLinks(in attributed: inout AttributedString) {
+        // Reversed, so replacing one run cannot invalidate the ranges of the
+        // runs still to be visited.
+        for run in Array(attributed.runs).reversed() {
+            guard let url = run.link else { continue }
+            let text = String(attributed[run.range].characters)
+            guard text == url.absoluteString, text.count > maxLinkCharacters else { continue }
+
+            var replacement = AttributedString(
+                "\(text.prefix(linkHead))…\(text.suffix(linkTail))"
+            )
+            // The whole run's attributes carry over, so the shortened text is
+            // still tinted, still underlined, and still opens the full URL.
+            replacement.setAttributes(run.attributes)
+            attributed.replaceSubrange(run.range, with: replacement)
+        }
     }
 
     /// Links only. Separate from the mention-aware entry point rather than an

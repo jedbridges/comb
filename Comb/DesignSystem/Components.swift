@@ -191,6 +191,30 @@ struct AvatarView: View {
     }
 }
 
+/// A transient confirmation, floating over content and gone in a few seconds.
+///
+/// For actions whose result is off-screen: setting a reminder, or being told
+/// notifications are off. An alert would demand a tap to dismiss something the
+/// person does not need to acknowledge, and silence would leave them unsure
+/// the action landed.
+struct Toast: View {
+    let text: String
+
+    var body: some View {
+        Text(text)
+            .font(Typography.label)
+            .foregroundStyle(Palette.text)
+            .multilineTextAlignment(.center)
+            .padding(.horizontal, Space.md)
+            .padding(.vertical, Space.sm)
+            .background(.ultraThinMaterial, in: .capsule)
+            .overlay(Capsule().strokeBorder(Palette.hairlineOnGradient, lineWidth: 0.5))
+            .padding(.horizontal, Space.xl)
+            .shadow(color: .black.opacity(0.25), radius: 12, y: 4)
+            .accessibilityAddTraits(.isStaticText)
+    }
+}
+
 /// A Form row label: accent icon, ordinary text.
 ///
 /// Exists because a `Button`'s label inherits the accent colour for the whole
@@ -353,8 +377,32 @@ extension View {
 struct ConnectionBanner: View {
     let state: ConnectionState
 
+    /// Held back for a moment before appearing.
+    ///
+    /// The banner sits in a top safe-area inset, so showing it pushes the
+    /// whole screen down and hiding it pulls the screen back up. A healthy
+    /// launch passes through `connecting` for a few hundred milliseconds, and
+    /// the list visibly jumped down and back for no reason a reader could
+    /// name. A connection that resolves faster than this now says nothing at
+    /// all, which is what a working connection should say.
+    @State private var isDue = false
+
+    private static let grace = Duration.milliseconds(700)
+
     var body: some View {
-        if let message {
+        content
+            .task(id: message) {
+                guard message != nil else {
+                    isDue = false
+                    return
+                }
+                try? await Task.sleep(for: Self.grace)
+                isDue = true
+            }
+    }
+
+    @ViewBuilder private var content: some View {
+        if let message, isDue {
             HStack(spacing: Space.xs) {
                 ProgressView()
                     .controlSize(.mini)

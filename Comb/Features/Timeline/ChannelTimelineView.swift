@@ -23,6 +23,8 @@ struct ChannelTimelineView: View {
     @FocusState private var isComposing: Bool
     @State private var isAwayFromBottom = false
     @State private var arrivalsWhileAway = 0
+    @State private var toast: String?
+    @Environment(\.dismiss) private var dismiss
 
     init(session: CommunitySession, channel: ChannelSummary) {
         self.session = session
@@ -85,6 +87,32 @@ struct ChannelTimelineView: View {
                                     messageID: entry.row.id,
                                     emoji: emoji
                                 )
+                            },
+                            onMarkUnread: {
+                                // Mark first, then leave. Staying would let the
+                                // on-screen auto-read wipe it out; the badge is
+                                // only useful back on the list.
+                                Task {
+                                    await model.markUnread(from: entry.row.createdAt)
+                                    dismiss()
+                                }
+                            },
+                            onRemind: { when in
+                                Task {
+                                    let ok = await Reminders.schedule(
+                                        message: entry.row,
+                                        channelName: channel.name,
+                                        deepLink: MessageLink.build(
+                                            channelID: channel.id,
+                                            messageID: entry.row.id,
+                                            threadRootID: entry.row.rootID
+                                        ),
+                                        when: when
+                                    )
+                                    toast = ok
+                                        ? "Reminder set \(when.label.lowercased())"
+                                        : "Turn on notifications for Comb in Settings to be reminded."
+                                }
                             }
                         )
                         // The anchor the jump-to-bottom pill scrolls to.
@@ -129,6 +157,21 @@ struct ChannelTimelineView: View {
             if model.displayRows.isEmpty {
                 emptyChannel
             }
+
+            if let toast {
+                VStack {
+                    Spacer()
+                    Toast(text: toast)
+                        .padding(.bottom, Space.xxxl)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
+            }
+        }
+        .animation(Motion.standard, value: toast)
+        .task(id: toast) {
+            guard toast != nil else { return }
+            try? await Task.sleep(for: .seconds(3))
+            toast = nil
         }
         .safeAreaInset(edge: .bottom) {
             ComposeBar(
@@ -345,6 +388,10 @@ struct MessageRow: View {
     var onPickEmoji: (() -> Void)?
     /// Long-press on a reaction chip: shows who reacted.
     var onShowReactors: ((String) -> Void)?
+    /// Marks the channel unread from this message and returns to the list.
+    var onMarkUnread: (() -> Void)?
+    /// Schedules a local reminder for this message at the chosen offset.
+    var onRemind: ((Reminders.When) -> Void)?
 
     /// The quick palette, shared with the reaction bar's add button so the
     /// two ways to react can never disagree. A full picker is later polish.
@@ -562,6 +609,16 @@ struct MessageRow: View {
                     messageID: entry.row.id,
                     threadRootID: entry.row.rootID
                 )
+            }
+            if let onMarkUnread {
+                Button("Mark unread", systemImage: "circle.badge", action: onMarkUnread)
+            }
+            if let onRemind {
+                Menu("Remind me later", systemImage: "clock") {
+                    ForEach(Reminders.When.allCases) { when in
+                        Button(when.label) { onRemind(when) }
+                    }
+                }
             }
             if onEdit != nil || onDelete != nil {
                 Divider()
@@ -1224,8 +1281,20 @@ final class ChannelTimeline {
     /// Marks the channel read on open, and again whenever new messages land
     /// while it is on screen, so a channel you are reading never accumulates a
     /// badge behind your back.
+    /// Set by "Mark unread" so the observation, which fires markRead on every
+    /// update, cannot immediately undo it in the frame before the screen pops.
+    private var suppressMarkRead = false
+
     func markRead() async {
+        guard !suppressMarkRead else { return }
         try? await session.store.markRead(channel: channel)
+    }
+
+    /// Leaves this channel unread from the given message down. The caller pops
+    /// back to the list, where the badge it produces is the whole point.
+    func markUnread(from createdAt: Int64) async {
+        suppressMarkRead = true
+        try? await session.store.markUnread(channel: channel, from: createdAt)
     }
 
     func send(_ text: String, attachments: [Blossom.Descriptor] = []) async {

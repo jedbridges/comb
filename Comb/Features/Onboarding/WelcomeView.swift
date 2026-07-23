@@ -6,7 +6,14 @@ import SwiftUI
 /// those are.
 struct WelcomeView: View {
     let notice: String?
+    /// A brand new member. They land in the busiest channel, because a list of
+    /// mostly-empty rooms is a worse first impression than a conversation
+    /// already in progress.
     let onJoined: (CommunitySession) -> Void
+    /// Someone returning to a community they already belong to. They land on
+    /// the channel list: they know the place, and dropping them into whichever
+    /// room happens to be loudest is a decision they did not ask for.
+    let onSignedIn: (CommunitySession) -> Void
 
     /// An invite that arrived by deep link jumps straight into the join flow.
     @Binding var pendingInvite: String?
@@ -125,7 +132,7 @@ struct WelcomeView: View {
                 case .browse:
                     BrowseView(onJoined: onJoined)
                 case .signIn:
-                    SignInView(onSignedIn: onJoined)
+                    SignInView(onSignedIn: onSignedIn)
                 }
             }
             // First frame paints the screen still arriving; this commits the
