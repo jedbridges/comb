@@ -99,7 +99,14 @@ struct RestoreView: View {
 @MainActor
 @Observable
 final class RestoreModel {
+    /// Empty in release: prefilling one community's address would send
+    /// everyone else's restore to the wrong place. The debug build keeps a
+    /// default so testing does not mean retyping it every launch.
+    #if DEBUG
     var relayURL = "wss://designers.communities.buzz.xyz"
+    #else
+    var relayURL = ""
+    #endif
     var secretKey = ""
 
     private(set) var isRestoring = false
@@ -188,7 +195,9 @@ final class RestoreModel {
         case RelayError.subscriptionClosed(let reason):
             reason
         default:
-            "Something went wrong: \(String(describing: error))"
+            // Never the raw Swift error: it names types the reader has no way
+            // to act on. The diagnostics screen is where the detail lives.
+            "Could not restore this account. Check the address and the code, then try again."
         }
     }
 }

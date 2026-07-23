@@ -151,7 +151,7 @@ struct ZapSheet: View {
             // than dead-ending.
             if !accepted {
                 UIPasteboard.general.string = invoice
-                phase = .failed("No Lightning wallet is installed. The invoice was copied to your clipboard.")
+                phase = .failed("No Lightning wallet is installed. Comb copied the invoice so you can paste it into one.")
             } else {
                 dismiss()
             }

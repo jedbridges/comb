@@ -84,9 +84,9 @@ struct SearchView: View {
         } else {
             // Teaches what the search covers rather than sitting blank.
             ContentUnavailableView(
-                "Search messages",
+                "Find a message",
                 systemImage: "magnifyingglass",
-                description: Text("Finds anything this iPhone has already downloaded, across every channel.")
+                description: Text("Searches every channel you have open, on this iPhone.")
             )
         }
     }

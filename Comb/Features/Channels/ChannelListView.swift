@@ -197,7 +197,7 @@ struct ChannelListView: View {
             Text("No channels yet")
                 .font(Typography.bodyEmphasis)
                 .foregroundStyle(Palette.text)
-            Text("Channels appear here as soon as this community shares them.")
+            Text("Channels will appear here once this community adds them.")
                 .font(Typography.secondary)
                 .foregroundStyle(Palette.subtext)
                 .multilineTextAlignment(.center)

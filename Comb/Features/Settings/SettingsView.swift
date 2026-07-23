@@ -59,7 +59,7 @@ struct SettingsView: View {
                             onSignOut()
                         }
                     } message: {
-                        Text("Your account key stays in this iPhone's Keychain. Joining this community again picks it back up.")
+                        Text("Your account stays saved on this iPhone. You can rejoin this community later as the same person.")
                     }
                 } header: {
                     Text("Community")

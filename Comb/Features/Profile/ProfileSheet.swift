@@ -22,9 +22,9 @@ struct ProfileSheet: View {
                     content(profile)
                 } else {
                     ContentUnavailableView(
-                        "Nobody here",
+                        "No profile yet",
                         systemImage: "person.slash",
-                        description: Text("Nothing is known about this account yet.")
+                        description: Text("This person has not added a name or picture.")
                     )
                 }
             }
@@ -83,7 +83,7 @@ struct ProfileSheet: View {
             .combRows()
 
             Section {
-                LabeledContent("Messages here", value: "\(profile.messageCount)")
+                LabeledContent("Messages in this community", value: "\(profile.messageCount)")
 
                 if profile.canReceiveZaps {
                     Button {
@@ -124,9 +124,9 @@ struct MemberListView: View {
         Group {
             if members.isEmpty {
                 ContentUnavailableView(
-                    "No members listed",
+                    "No members yet",
                     systemImage: "person.2.slash",
-                    description: Text("This community has not shared who is in \(channelName).")
+                    description: Text("Nobody has been listed in \(channelName) yet.")
                 )
             } else {
                 Form {

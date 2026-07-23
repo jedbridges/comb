@@ -33,7 +33,7 @@ struct JoinView: View {
                     Label(host, systemImage: "checkmark.seal")
                         .foregroundStyle(Palette.success)
                 } else if !model.inviteText.isEmpty {
-                    Text("That does not look like an invite link yet.")
+                    Text("Paste the whole link, including the https:// part.")
                 }
             }
             .combRows()
@@ -131,7 +131,7 @@ final class JoinModel {
 
             let claim = try await InviteClient().claim(invite, signer: signer)
             guard claim.isMember else {
-                failure = "The relay did not accept the invite."
+                failure = "That invite was turned down. Ask for a fresh one."
                 return nil
             }
 
@@ -157,7 +157,7 @@ final class JoinModel {
         } catch InviteClient.Failure.expired {
             failure = "That invite has expired. Ask for a fresh one."
         } catch InviteClient.Failure.invalid {
-            failure = "That invite did not work. Check it was copied completely."
+            failure = "That invite did not work. Check the whole link was copied."
         } catch InviteClient.Failure.rateLimited {
             failure = "Too many tries. Give it a minute."
         } catch {

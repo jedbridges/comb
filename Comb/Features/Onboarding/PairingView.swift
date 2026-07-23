@@ -69,7 +69,7 @@ struct PairingView: View {
                 PrimaryButton(title: "They match") {
                     Task { await model.confirm() }
                 }
-                SecondaryButton(title: "They don't match") {
+                SecondaryButton(title: "They do not match") {
                     Task { await model.reject() }
                 }
             }
