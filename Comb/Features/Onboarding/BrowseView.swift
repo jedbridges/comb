@@ -28,6 +28,12 @@ struct BrowseView: View {
     }
     @State private var order: Order = .newest
     @State private var query = ""
+    @Environment(\.openURL) private var openURL
+
+    /// The index file, opened for editing on GitHub.
+    private static let listingURL = URL(
+        string: "https://github.com/jedbridges/comb/edit/main/communities/index.json"
+    )!
 
     /// Every sort the data can truthfully support. Member counts and activity
     /// are deliberately hidden by the relays, so recency of listing, name, and
@@ -234,14 +240,13 @@ struct BrowseView: View {
 
             // Safari, deliberately: listing is a pull request, and pretending
             // it can happen inside the app would be a lie with a spinner.
-            Link(destination: URL(string: "https://github.com/jedbridges/comb/edit/main/communities/index.json")!) {
-                Text("List your community")
-                    .font(Typography.action)
-                    .foregroundStyle(Palette.ink)
-                    .frame(maxWidth: .infinity, minHeight: Sizing.hitTarget)
+            //
+            // PrimaryButton rather than a hand-rolled Link: this is the one
+            // important action on the screen, and it should be exactly the
+            // size and weight of the primary action on every other screen.
+            PrimaryButton(title: "List your community") {
+                openURL(Self.listingURL)
             }
-            .buttonStyle(.glassProminent)
-            .tint(Palette.chartreuse)
         }
         // No extra padding: the GlassCard wrapping this supplies it.
     }

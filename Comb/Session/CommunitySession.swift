@@ -43,11 +43,35 @@ actor CommunitySession {
         let resolvedStore = try store ?? Self.openStore(host: url.host ?? "unknown")
         self.store = resolvedStore
         self.signer = InMemorySigner(key)
+
+        // The box is captured by the sink closure rather than `self`, which
+        // does not exist yet during init.
+        let box = EphemeralBox()
+        self.ephemeralBox = box
         self.relay = RelaySession(
             url: url,
             signer: signer,
-            sink: StoreSink(store: resolvedStore)
+            sink: StoreSink(store: resolvedStore, onEphemeral: { box.emit($0) })
         )
+    }
+
+    private let ephemeralBox: EphemeralBox
+
+    /// Live ephemeral events (typing, presence), never stored.
+    nonisolated func ephemeralEvents() -> AsyncStream<[NostrEvent]> {
+        ephemeralBox.stream()
+    }
+
+    /// Publishes a typing indicator: kind 20002, empty content, `h` tag,
+    /// matching Buzz. Fire and forget and deliberately unqueued: a lost one
+    /// is invisible, and a retried one would announce typing that stopped.
+    func sendTyping(in channel: String) async {
+        guard let event = try? await signer.sign(
+            kind: .buzzTyping,
+            content: "",
+            tags: [["h", channel]]
+        ) else { return }
+        try? await relay.publish(event)
     }
 
     /// A per-community on-disk store, so history reads offline and a second
@@ -419,6 +443,32 @@ actor CommunitySession {
     }
 }
 
+/// Fans ephemeral events out to whoever is listening.
+///
+/// A separate object rather than the session itself: the sink closure is
+/// built during `init` before `self` exists, and ephemeral delivery must not
+/// hop onto the session actor while the socket is reading.
+private final class EphemeralBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuations: [UUID: AsyncStream<[NostrEvent]>.Continuation] = [:]
+
+    func stream() -> AsyncStream<[NostrEvent]> {
+        AsyncStream { continuation in
+            let id = UUID()
+            lock.withLock { continuations[id] = continuation }
+            continuation.onTermination = { [weak self] _ in
+                guard let self else { return }
+                lock.withLock { _ = continuations.removeValue(forKey: id) }
+            }
+        }
+    }
+
+    func emit(_ events: [NostrEvent]) {
+        let live = lock.withLock { Array(continuations.values) }
+        for continuation in live { continuation.yield(events) }
+    }
+}
+
 /// What a reply needs to know about the message it answers.
 struct ReplyContext: Sendable, Equatable {
     /// The message being answered directly.
@@ -445,13 +495,20 @@ struct ReplyContext: Sendable, Equatable {
     }
 }
 
-/// Forwards relay events into verified ingest. Ephemeral kinds are diverted
-/// inside the store and simply dropped here until presence lands.
+/// Forwards relay events into verified ingest, and hands ephemeral kinds to
+/// whoever is listening.
+///
+/// Ephemerals are diverted inside the store rather than written: a typing
+/// indicator is false ten seconds later, and storing it would grow the log
+/// forever with facts nobody can use. Ingest returns them so they can be
+/// broadcast to live listeners and then forgotten.
 private struct StoreSink: EventSink {
     let store: EventStore
+    let onEphemeral: @Sendable ([NostrEvent]) -> Void
 
     func ingest(_ events: [NostrEvent], subscription: String) async {
-        _ = try? await store.ingest(events)
+        guard let result = try? await store.ingest(events) else { return }
+        if !result.ephemeral.isEmpty { onEphemeral(result.ephemeral) }
     }
 
     func endOfStoredEvents(subscription: String) async {}

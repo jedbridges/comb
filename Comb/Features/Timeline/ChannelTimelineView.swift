@@ -35,7 +35,10 @@ struct ChannelTimelineView: View {
             Palette.backgroundGradient.ignoresSafeArea()
 
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: Space.hairline) {
+                // Space.xs between messages rather than a hairline: the
+                // design brief asks for comfortable over compact, and rows
+                // separated by 2pt read as one wall of text.
+                LazyVStack(alignment: .leading, spacing: Space.xs) {
                     // Hidden when the channel is empty: a backfill button over
                     // a void promises history that does not exist.
                     if model.canLoadOlder, !model.displayRows.isEmpty {
@@ -323,12 +326,12 @@ struct MessageRow: View {
                 Color.clear.frame(width: avatarWidth, height: 1)
             }
 
-            VStack(alignment: .leading, spacing: Space.hairline) {
+            VStack(alignment: .leading, spacing: Space.xxs) {
                 // Only the author, time and text are merged. Combining the whole
                 // row would swallow the reaction and thread buttons: `.combine`
                 // flattens its children into one element, and a control inside
                 // it stops being reachable by VoiceOver.
-                VStack(alignment: .leading, spacing: Space.hairline) {
+                VStack(alignment: .leading, spacing: Space.xxs) {
                     if entry.showsHeader {
                         HStack(alignment: .firstTextBaseline, spacing: Space.xs) {
                             Button(action: onOpenAuthor) {
@@ -382,8 +385,10 @@ struct MessageRow: View {
 
             Spacer(minLength: 0)
         }
-        .padding(.top, entry.showsHeader ? Space.xs : 0)
-        .padding(.vertical, mentionsMe ? Space.xxs : 0)
+        // A new speaker gets real air above them; a continuation line stays
+        // close to what it continues.
+        .padding(.top, entry.showsHeader ? Space.sm : 0)
+        .padding(.vertical, mentionsMe ? Space.xs : 0)
         .background {
             // Being named is the one thing worth finding while scanning, so
             // it gets a wash rather than only a coloured word inside the
@@ -441,6 +446,10 @@ struct MessageRow: View {
                 Text("\(Text(MessageLinks.attributed(text, mentionNames: mentionNames)))\(editedMarker)")
                     .font(Typography.body)
                     .foregroundStyle(Palette.text)
+                    // Light text on a dark ground reads thinner than it is and
+                    // wants more leading, which is also the design brief's
+                    // stated rule for this exact case.
+                    .lineSpacing(2)
                     .textSelection(.enabled)
             }
         }
@@ -567,7 +576,7 @@ struct ReactionBar: View {
     var onPickEmoji: (() -> Void)?
 
     var body: some View {
-        HStack(spacing: Space.xxs) {
+        HStack(spacing: Space.xs) {
             ForEach(reactions) { reaction in
                 // Tapping a chip toggles: join the pile, or withdraw your own.
                 Button { onTap(reaction.emoji) } label: { chip(reaction) }
@@ -601,7 +610,7 @@ struct ReactionBar: View {
             .disabled(onPickEmoji == nil)
             .accessibilityLabel("Add a reaction")
         }
-        .padding(.top, Space.hairline)
+        .padding(.top, Space.xxs)
     }
 
     private func chip(_ reaction: ReactionSummary) -> some View {

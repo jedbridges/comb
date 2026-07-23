@@ -117,6 +117,39 @@ struct AvatarView: View {
     @ScaledMetric(relativeTo: .subheadline) private var size: CGFloat = Sizing.avatar
 
     var body: some View {
+        Group {
+            if let url = pictureURL {
+                // AsyncImage, not the Blossom loader: profile pictures are
+                // ordinary public URLs on whatever host someone chose, with
+                // no relay auth involved, and URLSession's shared cache
+                // already handles them.
+                AsyncImage(url: url, transaction: Transaction(animation: Motion.fast)) { phase in
+                    switch phase {
+                    case .success(let image):
+                        image.resizable().scaledToFill()
+                    default:
+                        // Initial while loading and forever if the URL is
+                        // dead: a broken-image glyph would be worse than the
+                        // stand-in it replaces.
+                        initial
+                    }
+                }
+                .frame(width: size, height: size)
+                .clipShape(.circle)
+            } else {
+                initial
+                    .compositingGroup()
+                    .luminousChrome()
+                    .frame(width: size, height: size)
+            }
+        }
+        // A face is not information: the row's label already says who spoke.
+        .accessibilityHidden(true)
+    }
+
+    /// Same fills and blend treatment as ChannelGlyph, so an initial reads as
+    /// one family with the channel cells rather than a flat opaque disc.
+    private var initial: some View {
         ZStack {
             Circle().fill(Palette.glyphSurface)
             Text(name.prefix(1).uppercased())
@@ -124,16 +157,15 @@ struct AvatarView: View {
                 .foregroundStyle(Palette.glyphTint)
                 .minimumScaleFactor(0.7)
         }
-        // Same fills and blend treatment as ChannelGlyph: composited as one
-        // badge, then shifted into the light behind it, so avatars and channel
-        // cells read as one family instead of the avatars sitting as flat
-        // opaque discs beside blended hexagons.
-        .compositingGroup()
-        .luminousChrome()
-        .frame(width: size, height: size)
-        // The initial is a stand-in for a face, not information: the row's
-        // label already says who spoke.
-        .accessibilityHidden(true)
+    }
+
+    /// Only https: a profile can name any URL it likes, and an http avatar
+    /// would be a cleartext request made on the viewer's behalf.
+    private var pictureURL: URL? {
+        guard let picture, let url = URL(string: picture),
+              url.scheme?.lowercased() == "https"
+        else { return nil }
+        return url
     }
 }
 
