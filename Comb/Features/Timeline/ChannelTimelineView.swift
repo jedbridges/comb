@@ -20,7 +20,6 @@ struct ChannelTimelineView: View {
     @State private var reactingTo: TimelineRow?
     @State private var reactorsOf: ReactorsTarget?
     @FocusState private var isComposing: Bool
-    @State private var scrollPosition = ScrollPosition()
     @State private var isAwayFromBottom = false
     @State private var arrivalsWhileAway = 0
 
@@ -36,6 +35,7 @@ struct ChannelTimelineView: View {
         ZStack {
             Palette.backgroundGradient.ignoresSafeArea()
 
+            ScrollViewReader { proxy in
             ScrollView {
                 // Space.xs between messages rather than a hairline: the
                 // design brief asks for comfortable over compact, and rows
@@ -85,6 +85,8 @@ struct ChannelTimelineView: View {
                                 )
                             }
                         )
+                        // The anchor the jump-to-bottom pill scrolls to.
+                        .id(entry.row.id)
                     }
                 }
                 .padding(.horizontal, Space.sm)
@@ -99,7 +101,6 @@ struct ChannelTimelineView: View {
             .defaultScrollAnchor(.bottom)
             .scrollDismissesKeyboard(.interactively)
             .softScrollEdges()
-            .scrollPosition($scrollPosition)
             .onScrollGeometryChange(for: CGFloat.self) { geometry in
                 geometry.contentSize.height
                     - geometry.visibleRect.maxY
@@ -118,8 +119,9 @@ struct ChannelTimelineView: View {
             }
             .overlay(alignment: .bottomTrailing) {
                 if isAwayFromBottom {
-                    jumpToBottom
+                    jumpToBottom(proxy)
                 }
+            }
             }
 
             if model.displayRows.isEmpty {
@@ -240,10 +242,17 @@ struct ChannelTimelineView: View {
     }
 
     /// The way back to now, present only once the reader has left it.
-    private var jumpToBottom: some View {
+    ///
+    /// Driven by a `ScrollViewReader` rather than a `ScrollPosition` binding:
+    /// binding a position alongside `defaultScrollAnchor(.bottom)` left the
+    /// content scrolled somewhere off-screen, so a channel with history
+    /// rendered as a blank page with no empty state, because the rows were
+    /// there and simply not visible.
+    private func jumpToBottom(_ proxy: ScrollViewProxy) -> some View {
         Button {
+            guard let lastID = model.displayRows.last?.id else { return }
             withAnimation(Motion.standard) {
-                scrollPosition.scrollTo(edge: .bottom)
+                proxy.scrollTo(lastID, anchor: .bottom)
             }
         } label: {
             HStack(spacing: Space.xxs) {
@@ -426,7 +435,17 @@ struct MessageRow: View {
             // text. Chartreuse at low opacity: the accent stays scarce.
             if mentionsMe {
                 RoundedRectangle(cornerRadius: Radii.bubble)
-                    .fill(Palette.chartreuse.opacity(0.10))
+                    .fill(Palette.chartreuse.opacity(0.07))
+                    .overlay(alignment: .leading) {
+                        // A marked edge as well as a wash. The wash alone read
+                        // as an unexplained tint; an edge says a rule was
+                        // applied, and survives for anyone who cannot separate
+                        // the wash from the gradient behind it.
+                        Rectangle()
+                            .fill(Palette.chartreuse.opacity(0.7))
+                            .frame(width: 3)
+                    }
+                    .clipShape(.rect(cornerRadius: Radii.bubble))
             }
         }
         .opacity(entry.row.delivery == .pending ? 0.55 : 1)
@@ -502,7 +521,7 @@ struct MessageRow: View {
                 Button(emoji) { onReact(emoji) }
             }
             if let onPickEmoji {
-                Button("More reactions…", systemImage: "face.smiling", action: onPickEmoji)
+                Button("More", systemImage: "face.smiling.inverse", action: onPickEmoji)
             }
             if let onReply {
                 Divider()
@@ -613,14 +632,19 @@ struct ReactionBar: View {
         HStack(spacing: Space.xs) {
             ForEach(reactions) { reaction in
                 // Tapping a chip toggles: join the pile, or withdraw your own.
+                // Button, with the long press added simultaneously rather
+                // than as a plain `.onLongPressGesture`: that variant competes
+                // with the Button's own press handling, so a long press fired
+                // the tap too and toggled the reaction instead of opening the
+                // sheet. Replacing the Button outright is worse still, because
+                // the row stops laying out inside the lazy stack.
                 Button { onTap(reaction.emoji) } label: { chip(reaction) }
                     .buttonStyle(.plain)
-                    // Long-press shows who. Kept off the tap so the primary
-                    // gesture stays what it has always been: join the pile or
-                    // take yours back.
-                    .onLongPressGesture {
-                        onShowReactors?(reaction.emoji)
-                    }
+                    .simultaneousGesture(
+                        LongPressGesture(minimumDuration: 0.4).onEnded { _ in
+                            onShowReactors?(reaction.emoji)
+                        }
+                    )
                     .accessibilityLabel(
                         "\(reaction.emoji), \(reaction.count)"
                             + (reaction.includesMe ? ", including yours" : "")
@@ -669,16 +693,19 @@ struct ReactionBar: View {
                 .lineLimit(1)
             Text("\(reaction.count)")
                 .font(Typography.count)
-                .foregroundStyle(
-                    reaction.includesMe ? Palette.oliveInk : Palette.subtext
-                )
+                // Ink on the solid fill, subtext on the quiet one. Dark ink on
+                // a 45% chartreuse wash over a dark gradient was legible on
+                // paper and invisible on screen: the count read as missing
+                // rather than dim, so a pile you had joined looked like it had
+                // lost its number.
+                .foregroundStyle(reaction.includesMe ? Palette.ink : Palette.subtext)
         }
         .padding(.horizontal, Space.xs)
         .padding(.vertical, Space.xxs)
         .background(
             reaction.includesMe
-                ? Palette.chartreuse.opacity(0.45)
-                : Palette.surface.opacity(0.5),
+                ? AnyShapeStyle(Palette.chartreuse)
+                : AnyShapeStyle(Palette.surface.opacity(0.5)),
             in: .capsule
         )
     }

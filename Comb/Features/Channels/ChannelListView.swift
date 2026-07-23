@@ -25,7 +25,8 @@ struct ChannelListView: View {
     @State private var model: ChannelListModel
     @State private var isShowingSettings = false
     @State private var connection: ConnectionState = .idle
-    @State private var isSearching = false
+    @State private var query = ""
+    @State private var messageHits: [SearchResult] = []
     @State private var isBrowsing = false
     @State private var isAddingByInvite = false
     @State private var arrivalChannel: ChannelSummary?
@@ -63,7 +64,9 @@ struct ChannelListView: View {
         ZStack {
             Palette.backgroundGradient.ignoresSafeArea()
 
-            if model.channels.isEmpty {
+            if !query.isEmpty {
+                searchResults
+            } else if model.channels.isEmpty {
                 emptyState
             } else {
                 channelList
@@ -80,20 +83,16 @@ struct ChannelListView: View {
         }
         .navigationTitle(currentName)
         .navigationBarTitleDisplayMode(.large)
+        // In place rather than behind a toolbar button and a sheet: search is
+        // a way of looking at this screen's own contents, not a separate
+        // place to go.
+        .searchable(text: $query, prompt: "Search channels and messages")
+        .onChange(of: query) { _, new in
+            messageHits = (try? session.store.search(new)) ?? []
+        }
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
                 communityMenu
-            }
-            ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    isSearching = true
-                } label: {
-                    Image(systemName: "magnifyingglass")
-                        .font(Typography.actionSecondary)
-                        .foregroundStyle(Palette.text)
-                        .luminousChrome()
-                }
-                .accessibilityLabel("Search messages")
             }
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
@@ -106,9 +105,6 @@ struct ChannelListView: View {
                 }
                 .accessibilityLabel("Settings")
             }
-        }
-        .sheet(isPresented: $isSearching) {
-            SearchView(session: session)
         }
         // The same screen onboarding shows, one tap from anywhere: discovery
         // is not something you should have to sign out to reach.
@@ -229,6 +225,85 @@ struct ChannelListView: View {
             .padding(.vertical, Space.sm)
         }
         .softScrollEdges()
+    }
+
+    /// Channels whose name matches, and messages whose text does.
+    private var matchingChannels: [ChannelSummary] {
+        model.channels.filter { $0.name.localizedCaseInsensitiveContains(query) }
+    }
+
+    @ViewBuilder
+    private var searchResults: some View {
+        if matchingChannels.isEmpty && messageHits.isEmpty {
+            ContentUnavailableView.search(text: query)
+        } else {
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: Space.md) {
+                    if !matchingChannels.isEmpty {
+                        resultSection("Channels") {
+                            ForEach(matchingChannels) { channel in
+                                NavigationLink(value: channel) {
+                                    ChannelRow(channel: channel)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                    }
+
+                    if !messageHits.isEmpty {
+                        resultSection("Messages") {
+                            ForEach(messageHits) { hit in
+                                messageHitRow(hit)
+                            }
+                        }
+                    }
+                }
+                .padding(.horizontal, Space.md)
+                .padding(.vertical, Space.sm)
+            }
+            .softScrollEdges()
+        }
+    }
+
+    private func resultSection<Content: View>(
+        _ title: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: Space.xs) {
+            Text(title)
+                .font(Typography.eyebrow)
+                .kerning(Kerning.eyebrow)
+                .foregroundStyle(Palette.subtext)
+                .padding(.leading, Space.xs)
+
+            VStack(spacing: 0) { content() }
+                .glassEffect(in: .rect(cornerRadius: Radii.card))
+        }
+    }
+
+    private func messageHitRow(_ hit: SearchResult) -> some View {
+        VStack(alignment: .leading, spacing: Space.xxs) {
+            HStack(spacing: Space.xs) {
+                Text(hit.channelName)
+                    .font(Typography.eyebrow)
+                    .kerning(Kerning.eyebrow)
+                    .foregroundStyle(Palette.subtext)
+                Spacer(minLength: Space.xs)
+                Text(hit.date, format: .dateTime.month().day())
+                    .font(Typography.caption)
+                    .foregroundStyle(Palette.subtext)
+            }
+            Text(hit.content)
+                .font(Typography.secondary)
+                .foregroundStyle(Palette.text)
+                .lineLimit(3)
+            Text(hit.author)
+                .font(Typography.caption)
+                .foregroundStyle(Palette.subtext)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(Space.sm)
+        .accessibilityElement(children: .combine)
     }
 
     private var emptyState: some View {
