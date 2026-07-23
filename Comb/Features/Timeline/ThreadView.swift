@@ -18,6 +18,7 @@ struct ThreadView: View {
     @State private var draft = ""
     @State private var profileTarget: ProfileTarget?
     @State private var zapTarget: TimelineRow?
+    @State private var reactingTo: TimelineRow?
     @State private var tray: AttachmentTray
     @State private var loader: MediaLoader
 
@@ -84,6 +85,11 @@ struct ThreadView: View {
         .sheet(item: $profileTarget) { target in
             ProfileSheet(session: session, pubkey: target.pubkey)
         }
+        .sheet(item: $reactingTo) { row in
+            EmojiPicker { emoji in
+                Task { await model.toggleReaction(emoji, on: row.id) }
+            }
+        }
         .sheet(item: $zapTarget) { row in
             if let address = row.authorLightningAddress,
                let recipient = PublicKey(hex: row.pubkey) {
@@ -111,7 +117,8 @@ struct ThreadView: View {
             onRetry: { Task { await model.retry(entry.row.id) } },
             onDiscard: { Task { await model.discard(entry.row.id) } },
             onZap: entry.row.authorLightningAddress == nil ? nil : { zapTarget = entry.row },
-            onOpenAuthor: { profileTarget = ProfileTarget(pubkey: entry.row.pubkey) }
+            onOpenAuthor: { profileTarget = ProfileTarget(pubkey: entry.row.pubkey) },
+            onPickEmoji: entry.row.isDeleted ? nil : { reactingTo = entry.row }
             // No `onOpenThread` or `onReply`: this is already the thread, and
             // threads do not nest. The compose bar below is the way to reply.
         )

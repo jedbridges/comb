@@ -17,6 +17,7 @@ struct ChannelTimelineView: View {
     @State private var loader: MediaLoader
     @State private var editing: TimelineRow?
     @State private var deleting: TimelineRow?
+    @State private var reactingTo: TimelineRow?
     @State private var scrollPosition = ScrollPosition()
     @State private var isAwayFromBottom = false
     @State private var arrivalsWhileAway = 0
@@ -70,7 +71,8 @@ struct ChannelTimelineView: View {
                                 editing = entry.row
                                 draft = entry.row.displayContent
                             },
-                            onDelete: ownMessageAction(entry.row) { deleting = entry.row }
+                            onDelete: ownMessageAction(entry.row) { deleting = entry.row },
+                            onPickEmoji: entry.row.isDeleted ? nil : { reactingTo = entry.row }
                         )
                     }
                 }
@@ -180,6 +182,11 @@ struct ChannelTimelineView: View {
         }
         .sheet(item: $profileTarget) { target in
             ProfileSheet(session: session, pubkey: target.pubkey)
+        }
+        .sheet(item: $reactingTo) { row in
+            EmojiPicker { emoji in
+                Task { await model.toggleReaction(emoji, on: row.id) }
+            }
         }
         .sheet(item: $zapTarget) { entry in
             if let address = entry.row.authorLightningAddress,
@@ -293,6 +300,8 @@ struct MessageRow: View {
     /// Present only on the viewer's own messages.
     var onEdit: (() -> Void)?
     var onDelete: (() -> Void)?
+    /// Opens the full emoji picker for this message.
+    var onPickEmoji: (() -> Void)?
 
     /// The quick palette, shared with the reaction bar's add button so the
     /// two ways to react can never disagree. A full picker is later polish.
@@ -355,7 +364,11 @@ struct MessageRow: View {
                 .contextMenu { contextActions }
 
                 if !reactions.isEmpty {
-                    ReactionBar(reactions: reactions, onTap: onReact)
+                    ReactionBar(
+                        reactions: reactions,
+                        onTap: onReact,
+                        onPickEmoji: onPickEmoji
+                    )
                 }
 
                 if entry.row.hasThread, let onOpenThread {
@@ -447,6 +460,9 @@ struct MessageRow: View {
         } else if !entry.row.isDeleted {
             ForEach(Self.quickReactions, id: \.self) { emoji in
                 Button(emoji) { onReact(emoji) }
+            }
+            if let onPickEmoji {
+                Button("More reactions…", systemImage: "face.smiling", action: onPickEmoji)
             }
             if let onReply {
                 Divider()
@@ -547,6 +563,8 @@ private struct ThreadAffordance: View {
 struct ReactionBar: View {
     let reactions: [ReactionSummary]
     let onTap: (String) -> Void
+    /// Opens the full picker. The quick palette is a menu when absent.
+    var onPickEmoji: (() -> Void)?
 
     var body: some View {
         HStack(spacing: Space.xxs) {
@@ -565,11 +583,11 @@ struct ReactionBar: View {
 
             // The visible way in, once a pile exists. Before this, reacting
             // was long-press-only, which is knowledge rather than an
-            // affordance.
-            Menu {
-                ForEach(MessageRow.quickReactions, id: \.self) { emoji in
-                    Button(emoji) { onTap(emoji) }
-                }
+            // affordance. Straight to the full picker: the quick palette is
+            // already one long-press away, so a menu here would be a second
+            // hop to reach the same five.
+            Button {
+                onPickEmoji?()
             } label: {
                 Image(systemName: "plus")
                     .font(Typography.label)
@@ -579,6 +597,8 @@ struct ReactionBar: View {
                     .background(Palette.surface.opacity(0.5), in: .capsule)
                     .luminousChrome()
             }
+            .buttonStyle(.plain)
+            .disabled(onPickEmoji == nil)
             .accessibilityLabel("Add a reaction")
         }
         .padding(.top, Space.hairline)
