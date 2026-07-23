@@ -1,5 +1,6 @@
 import CombNet
 import SwiftUI
+import UIKit
 
 // The recurring assemblies. A pattern that appears on two screens gets a
 // component here on its second appearance; the third copy is where drift
@@ -116,36 +117,47 @@ struct AvatarView: View {
 
     @ScaledMetric(relativeTo: .subheadline) private var size: CGFloat = Sizing.avatar
 
+    /// Loaded through the community's loader rather than `AsyncImage`.
+    ///
+    /// `AsyncImage` was here and was wrong: an avatar set from inside Buzz
+    /// lives on the community's own membership-gated Blossom server, so the
+    /// unauthenticated GET returned 401 and the picture silently never
+    /// appeared. Anyone who set their photo in Buzz showed up as a letter,
+    /// which looked like the app simply having no avatars.
+    @Environment(\.mediaLoader) private var mediaLoader
+    @State private var image: UIImage?
+
     var body: some View {
         Group {
-            if let url = pictureURL {
-                // AsyncImage, not the Blossom loader: profile pictures are
-                // ordinary public URLs on whatever host someone chose, with
-                // no relay auth involved, and URLSession's shared cache
-                // already handles them.
-                AsyncImage(url: url, transaction: Transaction(animation: Motion.fast)) { phase in
-                    switch phase {
-                    case .success(let image):
-                        image.resizable().scaledToFill()
-                    default:
-                        // Initial while loading and forever if the URL is
-                        // dead: a broken-image glyph would be worse than the
-                        // stand-in it replaces.
-                        initial
-                    }
-                }
-                .frame(width: size, height: size)
-                .clipShape(.circle)
-                // The same edge the letter version carries. Without it a photo
-                // avatar was full-saturation photography dropped beside flat
-                // badges, and read as belonging to a different app.
-                .overlay(Circle().strokeBorder(Palette.glyphHairline, lineWidth: 0.75))
+            if let image {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: size, height: size)
+                    .clipShape(.circle)
+                    // The same edge the letter version carries. Without it a
+                    // photo avatar was full-saturation photography dropped
+                    // beside flat badges, and read as belonging to a
+                    // different app.
+                    .overlay(Circle().strokeBorder(Palette.glyphHairline, lineWidth: 0.75))
+                    .transition(.opacity)
             } else {
+                // The stand-in while loading, and forever if the URL is dead.
+                // A broken-image glyph would be worse than the initial it
+                // replaces.
                 initial.glyphChrome(size: size)
             }
         }
+        .animation(Motion.fast, value: image == nil)
         // A face is not information: the row's label already says who spoke.
         .accessibilityHidden(true)
+        .task(id: picture) { await load() }
+    }
+
+    private func load() async {
+        image = nil
+        guard let url = pictureURL, let mediaLoader else { return }
+        image = try? await mediaLoader.avatar(at: url)
     }
 
     /// Exactly ChannelGlyph's treatment in a circle: the same lift, the same
@@ -166,11 +178,14 @@ struct AvatarView: View {
         }
     }
 
-    /// Only https: a profile can name any URL it likes, and an http avatar
-    /// would be a cleartext request made on the viewer's behalf.
+    /// https, or an inlined `data:` picture. Never http: a profile can name
+    /// any URL it likes, and an http avatar would be a cleartext request made
+    /// on the viewer's behalf. `data:` fetches nothing, so it carries none of
+    /// that risk, and some clients inline the whole image in the kind 0.
     private var pictureURL: URL? {
         guard let picture, let url = URL(string: picture),
-              url.scheme?.lowercased() == "https"
+              let scheme = url.scheme?.lowercased(),
+              scheme == "https" || scheme == "data"
         else { return nil }
         return url
     }

@@ -1,5 +1,6 @@
 import CombCore
 import CombNet
+import CryptoKit
 import ImageIO
 import SwiftUI
 import UIKit
@@ -72,6 +73,122 @@ actor MediaLoader {
         }
     }
 
+    /// The image behind a profile picture URL.
+    ///
+    /// `AsyncImage` cannot do this job. An avatar set from inside Buzz lives on
+    /// the community's own Blossom server, which is membership-gated: an
+    /// unauthenticated GET returns 401, so the picture silently never appears
+    /// and the initial stands in forever. Those blobs need the same signed
+    /// `t=get` header a message attachment uses.
+    ///
+    /// An avatar hosted anywhere else is an ordinary public image and is
+    /// fetched plainly. That split is deliberate rather than incidental:
+    /// signing a Blossom header for a third-party host would hand a stranger
+    /// an authorization signed with this account's key.
+    func avatar(at url: URL) async throws -> UIImage {
+        let key = Self.avatarKey(for: url)
+        if let cached = memory.object(forKey: key as NSString) { return cached }
+
+        let data: Data
+        if url.scheme?.lowercased() == "data" {
+            // Some clients inline the whole picture in the kind 0 rather than
+            // uploading it. Nothing to fetch, and nothing to cache on disk.
+            data = try Self.decodeDataURI(url)
+        } else if let attachment = blossomAttachment(for: url) {
+            data = try await self.data(for: attachment)
+        } else {
+            data = try await publicData(at: url, key: key)
+        }
+
+        // 256px covers the largest avatar the app draws on a 3x display. The
+        // attachment path decodes at 2048 because those are looked at; nobody
+        // pinch-zooms a 36pt circle.
+        guard let image = Self.decodeDownsampled(data, maxPixel: 256) else {
+            throw BlossomClient.Failure.malformedResponse
+        }
+        let cost = (image.cgImage?.bytesPerRow ?? 0) * (image.cgImage?.height ?? 0)
+        memory.setObject(image, forKey: key as NSString, cost: max(cost, data.count))
+        return image
+    }
+
+    /// Recognises a picture URL as a blob on this community's own Blossom
+    /// server, which is the only case where signing is both required and safe.
+    ///
+    /// The filename is the blob's sha256 by BUD-01, so the hash the client
+    /// verifies the bytes against comes from the URL itself.
+    private func blossomAttachment(for url: URL) -> Blossom.Attachment? {
+        guard url.host?.lowercased() == session.relayURL.host?.lowercased() else { return nil }
+
+        let stem = url.deletingPathExtension().lastPathComponent
+        guard stem.count == 64,
+              stem.allSatisfy({ $0.isHexDigit })
+        else { return nil }
+
+        return Blossom.Attachment(
+            url: url.absoluteString,
+            mimeType: "application/octet-stream",
+            sha256: stem.lowercased()
+        )
+    }
+
+    /// A public avatar, disk-cached like everything else so a member list does
+    /// not refetch thirty faces every time it opens.
+    private func publicData(at url: URL, key: String) async throws -> Data {
+        let file = directory.appending(path: key)
+        if let onDisk = try? Data(contentsOf: file) { return onDisk }
+
+        if let existing = inFlight[key] { return try await existing.value }
+
+        let task = Task<Data, Error> {
+            var request = URLRequest(url: url)
+            request.timeoutInterval = 15
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+                throw BlossomClient.Failure.malformedResponse
+            }
+            // A profile can name any URL it likes, so the size ceiling is not
+            // optional: without it one hostile kind 0 costs whatever the host
+            // decides to send.
+            guard data.count <= Self.maxAvatarBytes else {
+                throw BlossomClient.Failure.malformedResponse
+            }
+            return data
+        }
+        inFlight[key] = task
+        defer { inFlight[key] = nil }
+
+        let data = try await task.value
+        try? data.write(to: file, options: .atomic)
+        return data
+    }
+
+    /// The bytes of a `data:` URI, base64 only.
+    ///
+    /// Same ceiling as a fetched avatar, applied to the encoded form so a
+    /// hostile kind 0 cannot make this allocate before the limit is checked.
+    private static func decodeDataURI(_ url: URL) throws -> Data {
+        let text = url.absoluteString
+        guard text.count <= maxAvatarBytes,
+              let comma = text.firstIndex(of: ","),
+              text[text.startIndex..<comma].lowercased().hasSuffix(";base64"),
+              let data = Data(
+                  base64Encoded: String(text[text.index(after: comma)...]),
+                  options: .ignoreUnknownCharacters
+              )
+        else { throw BlossomClient.Failure.malformedResponse }
+        return data
+    }
+
+    private static let maxAvatarBytes = 8 * 1024 * 1024
+
+    /// A filename-safe cache key. Blossom blobs are already keyed by their own
+    /// hash; everything else is keyed by a hash of the URL so two hosts cannot
+    /// collide and no path separator ends up in a filename.
+    private static func avatarKey(for url: URL) -> String {
+        let digest = SHA256.hash(data: Data(url.absoluteString.utf8))
+        return "avatar-" + digest.map { String(format: "%02x", $0) }.joined()
+    }
+
     /// The image for an attachment, from memory, then disk, then the relay.
     func image(for attachment: Blossom.Attachment) async throws -> UIImage {
         let key = attachment.sha256 as NSString
@@ -136,6 +253,17 @@ actor MediaLoader {
         try? data.write(to: file, options: .atomic)
         return data
     }
+}
+
+extension EnvironmentValues {
+    /// The community's media loader, for views too far from the session to be
+    /// handed one.
+    ///
+    /// `AvatarView` is drawn in the timeline, the member list, the reactors
+    /// sheet, a profile, and a channel row. Threading a loader through every
+    /// one of those call sites to make a face appear would be five signature
+    /// changes for one feature, so it arrives by environment instead.
+    @Entry var mediaLoader: MediaLoader?
 }
 
 /// One attachment in the timeline.

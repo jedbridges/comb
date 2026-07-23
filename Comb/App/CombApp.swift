@@ -32,23 +32,50 @@ struct CombApp: App {
                         pendingInvite: $pendingInvite
                     )
                 case .active(let session):
-                    NavigationStack {
-                        ChannelListView(
-                            session: session,
-                            openOnArrival: model.openOnArrival,
-                            onArrivalConsumed: { model.consumeArrivalChannel() },
-                            communities: model.communities,
-                            onSwitch: { community in
-                                Task { await model.openCommunity(community) }
-                            },
-                            onJoined: { model.adopt($0, landingInBusiestChannel: true) },
-                            pendingInvite: $pendingInvite,
-                            onDisconnect: {
-                                Task { await model.signOut() }
-                            }
-                        )
-                    }
+                    CommunityRoot(session: session, model: model, pendingInvite: $pendingInvite)
         }
+    }
+}
+
+/// The open community, and the one place its media loader is created.
+///
+/// A separate view purely so the loader can live in `@State`: built inline in
+/// `CombApp.body` it would be replaced on every re-evaluation, which throws
+/// away the image caches on any state change at all. One loader per community
+/// also means the timeline, the member list, and every avatar sheet share a
+/// cache instead of each keeping their own.
+private struct CommunityRoot: View {
+    let session: CommunitySession
+    let model: AppModel
+    @Binding var pendingInvite: String?
+
+    @State private var loader: MediaLoader
+
+    init(session: CommunitySession, model: AppModel, pendingInvite: Binding<String?>) {
+        self.session = session
+        self.model = model
+        _pendingInvite = pendingInvite
+        _loader = State(initialValue: MediaLoader(session: session))
+    }
+
+    var body: some View {
+        NavigationStack {
+            ChannelListView(
+                session: session,
+                openOnArrival: model.openOnArrival,
+                onArrivalConsumed: { model.consumeArrivalChannel() },
+                communities: model.communities,
+                onSwitch: { community in
+                    Task { await model.openCommunity(community) }
+                },
+                onJoined: { model.adopt($0, landingInBusiestChannel: true) },
+                pendingInvite: $pendingInvite,
+                onDisconnect: {
+                    Task { await model.signOut() }
+                }
+            )
+        }
+        .environment(\.mediaLoader, loader)
     }
 }
 
