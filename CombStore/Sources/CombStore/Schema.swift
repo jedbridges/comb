@@ -134,6 +134,13 @@ enum Schema {
             try db.execute(sql: "ALTER TABLE outbox ADD COLUMN parent_id TEXT")
         }
 
+        // A queued message carries its tags so attachments render while it is
+        // still sending. Reading them out of `payload` would mean decoding a
+        // whole event per row in the timeline query.
+        migrator.registerMigration("v3.outbox.tags") { db in
+            try db.execute(sql: "ALTER TABLE outbox ADD COLUMN tags TEXT NOT NULL DEFAULT '[]'")
+        }
+
         return migrator
     }
 

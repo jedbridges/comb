@@ -1,5 +1,6 @@
 import CombCore
 import CombStore
+import PhotosUI
 import SwiftUI
 
 /// A channel's conversation, newest at the bottom, read from the store.
@@ -12,11 +13,15 @@ struct ChannelTimelineView: View {
     @State private var zapTarget: ChannelTimeline.Entry?
     @State private var profileTarget: ProfileTarget?
     @State private var threadRoot: TimelineRow?
+    @State private var tray: AttachmentTray
+    @State private var loader: MediaLoader
 
     init(session: CommunitySession, channel: ChannelSummary) {
         self.session = session
         self.channel = channel
         _model = State(initialValue: ChannelTimeline(session: session, channel: channel.id))
+        _tray = State(initialValue: AttachmentTray(session: session))
+        _loader = State(initialValue: MediaLoader(session: session))
     }
 
     var body: some View {
@@ -34,6 +39,7 @@ struct ChannelTimelineView: View {
                         MessageRow(
                             entry: entry,
                             reactions: model.snapshot.reactions[entry.row.id] ?? [],
+                            loader: loader,
                             onReact: { emoji in
                                 Task { await model.toggleReaction(emoji, on: entry.row.id) }
                             },
@@ -58,10 +64,12 @@ struct ChannelTimelineView: View {
             .scrollDismissesKeyboard(.interactively)
         }
         .safeAreaInset(edge: .bottom) {
-            ComposeBar(draft: $draft) {
+            ComposeBar(draft: $draft, attachments: tray) {
                 let text = draft
+                let media = tray.readyDescriptors
                 draft = ""
-                Task { await model.send(text) }
+                tray.clear()
+                Task { await model.send(text, attachments: media) }
             }
         }
         .navigationTitle(channel.name)
@@ -131,6 +139,7 @@ struct ChannelTimelineView: View {
 struct MessageRow: View {
     let entry: ChannelTimeline.Entry
     let reactions: [ReactionSummary]
+    let loader: MediaLoader
     let onReact: (String) -> Void
     let onRetry: () -> Void
     let onDiscard: () -> Void
@@ -182,6 +191,15 @@ struct MessageRow: View {
                     }
 
                     content
+
+                    if !entry.row.attachments.isEmpty, !entry.row.isDeleted {
+                        VStack(alignment: .leading, spacing: Space.xxs) {
+                            ForEach(entry.row.attachments) { attachment in
+                                AttachmentView(attachment: attachment, loader: loader)
+                            }
+                        }
+                        .padding(.top, Space.xxs)
+                    }
                 }
                 .accessibilityElement(children: .combine)
                 .accessibilityLabel(accessibilityDescription)
@@ -209,7 +227,12 @@ struct MessageRow: View {
     /// What VoiceOver says for this message, in the order a person would.
     private var accessibilityDescription: String {
         var parts = ["\(entry.row.displayName) said"]
-        parts.append(entry.row.isDeleted ? "message deleted" : entry.row.content)
+        if entry.row.isDeleted {
+            parts.append("message deleted")
+        } else {
+            let text = entry.row.displayContent
+            parts.append(text.isEmpty ? "sent a picture" : text)
+        }
         parts.append(entry.row.date.formatted(date: .omitted, time: .shortened))
 
         if entry.row.isEdited { parts.append("edited") }
@@ -233,10 +256,13 @@ struct MessageRow: View {
             // Rich content (Buzz kind 40002) renders as its plain fallback for
             // now; a real renderer is later polish. The fallback rule is what
             // keeps the app whole on relays that never send it.
-            Text("\(entry.row.content)\(editedMarker)")
-                .font(Typography.body)
-                .foregroundStyle(Palette.text)
-                .textSelection(.enabled)
+            let text = entry.row.displayContent
+            if !text.isEmpty {
+                Text("\(text)\(editedMarker)")
+                    .font(Typography.body)
+                    .foregroundStyle(Palette.text)
+                    .textSelection(.enabled)
+            }
         }
 
         if case .failed(let reason) = entry.row.delivery {
@@ -355,36 +381,138 @@ struct ReactionBar: View {
 struct ComposeBar: View {
     @Binding var draft: String
     var placeholder: String = "Message"
+    /// Attachment state, owned by the caller so the send action can clear it.
+    var attachments: AttachmentTray?
     let onSend: () -> Void
 
-    var body: some View {
-        HStack(alignment: .bottom, spacing: Space.xs) {
-            TextField(placeholder, text: $draft, axis: .vertical)
-                .lineLimit(1...5)
-                .font(Typography.body)
-                .foregroundStyle(Palette.text)
-                .padding(.horizontal, Space.sm)
-                .padding(.vertical, Space.xs)
-                .background(Palette.surface.opacity(0.45), in: .rect(cornerRadius: Radii.card))
+    @State private var picked: [PhotosPickerItem] = []
 
-            Button(action: onSend) {
-                Image(systemName: "arrow.up")
-                    .font(Typography.action)
-                    .foregroundStyle(Palette.ink)
-                    // 44pt is Apple's minimum comfortable target; the glyph
-                    // stays visually small inside it.
-                    .frame(width: Sizing.hitTarget, height: Sizing.hitTarget)
+    private var canSend: Bool {
+        guard attachments?.isUploading != true else { return false }
+        // Keyed on what would actually be sent, not on the tray being
+        // non-empty: an attachment that failed to upload contributes nothing,
+        // and enabling Send for it gives a button that does nothing.
+        return !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || attachments?.readyDescriptors.isEmpty == false
+    }
+
+    var body: some View {
+        VStack(spacing: Space.xs) {
+            if let attachments, !attachments.isEmpty {
+                AttachmentTrayView(tray: attachments)
             }
-            .accessibilityLabel("Send message")
-            .buttonStyle(.glassProminent)
-            .tint(Palette.chartreuse)
-            .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+            HStack(alignment: .bottom, spacing: Space.xs) {
+                if attachments != nil {
+                    PhotosPicker(
+                        selection: $picked,
+                        maxSelectionCount: 4,
+                        matching: .images,
+                        photoLibrary: .shared()
+                    ) {
+                        // No `luminousChrome()` here: the picker's label
+                        // closure is not main-actor isolated.
+                        Image(systemName: "photo.on.rectangle.angled")
+                            .font(Typography.actionSecondary)
+                            .foregroundStyle(Palette.text)
+                            .frame(width: Sizing.hitTarget, height: Sizing.hitTarget)
+                    }
+                    .accessibilityLabel("Add a photo")
+                }
+
+                TextField(placeholder, text: $draft, axis: .vertical)
+                    .lineLimit(1...5)
+                    .font(Typography.body)
+                    .foregroundStyle(Palette.text)
+                    .padding(.horizontal, Space.sm)
+                    .padding(.vertical, Space.xs)
+                    .background(Palette.surface.opacity(0.45), in: .rect(cornerRadius: Radii.card))
+
+                Button(action: onSend) {
+                    Image(systemName: "arrow.up")
+                        .font(Typography.action)
+                        .foregroundStyle(Palette.ink)
+                        // 44pt is Apple's minimum comfortable target; the glyph
+                        // stays visually small inside it.
+                        .frame(width: Sizing.hitTarget, height: Sizing.hitTarget)
+                }
+                .accessibilityLabel("Send message")
+                .buttonStyle(.glassProminent)
+                .tint(Palette.chartreuse)
+                .disabled(!canSend)
+            }
         }
         .padding(.horizontal, Space.sm)
         .padding(.vertical, Space.xs)
         .glassEffect(in: .rect(cornerRadius: Radii.sheet))
         .padding(.horizontal, Space.xs)
         .padding(.bottom, Space.xxs)
+        .onChange(of: picked) { _, items in
+            guard let attachments, !items.isEmpty else { return }
+            picked = []
+            Task { await attachments.add(items) }
+        }
+    }
+}
+
+/// The strip of pending attachments above the input.
+private struct AttachmentTrayView: View {
+    let tray: AttachmentTray
+
+    var body: some View {
+        ScrollView(.horizontal) {
+            HStack(spacing: Space.xs) {
+                ForEach(tray.items) { item in
+                    thumbnail(item)
+                }
+            }
+            .padding(.horizontal, Space.xxs)
+        }
+        .scrollIndicators(.hidden)
+        .frame(height: 72)
+    }
+
+    private func thumbnail(_ item: AttachmentTray.Item) -> some View {
+        ZStack(alignment: .topTrailing) {
+            Image(uiImage: item.preview)
+                .resizable()
+                .scaledToFill()
+                .frame(width: 64, height: 64)
+                .clipShape(.rect(cornerRadius: Radii.control))
+                .overlay {
+                    switch item.state {
+                    case .uploading:
+                        ZStack {
+                            Color.black.opacity(0.45)
+                            ProgressView().controlSize(.small).tint(.white)
+                        }
+                        .clipShape(.rect(cornerRadius: Radii.control))
+                    case .failed:
+                        ZStack {
+                            Color.black.opacity(0.5)
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .foregroundStyle(Palette.danger)
+                        }
+                        .clipShape(.rect(cornerRadius: Radii.control))
+                    case .ready:
+                        EmptyView()
+                    }
+                }
+
+            Button {
+                tray.remove(item.id)
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: 18))
+                    .symbolRenderingMode(.palette)
+                    .foregroundStyle(.white, .black.opacity(0.6))
+            }
+            .buttonStyle(.plain)
+            .padding(2)
+            .accessibilityLabel("Remove attachment")
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(item.hasFailed ? "Attachment failed to upload" : "Attachment")
     }
 }
 
@@ -445,8 +573,8 @@ final class ChannelTimeline {
         try? await session.store.markRead(channel: channel)
     }
 
-    func send(_ text: String) async {
-        await session.send(text, in: channel)
+    func send(_ text: String, attachments: [Blossom.Descriptor] = []) async {
+        await session.send(text, in: channel, attachments: attachments)
     }
 
     func toggleReaction(_ emoji: String, on messageID: String) async {

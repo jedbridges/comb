@@ -29,6 +29,16 @@ public struct TimelineRow: Sendable, Hashable, Identifiable {
     /// Buzz kind 40002 payload, absent on relays that do not implement it. The
     /// renderer falls back to `content`.
     public let richContent: String?
+    /// Images and video hanging off this message, from its NIP-92 `imeta` tags.
+    public let attachments: [Blossom.Attachment]
+
+    /// The body as a person should read it.
+    ///
+    /// Buzz appends `![image](url)` to the text for every attachment as a
+    /// fallback for clients that cannot read NIP-92. Comb renders the
+    /// attachment itself, so showing the markdown too would put a wall of
+    /// relay URL in the middle of the conversation.
+    public var displayContent: String { MessageText.withoutMediaMarkdown(content) }
 
     /// Whether this message opens a thread worth offering a way into.
     public var hasThread: Bool { replyCount > 0 }
@@ -217,7 +227,7 @@ public extension EventStore {
     private static let timelineColumns = """
         id, pubkey, created_at, content, edited, deleted, rich,
         display_name, picture, lud16, parent_id, root_id,
-        reply_count, last_reply_at, state, last_error
+        reply_count, last_reply_at, tags, state, last_error
         """
 
     /// A message from the log, with its author, edits and thread position.
@@ -251,6 +261,7 @@ public extension EventStore {
                    AND NOT EXISTS (
                          SELECT 1 FROM deletion dl WHERE dl.target_id = tl.event_id
                        )) AS last_reply_at,
+               e.tags              AS tags,
                'sent'              AS state,
                NULL                AS last_error
         FROM event e
@@ -269,11 +280,23 @@ public extension EventStore {
                NULL, 0, NULL,
                p.display_name, p.picture, p.lud16,
                o.parent_id, o.root_id, 0, NULL,
-               o.state, o.last_error
+               o.tags, o.state, o.last_error
         FROM outbox o
         LEFT JOIN profile p ON p.pubkey = o.pubkey
         WHERE \(predicate)
         """
+    }
+
+    /// Decodes `imeta` attachments from a row's stored tag JSON.
+    ///
+    /// Done in Swift rather than SQL: the tags are already JSON, the page is at
+    /// most a screenful, and pushing JSON parsing into SQLite would buy nothing
+    /// but an unreadable query.
+    private static func attachments(inTagsJSON json: String?) -> [Blossom.Attachment] {
+        guard let json,
+              let tags = try? JSONDecoder().decode([[String]].self, from: Data(json.utf8))
+        else { return [] }
+        return Blossom.attachments(in: tags)
     }
 
     private static func makeRow(_ row: Row) -> TimelineRow {
@@ -293,7 +316,8 @@ public extension EventStore {
             rootID: row["root_id"],
             replyCount: row["reply_count"] ?? 0,
             lastReplyAt: row["last_reply_at"],
-            richContent: row["rich"]
+            richContent: row["rich"],
+            attachments: Self.attachments(inTagsJSON: row["tags"])
         )
     }
 

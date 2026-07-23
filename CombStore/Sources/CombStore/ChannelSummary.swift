@@ -70,7 +70,10 @@ public extension EventStore {
                 about: row["about"],
                 picture: row["picture"],
                 memberCount: row["members"],
-                lastMessage: row["last_message"],
+                // Stripped here too: a channel whose newest message is a
+                // picture would otherwise preview as a relay URL.
+                lastMessage: (row["last_message"] as String?)
+                    .map(MessageText.withoutMediaMarkdown),
                 lastAuthor: row["last_author"],
                 lastActivity: row["last_at"],
                 unreadCount: row["unread"] ?? 0
@@ -296,7 +299,7 @@ public extension EventStore {
                         channelID: row["h"] ?? "",
                         channelName: row["channel_name"] ?? "",
                         author: row["author"] ?? "",
-                        content: row["content"],
+                        content: MessageText.withoutMediaMarkdown(row["content"]),
                         createdAt: row["created_at"]
                     )
                 }

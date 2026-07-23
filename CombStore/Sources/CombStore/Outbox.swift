@@ -42,8 +42,8 @@ public extension EventStore {
                 sql: """
                     INSERT INTO outbox
                         (event_id, channel_id, pubkey, content, created_at, payload,
-                         state, attempts, root_id, parent_id)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
+                         state, attempts, root_id, parent_id, tags)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
                     ON CONFLICT(event_id) DO NOTHING
                     """,
                 arguments: [
@@ -56,6 +56,7 @@ public extension EventStore {
                     OutboxState.pending.rawValue,
                     reference.rootID,
                     reference.parentID,
+                    String(decoding: try JSONEncoder().encode(event.tags), as: UTF8.self),
                 ]
             )
         }

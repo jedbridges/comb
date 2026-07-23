@@ -188,3 +188,40 @@ struct ThreadTests {
         #expect(try await iterator.next()?.rows.count == 2)
     }
 }
+
+@Suite("Message text")
+struct MessageTextTests {
+    @Test("strips the media markdown Buzz appends")
+    func stripsMediaMarkdown() {
+        let body = "might embrace the playdough aesthetic\n![image](https://relay.example/media/abc.png)"
+        #expect(MessageText.withoutMediaMarkdown(body) == "might embrace the playdough aesthetic")
+    }
+
+    @Test("a picture with no caption leaves an empty body")
+    func pictureOnly() {
+        // Correct rather than a bug: the picture is the message, and the row
+        // renders the attachment instead of an empty bubble.
+        let body = "\n![image](https://relay.example/media/abc.png)"
+        #expect(MessageText.withoutMediaMarkdown(body).isEmpty)
+    }
+
+    @Test("strips several attachments")
+    func severalAttachments() {
+        let body = "two shots![image](https://r.example/a.png)![image](https://r.example/b.png)"
+        #expect(MessageText.withoutMediaMarkdown(body) == "two shots")
+    }
+
+    @Test("leaves a person's own markdown alone")
+    func leavesHumanMarkdown() {
+        // Only `image` and `video` are machine-written by Buzz. Anything else
+        // is something a person typed and must survive.
+        let body = "see ![diagram](https://example.com/d.png)"
+        #expect(MessageText.withoutMediaMarkdown(body) == body)
+    }
+
+    @Test("leaves ordinary text untouched")
+    func leavesPlainText() {
+        #expect(MessageText.withoutMediaMarkdown("no media here") == "no media here")
+        #expect(MessageText.withoutMediaMarkdown("") == "")
+    }
+}

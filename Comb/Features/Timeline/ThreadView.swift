@@ -18,12 +18,16 @@ struct ThreadView: View {
     @State private var draft = ""
     @State private var profileTarget: ProfileTarget?
     @State private var zapTarget: TimelineRow?
+    @State private var tray: AttachmentTray
+    @State private var loader: MediaLoader
 
     init(session: CommunitySession, channel: ChannelSummary, root: TimelineRow) {
         self.session = session
         self.channel = channel
         self.root = root
         _model = State(initialValue: ThreadModel(session: session, channel: channel.id, root: root))
+        _tray = State(initialValue: AttachmentTray(session: session))
+        _loader = State(initialValue: MediaLoader(session: session))
     }
 
     var body: some View {
@@ -51,10 +55,12 @@ struct ThreadView: View {
             .scrollDismissesKeyboard(.interactively)
         }
         .safeAreaInset(edge: .bottom) {
-            ComposeBar(draft: $draft, placeholder: "Reply") {
+            ComposeBar(draft: $draft, placeholder: "Reply", attachments: tray) {
                 let text = draft
+                let media = tray.readyDescriptors
                 draft = ""
-                Task { await model.reply(text) }
+                tray.clear()
+                Task { await model.reply(text, attachments: media) }
             }
         }
         .navigationTitle("Thread")
@@ -81,6 +87,7 @@ struct ThreadView: View {
         MessageRow(
             entry: entry,
             reactions: model.snapshot.reactions[entry.row.id] ?? [],
+            loader: loader,
             onReact: { emoji in
                 Task { await model.toggleReaction(emoji, on: entry.row.id) }
             },
@@ -149,11 +156,12 @@ final class ThreadModel {
 
     /// Replies to the thread's opener, which is what keeps every reply under one
     /// root instead of chaining each onto the last and splintering the thread.
-    func reply(_ text: String) async {
+    func reply(_ text: String, attachments: [Blossom.Descriptor] = []) async {
         await session.send(
             text,
             in: channel,
-            replyingTo: ReplyContext(startingThreadOn: root)
+            replyingTo: ReplyContext(startingThreadOn: root),
+            attachments: attachments
         )
     }
 

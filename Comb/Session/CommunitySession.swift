@@ -118,9 +118,16 @@ actor CommunitySession {
     /// replying straight to a thread's opener, where root and parent are the
     /// same event: Buzz reads the `reply` marker to decide something is a reply
     /// at all, so omitting it would post the message flat into the channel.
-    func send(_ text: String, in channel: String, replyingTo reply: ReplyContext? = nil) async {
+    func send(
+        _ text: String,
+        in channel: String,
+        replyingTo reply: ReplyContext? = nil,
+        attachments: [Blossom.Descriptor] = []
+    ) async {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
+        // An attachment is a message on its own; requiring a caption to send a
+        // picture would be a strange rule.
+        guard !trimmed.isEmpty || !attachments.isEmpty else { return }
 
         var tags = [["h", channel]]
         if let reply {
@@ -129,11 +136,17 @@ actor CommunitySession {
             // So the person being answered can be notified.
             tags.append(["p", reply.authorPubkey])
         }
+        tags.append(contentsOf: attachments.map(Blossom.imetaTag))
+
+        // The markdown link goes in the body as well as the tag, matching Buzz:
+        // a client that does not read NIP-92 still shows a usable link instead
+        // of a message that looks empty.
+        let body = trimmed + attachments.map(Blossom.markdown).joined()
 
         do {
             let event = try await signer.sign(
                 kind: .groupChatMessage,
-                content: trimmed,
+                content: body,
                 tags: tags
             )
             try await store.enqueue(event, channel: channel)
@@ -225,6 +238,26 @@ actor CommunitySession {
         for entry in (try? store.pendingSends()) ?? [] {
             await deliver(entry.event)
         }
+    }
+
+    // MARK: - Media
+
+    /// Uploads a file to this community's media store.
+    ///
+    /// Media lives on the community's own relay, not on a third-party host, so
+    /// a picture shared in a private community stays inside it.
+    func upload(_ data: Data, mimeType: String) async throws -> Blossom.Descriptor {
+        try await BlossomClient().upload(
+            data,
+            mimeType: mimeType,
+            to: relayURL,
+            signer: signer
+        )
+    }
+
+    /// Fetches an attachment's bytes, with the signed header the relay requires.
+    func mediaData(for attachment: Blossom.Attachment) async throws -> Data {
+        try await BlossomClient().data(for: attachment, signer: signer)
     }
 
     // MARK: - Zaps
