@@ -87,6 +87,24 @@ public enum Zap {
         )
     }
 
+    /// Signer-based overload, for the app where the key lives in an actor.
+    public static func request(
+        amountMillisats: Int64,
+        recipient: PublicKey,
+        relays: [URL],
+        comment: String = "",
+        eventID: String? = nil,
+        with signer: some EventSigner
+    ) async throws -> NostrEvent {
+        var tags: [[String]] = [
+            ["relays"] + relays.map(\.absoluteString),
+            ["amount", String(amountMillisats)],
+            ["p", recipient.hex],
+        ]
+        if let eventID { tags.append(["e", eventID]) }
+        return try await signer.sign(kind: .zapRequest, content: comment, tags: tags)
+    }
+
     // MARK: - Zap receipt (kind 9735)
 
     /// A verified zap receipt, everything the UI needs to display and trust it.

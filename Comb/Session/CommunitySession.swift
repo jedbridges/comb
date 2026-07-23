@@ -205,6 +205,53 @@ actor CommunitySession {
         }
     }
 
+    // MARK: - Zaps
+
+    public enum ZapPreparation {
+        /// A payable invoice, ready to hand to a Lightning wallet.
+        case invoice(String)
+        /// The recipient has no Lightning address, or none that supports
+        /// verifiable Nostr zaps.
+        case unsupported
+        case failed(String)
+    }
+
+    /// Turns a zap into a payable Lightning invoice, without ever touching
+    /// funds. Builds the signed request, resolves the recipient's LNURL
+    /// endpoint, and returns a bolt11 for the OS to route to a wallet.
+    func prepareZap(
+        toLightningAddress addressString: String,
+        recipient: PublicKey,
+        amountSats: Int64,
+        comment: String,
+        messageID: String?
+    ) async -> ZapPreparation {
+        guard let address = Zap.LightningAddress(addressString) else {
+            return .unsupported
+        }
+
+        do {
+            let request = try await Zap.request(
+                amountMillisats: amountSats * 1000,
+                recipient: recipient,
+                relays: [relayURL],
+                comment: comment,
+                eventID: messageID,
+                with: signer
+            )
+            let (invoice, _) = try await LNURLClient().prepareZap(
+                to: address,
+                amountMillisats: amountSats * 1000,
+                zapRequest: request
+            )
+            return .invoice(invoice)
+        } catch LNURLClient.Failure.zapsUnsupported {
+            return .unsupported
+        } catch {
+            return .failed("Could not reach the recipient's Lightning wallet.")
+        }
+    }
+
     // MARK: - History
 
     /// Pulls a page of history older than the given moment into the store.

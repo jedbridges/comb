@@ -1,3 +1,4 @@
+import CombCore
 import CombStore
 import SwiftUI
 
@@ -8,6 +9,7 @@ struct ChannelTimelineView: View {
 
     @State private var model: ChannelTimeline
     @State private var draft = ""
+    @State private var zapTarget: ChannelTimeline.Entry?
 
     init(session: CommunitySession, channel: ChannelSummary) {
         self.session = session
@@ -34,7 +36,10 @@ struct ChannelTimelineView: View {
                                 Task { await model.toggleReaction(emoji, on: entry.row.id) }
                             },
                             onRetry: { Task { await model.retry(entry.row.id) } },
-                            onDiscard: { Task { await model.discard(entry.row.id) } }
+                            onDiscard: { Task { await model.discard(entry.row.id) } },
+                            onZap: entry.row.authorLightningAddress == nil
+                                ? nil
+                                : { zapTarget = entry }
                         )
                     }
                 }
@@ -63,6 +68,18 @@ struct ChannelTimelineView: View {
             }
         }
         .task { await model.activate() }
+        .sheet(item: $zapTarget) { entry in
+            if let address = entry.row.authorLightningAddress,
+               let recipient = PublicKey(hex: entry.row.pubkey) {
+                ZapSheet(
+                    session: session,
+                    recipient: recipient,
+                    lightningAddress: address,
+                    messageID: entry.row.id,
+                    recipientName: entry.row.displayName
+                )
+            }
+        }
     }
 
     private var loadOlderControl: some View {
@@ -93,6 +110,7 @@ private struct MessageRow: View {
     let onReact: (String) -> Void
     let onRetry: () -> Void
     let onDiscard: () -> Void
+    let onZap: (() -> Void)?
 
     /// The quick palette. A full picker is later polish.
     private static let quickReactions = ["🐝", "👍", "❤️", "🔥", "😂"]
@@ -162,6 +180,10 @@ private struct MessageRow: View {
         } else if !entry.row.isDeleted {
             ForEach(Self.quickReactions, id: \.self) { emoji in
                 Button(emoji) { onReact(emoji) }
+            }
+            if let onZap {
+                Divider()
+                Button("Zap", systemImage: "bolt.fill", action: onZap)
             }
         }
     }
@@ -249,7 +271,7 @@ private struct ComposeBar: View {
 @MainActor
 @Observable
 final class ChannelTimeline {
-    struct Entry: Identifiable {
+    struct Entry: Identifiable, Equatable {
         let row: TimelineRow
         /// Whether this message starts a run: author changed or five minutes
         /// passed. Grouping is what keeps a busy channel readable.

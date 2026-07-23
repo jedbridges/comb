@@ -15,6 +15,9 @@ public struct TimelineRow: Sendable, Equatable, Identifiable {
     public let delivery: Delivery
     public let authorName: String?
     public let authorPicture: String?
+    /// The author's Lightning address (lud16), when their profile carries one.
+    /// Present is what makes zapping this message possible.
+    public let authorLightningAddress: String?
     public let replyTo: String?
     /// Buzz kind 40002 payload, absent on relays that do not implement it. The
     /// renderer falls back to `content`.
@@ -121,7 +124,7 @@ public extension EventStore {
 
         let sql = """
             SELECT id, pubkey, created_at, content, edited, deleted, rich,
-                   display_name, picture, tags, state, last_error
+                   display_name, picture, lud16, tags, state, last_error
             FROM (
                 SELECT e.id                AS id,
                        e.pubkey            AS pubkey,
@@ -135,6 +138,7 @@ public extension EventStore {
                        rc.payload          AS rich,
                        p.display_name      AS display_name,
                        p.picture           AS picture,
+                       p.lud16             AS lud16,
                        e.tags              AS tags,
                        'sent'              AS state,
                        NULL                AS last_error
@@ -147,7 +151,7 @@ public extension EventStore {
 
                 SELECT o.event_id, o.pubkey, o.created_at, o.content,
                        NULL, 0, NULL,
-                       p.display_name, p.picture,
+                       p.display_name, p.picture, p.lud16,
                        '[]', o.state, o.last_error
                 FROM outbox o
                 LEFT JOIN profile p ON p.pubkey = o.pubkey
@@ -181,6 +185,7 @@ public extension EventStore {
                 delivery: Delivery(state: row["state"], lastError: row["last_error"]),
                 authorName: row["display_name"],
                 authorPicture: row["picture"],
+                authorLightningAddress: row["lud16"],
                 replyTo: Self.replyTarget(in: tags),
                 richContent: row["rich"]
             )

@@ -98,13 +98,14 @@ enum Projector {
 
         try db.execute(
             sql: """
-                INSERT INTO profile (pubkey, display_name, picture, about, nip05, source_event_id, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO profile (pubkey, display_name, picture, about, nip05, lud16, source_event_id, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(pubkey) DO UPDATE SET
                     display_name = excluded.display_name,
                     picture = excluded.picture,
                     about = excluded.about,
                     nip05 = excluded.nip05,
+                    lud16 = excluded.lud16,
                     source_event_id = excluded.source_event_id,
                     created_at = excluded.created_at
                 WHERE excluded.created_at > profile.created_at
@@ -117,6 +118,7 @@ enum Projector {
                 meta?.picture?.nilIfEmpty,
                 meta?.about?.nilIfEmpty,
                 meta?.nip05?.nilIfEmpty,
+                meta?.lud16?.nilIfEmpty,
                 event.id,
                 event.createdAt,
             ]
@@ -201,9 +203,10 @@ private struct ProfileMetadata: Decodable {
     let picture: String?
     let about: String?
     let nip05: String?
+    let lud16: String?
 
     enum CodingKeys: String, CodingKey {
-        case name, picture, about, nip05
+        case name, picture, about, nip05, lud16
         case displayName = "display_name"
     }
 }

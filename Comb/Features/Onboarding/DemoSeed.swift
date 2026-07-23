@@ -171,7 +171,7 @@ enum DemoSeed {
         func profile(at seconds: Int64) throws -> NostrEvent {
             try NostrEvent.signed(
                 kind: .metadata,
-                content: #"{"display_name":"\#(name)","about":"\#(about)"}"#,
+                content: #"{"display_name":"\#(name)","about":"\#(about)","lud16":"\#(name.lowercased())@getalby.com"}"#,
                 createdAt: Date(timeIntervalSince1970: TimeInterval(seconds)),
                 with: key
             )
