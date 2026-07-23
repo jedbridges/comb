@@ -10,9 +10,10 @@ import SwiftUI
 enum Palette {
     // MARK: - Brand
 
-    /// The Buzz chartreuse. Used sparingly, for the single most important thing
-    /// on a screen.
-    static let chartreuse = Color(hex: 0xD7D72E)
+    /// The brand yellow, and the app's global accent (`AccentColor` in the
+    /// asset catalog carries the same value, so system controls tint to match).
+    /// Used sparingly, for the single most important thing on a screen.
+    static let chartreuse = Color(hex: 0xD7D700)
 
     /// Warm near-black. Pairs with chartreuse; not the same as the text color.
     static let ink = Color(hex: 0x231E1E)
@@ -33,6 +34,15 @@ enum Palette {
     static let subtext = adaptive(light: 0x6C6F85, dark: 0xA5ADCB)
     static let accent = adaptive(light: 0x8839EF, dark: 0xA875F5)
     static let link = adaptive(light: 0x1E66F5, dark: 0x8AADF4)
+
+    // MARK: - Glyphs
+
+    /// The channel badge's fill: a muted tone that sits back from the text
+    /// rather than competing with it. Chartreuse here would spend the brand's
+    /// scarcest colour on decoration.
+    static let glyphSurface = adaptive(light: 0xDCDFE8, dark: 0x343850)
+    /// The symbol inside it, soft enough to read as texture.
+    static let glyphTint = adaptive(light: 0x6C6F85, dark: 0x9BA3C4)
 
     // MARK: - Semantic
 

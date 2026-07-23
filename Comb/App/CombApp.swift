@@ -20,9 +20,19 @@ struct CombApp: App {
                     )
                 case .active(let session):
                     NavigationStack {
-                        ChannelListView(session: session) {
-                            Task { await model.signOut() }
-                        }
+                        ChannelListView(
+                            session: session,
+                            communities: model.communities,
+                            onSwitch: { community in
+                                Task { await model.openCommunity(community) }
+                            },
+                            onAddCommunity: {
+                                Task { await model.addCommunity() }
+                            },
+                            onDisconnect: {
+                                Task { await model.signOut() }
+                            }
+                        )
                     }
                 }
             }

@@ -17,6 +17,8 @@ struct SettingsView: View {
     @State private var isConfirmingSignOut = false
 
     private var host: String { session.relayURL.host ?? "" }
+    /// The subdomain reads as the community; the full host is the address.
+    private var communityName: String { JoinedCommunity.derivedName(from: host) }
 
     var body: some View {
         NavigationStack {
@@ -32,13 +34,14 @@ struct SettingsView: View {
                 } footer: {
                     Text("The only copy of this account is on this iPhone.")
                 }
+                .combRows()
 
                 Section {
                     LabeledContent {
                         Text("Connected")
                             .foregroundStyle(Palette.success)
                     } label: {
-                        Label(host, systemImage: "checkmark.seal")
+                        Label(communityName, systemImage: "checkmark.seal")
                     }
 
                     Button(role: .destructive) {
@@ -47,7 +50,7 @@ struct SettingsView: View {
                         Label("Sign out", systemImage: "rectangle.portrait.and.arrow.right")
                     }
                     .confirmationDialog(
-                        "Sign out of \(host)?",
+                        "Sign out of \(communityName)?",
                         isPresented: $isConfirmingSignOut,
                         titleVisibility: .visible
                     ) {
@@ -60,7 +63,10 @@ struct SettingsView: View {
                     }
                 } header: {
                     Text("Community")
+                } footer: {
+                    Text(host).font(Typography.monoSmall)
                 }
+                .combRows()
 
                 Section {
                     NavigationLink {
@@ -71,12 +77,14 @@ struct SettingsView: View {
                 } footer: {
                     Text("A local log you can copy into a bug report. It stays on your iPhone.")
                 }
+                .combRows()
 
                 Section {
                     LabeledContent("Comb", value: appVersion)
                 } footer: {
                     Text("An independent, open source client for Buzz relays. Not affiliated with Block, Inc.")
                 }
+                .combRows()
             }
             .scrollContentBackground(.hidden)
             .background(Palette.backgroundGradient.ignoresSafeArea())

@@ -36,6 +36,7 @@ struct JoinView: View {
                     Text("That does not look like an invite link yet.")
                 }
             }
+            .combRows()
 
             Section {
                 TextField("Your name", text: $model.displayName)
@@ -46,12 +47,14 @@ struct JoinView: View {
             } footer: {
                 Text("Comb keeps your account on this iPhone.")
             }
+            .combRows()
 
             if let failure = model.failure {
                 Section {
                     Label(failure, systemImage: "exclamationmark.triangle.fill")
                         .foregroundStyle(Palette.danger)
                 }
+                .combRows()
             }
         }
         .scrollContentBackground(.hidden)

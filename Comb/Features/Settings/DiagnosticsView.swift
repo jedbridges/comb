@@ -16,6 +16,7 @@ struct DiagnosticsView: View {
                     .font(Typography.secondary)
                     .foregroundStyle(Palette.subtext)
             }
+            .combRows()
 
             if buffer.entries.isEmpty {
                 Section {

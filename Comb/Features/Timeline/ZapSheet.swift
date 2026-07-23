@@ -43,11 +43,13 @@ struct ZapSheet: View {
                         .font(Typography.captionEmphasis)
                         .foregroundStyle(Palette.chartreuse)
                 }
+                .combRows()
 
                 Section("Comment (optional)") {
                     TextField("Say something", text: $comment, axis: .vertical)
                         .lineLimit(1...3)
                 }
+                .combRows()
 
                 if case .failed(let message) = phase {
                     Section {

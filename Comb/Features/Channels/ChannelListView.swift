@@ -5,6 +5,12 @@ import SwiftUI
 struct ChannelListView: View {
     let session: CommunitySession
     let onDisconnect: () -> Void
+    /// Every community on this device, and how to move between them. Buzz
+    /// cannot supply this list: it lives locally, exactly as Buzz's own desktop
+    /// client keeps it in localStorage.
+    var communities: [JoinedCommunity] = []
+    var onSwitch: (JoinedCommunity) -> Void = { _ in }
+    var onAddCommunity: () -> Void = {}
 
     @State private var model: ChannelListModel
     @State private var isShowingSettings = false
@@ -12,10 +18,24 @@ struct ChannelListView: View {
     @State private var autoOpened: ChannelSummary?
     #endif
 
-    init(session: CommunitySession, onDisconnect: @escaping () -> Void) {
+    init(
+        session: CommunitySession,
+        communities: [JoinedCommunity] = [],
+        onSwitch: @escaping (JoinedCommunity) -> Void = { _ in },
+        onAddCommunity: @escaping () -> Void = {},
+        onDisconnect: @escaping () -> Void
+    ) {
         self.session = session
+        self.communities = communities
+        self.onSwitch = onSwitch
+        self.onAddCommunity = onAddCommunity
         self.onDisconnect = onDisconnect
         _model = State(initialValue: ChannelListModel(store: session.store))
+    }
+
+    /// The open community's name, derived from its host.
+    private var currentName: String {
+        JoinedCommunity.derivedName(from: session.relayURL.host ?? "")
     }
 
     var body: some View {
@@ -28,9 +48,12 @@ struct ChannelListView: View {
                 channelList
             }
         }
-        .navigationTitle("Channels")
+        .navigationTitle(currentName)
         .navigationBarTitleDisplayMode(.large)
         .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                communityMenu
+            }
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
                     isShowingSettings = true
@@ -64,6 +87,35 @@ struct ChannelListView: View {
             ChannelTimelineView(session: session, channel: channel)
         }
         #endif
+    }
+
+    /// Switching and adding. A menu rather than a sheet: the list is short, and
+    /// this is a jump between places, not a task.
+    private var communityMenu: some View {
+        Menu {
+            if communities.count > 1 {
+                Section("Communities") {
+                    ForEach(communities) { community in
+                        Button {
+                            onSwitch(community)
+                        } label: {
+                            if community.host == session.relayURL.host {
+                                Label(community.displayName, systemImage: "checkmark")
+                            } else {
+                                Text(community.displayName)
+                            }
+                        }
+                    }
+                }
+            }
+            Button("Add community", systemImage: "plus", action: onAddCommunity)
+        } label: {
+            Image(systemName: "square.grid.2x2")
+                .font(Typography.actionSecondary)
+                .foregroundStyle(Palette.subtext)
+        }
+        .accessibilityLabel("Communities")
+        .accessibilityHint("Switch between communities or add another")
     }
 
     private var channelList: some View {

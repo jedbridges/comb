@@ -27,6 +27,7 @@ struct RestoreView: View {
             } footer: {
                 Text("Scan a code from Buzz on your computer to move your account across.")
             }
+            .combRows()
 
             Section("Community relay") {
                 TextField("wss://…", text: $model.relayURL)
@@ -36,6 +37,7 @@ struct RestoreView: View {
                     .keyboardType(.URL)
                     .focused($focus, equals: .url)
             }
+            .combRows()
 
             Section {
                 SecureField("nsec1… or 64 hex characters", text: $model.secretKey)
@@ -48,12 +50,14 @@ struct RestoreView: View {
             } footer: {
                 Text("Stored in this iPhone's Keychain, on this device only. Sent nowhere.")
             }
+            .combRows()
 
             if let failure = model.failure {
                 Section {
                     Label(failure, systemImage: "exclamationmark.triangle.fill")
                         .foregroundStyle(Palette.danger)
                 }
+                .combRows()
             }
 
             #if DEBUG

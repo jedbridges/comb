@@ -136,3 +136,42 @@ struct Backdrop<Content: View>: View {
         }
     }
 }
+
+
+// MARK: - Form styling
+
+/// The house style for every `Form`-based screen.
+///
+/// A `Form`'s default row fill is an opaque system grey that fights the brand
+/// gradient behind it. This hides that fill, paints the gradient, and gives
+/// each row a Liquid Glass background instead, so rows read as floating on the
+/// gradient rather than as grey slabs laid over it.
+///
+/// One modifier, one place to tune: changing the row treatment restyles every
+/// screen at once.
+struct CombFormStyle: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .scrollContentBackground(.hidden)
+            .background(Palette.backgroundGradient.ignoresSafeArea())
+    }
+}
+
+extension View {
+    /// Applies Comb's form styling: brand gradient behind a transparent list.
+    func combForm() -> some View {
+        modifier(CombFormStyle())
+    }
+
+    /// The translucent row treatment, so rows float on the gradient instead of
+    /// sitting on opaque system grey.
+    ///
+    /// Applied per `Section`, because SwiftUI only honours `listRowBackground`
+    /// on row content: setting it on the `Form` itself silently does nothing.
+    func combRows() -> some View {
+        listRowBackground(
+            RoundedRectangle(cornerRadius: Radii.bubble)
+                .fill(Palette.surface.opacity(0.30))
+        )
+    }
+}

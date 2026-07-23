@@ -10,7 +10,27 @@ struct JoinedCommunity: Codable, Equatable, Identifiable {
 
     var id: String { host }
 
-    var displayName: String { name ?? host }
+    /// A human name for the community.
+    ///
+    /// Buzz relays cannot supply this: every one of them returns the same
+    /// hardcoded NIP-11 name, deliberately, so that nobody can enumerate
+    /// communities. Buzz's own desktop client asks the user to type a nickname
+    /// for exactly this reason. Comb derives a sensible default from the
+    /// subdomain instead, so `designers.communities.buzz.xyz` reads as
+    /// "designers", and lets an explicit name win when one is known.
+    var displayName: String {
+        if let name, !name.isEmpty { return name }
+        return Self.derivedName(from: host)
+    }
+
+    static func derivedName(from host: String) -> String {
+        let parts = host.split(separator: ".")
+        // A bare or two-label host has no subdomain to borrow.
+        guard parts.count > 2, let first = parts.first, first != "www" else {
+            return host
+        }
+        return String(first)
+    }
 }
 
 enum CommunityRegistry {

@@ -61,6 +61,57 @@ final class AppModel {
         stage = .active(session)
     }
 
+    /// Every community this device has joined, most recent first.
+    var communities: [JoinedCommunity] {
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--demo") {
+            return [
+                JoinedCommunity(
+                    host: "demo.local", relay: URL(string: "wss://demo.local")!,
+                    name: nil, joinedAt: Date()
+                ),
+                JoinedCommunity(
+                    host: "designers.communities.buzz.xyz",
+                    relay: URL(string: "wss://designers.communities.buzz.xyz")!,
+                    name: nil, joinedAt: Date().addingTimeInterval(-86400)
+                ),
+            ]
+        }
+        #endif
+        return CommunityRegistry.all().sorted { $0.joinedAt > $1.joinedAt }
+    }
+
+    /// Opens a different community, closing the current one first so two
+    /// sessions never hold sockets at once.
+    func openCommunity(_ community: JoinedCommunity) async {
+        guard let key = try? KeychainStore.load(host: community.host) else {
+            launchNotice = "No account stored for \(community.displayName)."
+            return
+        }
+        if case .active(let current) = stage {
+            guard current.relayURL != community.relay else { return }
+            await current.stop()
+        }
+
+        stage = .launching
+        do {
+            let session = try CommunitySession(url: community.relay, key: key)
+            try await session.start()
+            stage = .active(session)
+        } catch {
+            launchNotice = "Could not reach \(community.displayName)."
+            stage = .welcome
+        }
+    }
+
+    /// Leaves the current community open and sends the user to onboarding to
+    /// add another.
+    func addCommunity() async {
+        if case .active(let session) = stage { await session.stop() }
+        launchNotice = nil
+        stage = .welcome
+    }
+
     /// Steps out of the community. The registry entry and key survive, so the
     /// next launch reconnects; this is the door, not the shredder.
     func signOut() async {
