@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- App Store / TestFlight export. Automatic signing lets Xcode fetch or
+	     create the distribution certificate and provisioning profile from the
+	     account whose team id is passed at export time. -->
+	<key>method</key>
+	<string>app-store-connect</string>
+	<key>signingStyle</key>
+	<string>automatic</string>
+	<key>destination</key>
+	<string>export</string>
+	<!-- Symbols go up so TestFlight crash reports are readable. -->
+	<key>uploadSymbols</key>
+	<true/>
+	<!-- Let the toolchain manage the build number if a collision happens on
+	     upload; the source of truth stays CURRENT_PROJECT_VERSION. -->
+	<key>manageAppVersionAndBuildNumber</key>
+	<false/>
+</dict>
+</plist>
