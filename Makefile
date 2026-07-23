@@ -83,5 +83,14 @@ export: archive
 		-allowProvisioningUpdates
 	@echo "Exported to build/export/. Upload the .ipa to App Store Connect."
 
+# Archives and delivers straight to App Store Connect over Xcode's
+# authenticated session. Needs the app record to exist there first.
+upload: archive
+	xcodebuild -exportArchive \
+		-archivePath build/Comb.xcarchive \
+		-exportOptionsPlist ExportOptionsUpload.plist \
+		-allowProvisioningUpdates
+	@echo "Uploaded. Processing takes 5-30 minutes; watch the TestFlight tab."
+
 clean:
 	rm -rf CombCore/.build Comb.xcodeproj build DerivedData

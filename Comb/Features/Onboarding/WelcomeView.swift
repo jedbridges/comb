@@ -1,4 +1,6 @@
+import CombNet
 import SwiftUI
+import UIKit
 
 /// The cold-start screen. One promise governs everything reachable from here:
 /// the words key, npub, nsec, pubkey, and seed appear nowhere. A first-time
@@ -23,6 +25,15 @@ struct WelcomeView: View {
     /// place instead of being painted already finished. Everything below reads
     /// from it, which is what makes the stagger a stagger.
     @State private var appeared = false
+    /// Whether the clipboard probably holds a link, checked with
+    /// `detectedPatterns`, which reports the presence of a URL without reading
+    /// it, so no system paste banner. The most likely reason a first-time user
+    /// opens Comb is an invite someone just sent them; if it is sitting on the
+    /// clipboard, the fastest path in should be one tap, offered, not sprung.
+    @State private var clipboardHasLink = false
+    /// Real community names from the bundled index, under the tagline. People
+    /// join communities, not apps; naming them makes the pitch concrete.
+    @State private var seededNames: [String] = []
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -83,6 +94,16 @@ struct WelcomeView: View {
                             Text("Join a community.")
                                 .font(Typography.secondary)
                                 .foregroundStyle(Palette.subtext)
+
+                            if !seededNames.isEmpty {
+                                // Interpunct-joined, lowercase, quiet: a hint
+                                // that real places exist behind the button,
+                                // not a second list to read.
+                                Text(seededNames.prefix(3).joined(separator: " · ") + " · more")
+                                    .font(Typography.caption)
+                                    .foregroundStyle(Palette.subtext.opacity(0.7))
+                                    .padding(.top, Space.xxs)
+                            }
                         }
                         .arrival(appeared, delay: 0.08)
                     }
@@ -93,6 +114,30 @@ struct WelcomeView: View {
                         if let notice {
                             InlineNotice(kind: .warning, text: notice)
                                 .multilineTextAlignment(.center)
+                        }
+
+                        // The clipboard shortcut, only when a link is probably
+                        // there. Reading happens on tap, so the system paste
+                        // chip appears exactly when the user asked for it and
+                        // never before. This is the invite-holder's whole
+                        // funnel: copy a link somewhere, open Comb, one tap.
+                        if clipboardHasLink {
+                            Button {
+                                guard let text = UIPasteboard.general.string,
+                                      !text.trimmingCharacters(in: .whitespaces).isEmpty
+                                else { return }
+                                // Prefills the join screen and pushes it, via
+                                // the same route a deep link takes. A copied
+                                // link that turns out not to be an invite gets
+                                // the join screen's own gentle correction.
+                                pendingInvite = text
+                            } label: {
+                                Label("Join from your copied link", systemImage: "link")
+                                    .font(Typography.actionSecondary)
+                                    .foregroundStyle(Palette.chartreuse)
+                                    .frame(minHeight: Sizing.hitTarget)
+                            }
+                            .transition(.opacity)
                         }
 
                         // Browse leads, because it is the one door a newcomer
@@ -118,12 +163,18 @@ struct WelcomeView: View {
                         // Last, but legible. The question reads as prose in
                         // white; only the action itself carries the accent, so
                         // the tappable part is the part that glows.
+                        //
+                        // "Pair this phone", not "sign in with your key": the
+                        // person this line is for already runs Buzz on a
+                        // desktop, and pairing is their own vocabulary for
+                        // exactly this act. "Key" is accurate and colder, and
+                        // it lives one screen deeper for whoever needs it.
                         Button {
                             path.append(.signIn)
                         } label: {
                             // Interpolated rather than `Text + Text`, which is
                             // deprecated on iOS 26.
-                            Text("Have an account? \(Text("Sign in with your key").foregroundStyle(Palette.chartreuse))")
+                            Text("Already on Buzz? \(Text("Pair this phone").foregroundStyle(Palette.chartreuse))")
                                 .foregroundStyle(Palette.text)
                         }
                         .font(Typography.actionSecondary)
@@ -151,6 +202,24 @@ struct WelcomeView: View {
             // resolved state, and the value-driven animations do the rest.
             // Idempotent, so popping back from Join does not replay it.
             .onAppear { appeared = true }
+            .task {
+                // Names for the tagline, from the bundled seed: offline,
+                // instant, and honest, since these communities are really in
+                // the index behind the button.
+                if let data = BrowseView.bundledIndex {
+                    seededNames = CommunityIndexService(bundledData: data)
+                        .seeded.map(\.name)
+                }
+
+                // Presence only, never content: detection reports that a URL
+                // is probably there without reading the clipboard, so no
+                // system banner. The read happens on tap or not at all.
+                let patterns = try? await UIPasteboard.general
+                    .detectedPatterns(for: [\.probableWebURL])
+                withAnimation(Motion.standard) {
+                    clipboardHasLink = patterns?.contains(\.probableWebURL) == true
+                }
+            }
             .onChange(of: pendingInvite) { _, invite in
                 guard invite != nil else { return }
                 path = [.enterInvite]

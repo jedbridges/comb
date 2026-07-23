@@ -48,6 +48,10 @@ targets:
         MARKETING_VERSION: "0.1.0"
         CURRENT_PROJECT_VERSION: "1"
         TARGETED_DEVICE_FAMILY: "1"
+        # The name under the icon. The App Store Connect record is "Comb
+        # Communities" only because "Comb" was taken as a listing name; the
+        # device always shows Comb.
+        INFOPLIST_KEY_CFBundleDisplayName: Comb
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait
         GENERATE_INFOPLIST_FILE: YES
