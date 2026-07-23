@@ -231,7 +231,8 @@ private struct LaunchingView: View {
                 Text(verbatim: "comb")
                     .font(Typography.display)
                     .kerning(Kerning.display)
-                    .foregroundStyle(Palette.text)
+                    // Same lockup as welcome, same light from the mark above.
+                    .foregroundStyle(Palette.wordmarkGlow)
                     .arrival(phase == .landed, delay: 0.12)
             }
         }

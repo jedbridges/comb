@@ -31,9 +31,15 @@ struct BrowseView: View {
     @State private var query = ""
     @Environment(\.openURL) private var openURL
 
-    /// The index file, opened for editing on GitHub.
+    /// The listing request form on GitHub.
+    ///
+    /// An issue form, deliberately not the raw file editor this used to open.
+    /// The editor put a sign-in wall, a fork, and hand-written JSON on a phone
+    /// keyboard between a community operator and being listed; approximately
+    /// nobody tapped through all of that. A form with named fields converts,
+    /// and the JSON stays the maintainer's job.
     private static let listingURL = URL(
-        string: "https://github.com/jedbridges/comb/edit/main/communities/index.json"
+        string: "https://github.com/jedbridges/comb/issues/new?template=list-community.yml"
     )!
 
     /// Every sort the data can truthfully support. Member counts and activity
@@ -155,8 +161,10 @@ struct BrowseView: View {
     }
 
     private func row(_ entry: CommunityIndex.Entry) -> some View {
-        HStack(spacing: Space.sm) {
-            VStack(alignment: .leading, spacing: Space.hairline) {
+        // Name, description, and tags are three distinct things, not one
+        // block: a hairline between them ran them together.
+        HStack(spacing: Space.md) {
+            VStack(alignment: .leading, spacing: Space.xxs) {
                 Text(entry.name)
                     .font(Typography.name)
                     .foregroundStyle(Palette.text)
@@ -175,14 +183,14 @@ struct BrowseView: View {
                                 .combChip()
                         }
                     }
-                    .padding(.top, Space.xxs)
+                    .padding(.top, Space.xs)
                     // One element: VoiceOver reads "bitcoin, lightning" rather
                     // than walking each pill.
                     .accessibilityElement(children: .combine)
                 }
             }
 
-            Spacer(minLength: Space.xs)
+            Spacer(minLength: Space.sm)
 
             // The affordance stays honest to what the relay will allow.
             if entry.isJoinableNow {
@@ -209,8 +217,8 @@ struct BrowseView: View {
                 .foregroundStyle(Palette.subtext)
             }
         }
-        .padding(.vertical, Space.sm)
-        .padding(.horizontal, Space.xs)
+        .padding(.vertical, Space.md)
+        .padding(.horizontal, Space.sm)
         .contentShape(.rect)
         // The whole row leads somewhere either way. A dead row under a finger
         // reads as broken; an invite-only community opens the join screen,
@@ -237,14 +245,16 @@ struct BrowseView: View {
     }
 
     private var listYourCommunityContent: some View {
-        VStack(spacing: Space.sm) {
+        VStack(spacing: Space.md) {
             Text("Run a community?")
                 .font(Typography.bodyEmphasis)
                 .foregroundStyle(Palette.text)
-            // Says exactly what the button does and where it goes: out to
-            // GitHub, add your name and address, submit. No mystery about
-            // leaving the app or what happens after the tap.
-            Text("Get it listed here. The button opens this list on GitHub: add your community's name and address, then submit the change.")
+            // Says exactly what the button does and where it goes: out to a
+            // short form on GitHub. It used to open the raw index file in
+            // GitHub's editor, which meant a sign-in wall, a fork, and
+            // hand-written JSON on a phone keyboard; the form asks for a name
+            // and an address and leaves the JSON to the maintainer.
+            Text("Get it listed here. The button opens a short form on GitHub: add your community's name and address, and it gets added.")
                 .font(Typography.secondary)
                 .foregroundStyle(Palette.subtext)
                 .multilineTextAlignment(.center)

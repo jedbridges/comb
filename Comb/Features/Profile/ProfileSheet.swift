@@ -161,7 +161,7 @@ struct MemberListView: View {
     private func row(_ member: ProfileSummary) -> some View {
         HStack(spacing: Space.sm) {
             AvatarView(name: member.name, picture: member.picture)
-            VStack(alignment: .leading, spacing: 1) {
+            VStack(alignment: .leading, spacing: Space.hairline) {
                 Text(member.name)
                     .font(Typography.name)
                     .foregroundStyle(Palette.text)

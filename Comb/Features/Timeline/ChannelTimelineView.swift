@@ -896,7 +896,7 @@ private struct ReactionChip: View {
         )
         .overlay {
             if !reaction.includesMe {
-                Capsule().strokeBorder(Palette.glyphHairline, lineWidth: 0.75)
+                Capsule().strokeBorder(Palette.glyphHairline, lineWidth: Stroke.hairline)
             }
         }
         // The thing you touched responds, whatever else happens. Overshoot
@@ -1170,7 +1170,8 @@ private struct AttachmentTrayView: View {
             .padding(.horizontal, Space.xxs)
         }
         .scrollIndicators(.hidden)
-        .frame(height: 72)
+        // The row is the thumbnail plus the breathing room around it.
+        .frame(height: Sizing.thumbnail + Space.xs)
     }
 
     private func thumbnail(_ item: AttachmentTray.Item) -> some View {
@@ -1178,7 +1179,7 @@ private struct AttachmentTrayView: View {
             Image(uiImage: item.preview)
                 .resizable()
                 .scaledToFill()
-                .frame(width: 64, height: 64)
+                .frame(width: Sizing.thumbnail, height: Sizing.thumbnail)
                 .clipShape(.rect(cornerRadius: Radii.control))
                 .overlay {
                     switch item.state {
@@ -1209,7 +1210,7 @@ private struct AttachmentTrayView: View {
                     .foregroundStyle(.white, .black.opacity(0.6))
             }
             .buttonStyle(.plain)
-            .padding(2)
+            .padding(Space.hairline)
             .accessibilityLabel("Remove attachment")
         }
         .accessibilityElement(children: .contain)

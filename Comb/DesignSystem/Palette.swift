@@ -85,18 +85,97 @@ enum Palette {
     static let success = adaptive(light: 0x40A02B, dark: 0xA6DA95)
     static let warning = adaptive(light: 0xDF8E1D, dark: 0xEED49F)
 
-    // MARK: - Signature gradient
-
-    /// The vertical olive-to-blue wash Buzz paints across the whole app surface.
-    static var backgroundGradient: LinearGradient {
+    /// The wordmark's fill: ambient light from the mark above it.
+    ///
+    /// The mark sits directly over the word everywhere the word appears, so
+    /// the top of the letters catches a faint chartreuse warmth that fades to
+    /// plain text colour by the baseline. Diegetic, not decorative: the
+    /// gradient runs the way the light actually falls, and it is subtle
+    /// enough to read as illumination rather than as coloured type.
+    static var wordmarkGlow: LinearGradient {
         LinearGradient(
             colors: [
-                adaptive(light: 0xE6E6B6, dark: 0x4A4616),
-                adaptive(light: 0xC4D0DA, dark: 0x0A1423),
+                adaptive(light: 0x8A8434, dark: 0xE9E7C0),
+                adaptive(light: 0x4C4F69, dark: 0xCAD3F5),
             ],
             startPoint: .top,
             endPoint: .bottom
         )
+    }
+
+    // MARK: - Signature gradient
+
+    /// The vertical olive-to-blue wash Buzz paints across the whole app surface.
+    ///
+    /// Built from many stops rather than two, for two reasons that compound on
+    /// a full-screen backdrop.
+    ///
+    /// A two-stop gradient blends in sRGB, where the numbers are gamma-encoded
+    /// rather than proportional to light. Interpolating them directly darkens
+    /// and desaturates the middle, which is the muddy band across the centre of
+    /// the screen. These stops are mixed in linear light and converted back, so
+    /// the midpoint is the colour halfway between the ends rather than an
+    /// artefact of the encoding.
+    ///
+    /// The stops are then distributed on a smoothstep rather than evenly, so
+    /// the wash holds its olive at the top and settles into navy at the bottom
+    /// instead of ramping at a constant rate. A constant ramp reads as a
+    /// mechanical fade; eased, it reads as light falling off.
+    static let backgroundGradient = LinearGradient(
+        stops: gradientStops(light: (0xE6E6B6, 0xC4D0DA), dark: (0x4A4616, 0x0A1423)),
+        startPoint: .top,
+        endPoint: .bottom
+    )
+
+    /// Resolution is the cheapest fix for banding: more stops mean smaller
+    /// steps than the display can resolve. Seventeen is past the point where
+    /// another one is visible on a 3x screen.
+    private static let gradientResolution = 16
+
+    private static func gradientStops(
+        light: (UInt32, UInt32),
+        dark: (UInt32, UInt32)
+    ) -> [Gradient.Stop] {
+        (0...gradientResolution).map { step in
+            let position = Double(step) / Double(gradientResolution)
+            // Smoothstep: flat at both ends, steepest in the middle.
+            let eased = position * position * (3 - 2 * position)
+            return Gradient.Stop(
+                color: adaptive(
+                    light: mixInLinearLight(light.0, light.1, eased),
+                    dark: mixInLinearLight(dark.0, dark.1, eased)
+                ),
+                location: position
+            )
+        }
+    }
+
+    /// Blends two sRGB colours the way light actually adds, by undoing the
+    /// transfer function, mixing, and reapplying it.
+    private static func mixInLinearLight(_ a: UInt32, _ b: UInt32, _ t: Double) -> Color {
+        func toLinear(_ c: Double) -> Double {
+            c <= 0.04045 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4)
+        }
+        func toGamma(_ c: Double) -> Double {
+            c <= 0.0031308 ? c * 12.92 : 1.055 * pow(c, 1 / 2.4) - 0.055
+        }
+        func channel(_ hex: UInt32, _ shift: UInt32) -> Double {
+            Double((hex >> shift) & 0xFF) / 255
+        }
+        func mixed(_ shift: UInt32) -> Double {
+            let low = toLinear(channel(a, shift))
+            let high = toLinear(channel(b, shift))
+            return toGamma(low + (high - low) * t)
+        }
+        return Color(.sRGB, red: mixed(16), green: mixed(8), blue: mixed(0), opacity: 1)
+    }
+
+    /// The adaptive overload that takes already-built colours, for the gradient
+    /// stops, which are computed rather than named as hex literals.
+    private static func adaptive(light: Color, dark: Color) -> Color {
+        Color(UIColor { traits in
+            UIColor(traits.userInterfaceStyle == .dark ? dark : light)
+        })
     }
 
     private static func adaptive(light: UInt32, dark: UInt32) -> Color {

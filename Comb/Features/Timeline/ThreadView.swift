@@ -59,7 +59,7 @@ struct ThreadView: View {
                                 .overlay(alignment: .leading) {
                                     Capsule()
                                         .fill(Palette.hairlineOnGradient)
-                                        .frame(width: 2)
+                                        .frame(width: Space.hairline)
                                 }
                         }
                     }
@@ -180,7 +180,7 @@ struct ThreadView: View {
                 .luminousChrome()
             Rectangle()
                 .fill(Palette.border)
-                .frame(height: 0.5)
+                .frame(height: Stroke.fine)
         }
         .padding(.vertical, Space.xs)
         .accessibilityElement(children: .combine)

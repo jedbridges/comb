@@ -320,7 +320,7 @@ struct AttachmentView: View {
                 .clipShape(.rect(cornerRadius: Radii.bubble))
                 .overlay(
                     RoundedRectangle(cornerRadius: Radii.bubble)
-                        .strokeBorder(Palette.border.opacity(0.6), lineWidth: 0.5)
+                        .strokeBorder(Palette.border.opacity(0.6), lineWidth: Stroke.fine)
                 )
         }
         .buttonStyle(.plain)

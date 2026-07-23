@@ -47,6 +47,18 @@ enum Radii {
     static let composeField: CGFloat = 16
 }
 
+/// Stroke widths. Two, and only two, so an edge is either a boundary or a
+/// whisper and never something in between decided per call site.
+enum Stroke {
+    /// 0.5pt. Dividers and edges on surfaces that already read as raised: the
+    /// line is there to stop two fills touching, not to be seen.
+    static let fine: CGFloat = 0.5
+    /// 0.75pt. The edge on glyphs, avatars, and chips sitting directly on the
+    /// gradient, where a 0.5 line disappears into the wash it is meant to
+    /// separate from.
+    static let hairline: CGFloat = 0.75
+}
+
 /// Fixed element sizes that recur across screens.
 enum Sizing {
     /// Avatars in message timelines.
@@ -57,6 +69,8 @@ enum Sizing {
     static let heroMark: CGFloat = 80
     /// The mark as an accent.
     static let inlineMark: CGFloat = 48
+    /// A pending attachment's thumbnail in the compose tray.
+    static let thumbnail: CGFloat = 64
     /// Minimum hit target, per Apple.
     static let hitTarget: CGFloat = 44
     /// A control drawn small inside a full-size target: the compose bar's

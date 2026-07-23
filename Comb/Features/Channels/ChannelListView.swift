@@ -556,7 +556,7 @@ private struct UnreadBadge: View {
             .font(Typography.count)
             .foregroundStyle(Palette.ink)
             .padding(.horizontal, Space.xs)
-            .padding(.vertical, 2)
+            .padding(.vertical, Space.hairline)
             .background(Palette.chartreuse, in: .capsule)
             // Chartreuse earns its place here: "what is new" is the most
             // important thing on this screen.

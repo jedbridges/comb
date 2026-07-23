@@ -85,7 +85,9 @@ struct WelcomeView: View {
                             Text(verbatim: "comb")
                                 .font(Typography.display)
                                 .kerning(Kerning.display)
-                                .foregroundStyle(Palette.text)
+                                // Lit from above by the mark, which sits
+                                // directly over it.
+                                .foregroundStyle(Palette.wordmarkGlow)
                                 .accessibilityLabel("Comb")
                             Text("Join a Buzz community")
                                 .font(Typography.secondary)

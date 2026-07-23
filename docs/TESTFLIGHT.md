@@ -77,7 +77,8 @@ same questions repeatedly:
 >   mentions in the background on iOS's own schedule. A mention can arrive a
 >   while after it was sent. Turn it on in Settings.
 > - **You need an invite.** Communities are invite-only. Paste an invite a member
->   sent you, or sign in with an existing key from Buzz on desktop.
+>   sent you, or pair with Buzz on your desktop (click your avatar, then
+>   Settings, then Mobile).
 >
 > Found a bug? Settings → Report a problem attaches a local log you can send.
 

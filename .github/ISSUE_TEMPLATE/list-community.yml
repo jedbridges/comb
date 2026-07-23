@@ -1,0 +1,60 @@
+name: List a community
+description: Add your community to the list Comb shows in Browse.
+title: "List: "
+labels: ["community listing"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Fill this in and a maintainer will add your community to
+        `communities/index.json`. You do not need to edit any files.
+  - type: input
+    id: name
+    attributes:
+      label: Community name
+      description: What it should be called in the list.
+      placeholder: designers
+    validations:
+      required: true
+  - type: input
+    id: relay
+    attributes:
+      label: Relay address
+      description: The websocket address members connect to.
+      placeholder: wss://designers.communities.buzz.xyz
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: One or two lines. What is it about, who is it for.
+      placeholder: Working designers talking shop: critique, fonts, jobs.
+    validations:
+      required: true
+  - type: input
+    id: tags
+    attributes:
+      label: Tags
+      description: A few comma-separated words, for search.
+      placeholder: design, critique, jobs
+    validations:
+      required: false
+  - type: input
+    id: invite
+    attributes:
+      label: Invite link (optional)
+      description: >
+        If you have a live invite, members can join straight from Comb. Buzz
+        invites expire after at most 30 days, so leaving this blank is fine:
+        the community is listed as invite only, and people ask a member.
+      placeholder: https://designers.communities.buzz.xyz/invite/...
+    validations:
+      required: false
+  - type: checkboxes
+    id: confirm
+    attributes:
+      label: Confirm
+      options:
+        - label: I run this community, or I have permission to list it.
+          required: true

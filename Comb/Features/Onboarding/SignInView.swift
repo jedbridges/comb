@@ -41,7 +41,11 @@ struct SignInView: View {
                             Text("Scan the code from Buzz")
                                 .font(Typography.name)
                                 .foregroundStyle(Palette.text)
-                            Text("Open Buzz on your computer and show the pairing code. Nothing to type.")
+                            // The exact clicks on the other machine, because
+                            // the person reading this has Buzz open beside
+                            // them: the avatar menu is per community, so the
+                            // community comes first.
+                            Text("In the community you want to add, click your avatar, then Settings, then Mobile.")
                                 .font(Typography.caption)
                                 .foregroundStyle(Palette.subtext)
                                 .fixedSize(horizontal: false, vertical: true)

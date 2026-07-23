@@ -172,7 +172,7 @@ private struct CommunityCard: View {
                 .clipShape(.rect(cornerRadius: Radii.card))
                 .overlay(
                     RoundedRectangle(cornerRadius: Radii.card)
-                        .strokeBorder(Palette.glyphHairline, lineWidth: 0.75)
+                        .strokeBorder(Palette.glyphHairline, lineWidth: Stroke.hairline)
                 )
 
             VStack(alignment: .leading, spacing: Space.xxs) {
@@ -206,7 +206,7 @@ private struct CommunityCard: View {
         .background(Palette.liftOnGradient, in: .rect(cornerRadius: Radii.card))
         .overlay(
             RoundedRectangle(cornerRadius: Radii.card)
-                .strokeBorder(Palette.hairlineOnGradient, lineWidth: 0.5)
+                .strokeBorder(Palette.hairlineOnGradient, lineWidth: Stroke.fine)
         )
         .padding(.horizontal, Space.lg)
         .padding(.vertical, Space.xs)

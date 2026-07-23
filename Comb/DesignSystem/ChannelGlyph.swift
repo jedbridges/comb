@@ -19,7 +19,7 @@ struct ChannelGlyph: View {
             // bottom. The hairline is what stops it disappearing entirely
             // where the gradient happens to match its own value.
             cell.fill(Palette.glyphLift)
-            cell.stroke(Palette.glyphHairline, lineWidth: 0.75)
+            cell.stroke(Palette.glyphHairline, lineWidth: Stroke.hairline)
             Image(systemName: ChannelSymbol.forName(name))
                 // Derived from the cell, not the type ramp, and deliberately
                 // so: this symbol has to stay in proportion to the hexagon

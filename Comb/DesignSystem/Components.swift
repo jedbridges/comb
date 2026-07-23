@@ -139,7 +139,7 @@ struct AvatarView: View {
                     // photo avatar was full-saturation photography dropped
                     // beside flat badges, and read as belonging to a
                     // different app.
-                    .overlay(Circle().strokeBorder(Palette.glyphHairline, lineWidth: 0.75))
+                    .overlay(Circle().strokeBorder(Palette.glyphHairline, lineWidth: Stroke.hairline))
                     .transition(.opacity)
             } else {
                 // The stand-in while loading, and forever if the URL is dead.
@@ -167,7 +167,7 @@ struct AvatarView: View {
     private var initial: some View {
         ZStack {
             Circle().fill(Palette.glyphLift)
-            Circle().stroke(Palette.glyphHairline, lineWidth: 0.75)
+            Circle().stroke(Palette.glyphHairline, lineWidth: Stroke.hairline)
             Text(name.prefix(1).uppercased())
                 // Sized off the circle rather than the type ramp, matching the
                 // symbol in ChannelGlyph, so a letter and an icon sit at the
@@ -208,7 +208,7 @@ struct Toast: View {
             .padding(.horizontal, Space.md)
             .padding(.vertical, Space.sm)
             .background(.ultraThinMaterial, in: .capsule)
-            .overlay(Capsule().strokeBorder(Palette.hairlineOnGradient, lineWidth: 0.5))
+            .overlay(Capsule().strokeBorder(Palette.hairlineOnGradient, lineWidth: Stroke.fine))
             .padding(.horizontal, Space.xl)
             .shadow(color: .black.opacity(0.25), radius: 12, y: 4)
             .accessibilityAddTraits(.isStaticText)
@@ -302,7 +302,7 @@ extension View {
                 .fill(Palette.liftOnGradient)
                 .overlay(
                     RoundedRectangle(cornerRadius: Radii.bubble)
-                        .strokeBorder(Palette.hairlineOnGradient, lineWidth: 0.5)
+                        .strokeBorder(Palette.hairlineOnGradient, lineWidth: Stroke.fine)
                 )
         )
     }
@@ -329,7 +329,7 @@ extension View {
             .padding(.vertical, Space.hairline)
             .background(Palette.liftOnGradient, in: .capsule)
             .overlay(
-                Capsule().strokeBorder(Palette.hairlineOnGradient, lineWidth: 0.5)
+                Capsule().strokeBorder(Palette.hairlineOnGradient, lineWidth: Stroke.fine)
             )
             .luminousChrome()
     }
