@@ -58,6 +58,16 @@ targets:
     info:
       path: Comb/Resources/Info.plist
       properties:
+        # Dark only, and set here rather than with preferredColorScheme so it
+        # also covers the surfaces SwiftUI does not own: the share sheet, the
+        # photo picker, the keyboard, every system alert. A SwiftUI-only
+        # override leaves those resolving against the device setting, which is
+        # what made elements flip appearance mid-transition.
+        #
+        # The brand is a dark gradient with one bright accent, and the light
+        # variant of it was never finished. Shipping a half-built appearance is
+        # worse than shipping one.
+        UIUserInterfaceStyle: Dark
         CFBundleURLTypes:
           - CFBundleURLName: dev.jedbridges.comb.join
             CFBundleURLSchemes:

@@ -191,6 +191,27 @@ struct AvatarView: View {
     }
 }
 
+/// A Form row label: accent icon, ordinary text.
+///
+/// Exists because a `Button`'s label inherits the accent colour for the whole
+/// label, while a `NavigationLink`'s tints only the icon. Two rows written the
+/// same way in the same section therefore came out different colours, and the
+/// usual fix, forcing `foregroundStyle` on the Button's label, drags the icon
+/// to the text colour instead. Setting both explicitly is the only way they
+/// match.
+struct RowLabel: View {
+    let title: LocalizedStringKey
+    let systemImage: String
+
+    var body: some View {
+        Label {
+            Text(title).foregroundStyle(Palette.text)
+        } icon: {
+            Image(systemName: systemImage).foregroundStyle(Palette.chartreuse)
+        }
+    }
+}
+
 /// The standard screen backdrop: the Buzz gradient, edge to edge.
 struct Backdrop<Content: View>: View {
     @ViewBuilder let content: () -> Content

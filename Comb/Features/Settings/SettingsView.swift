@@ -15,6 +15,7 @@ struct SettingsView: View {
 
     @Environment(\.dismiss) private var dismiss
     @State private var isConfirmingSignOut = false
+    @State private var isReportingProblem = false
     @State private var displayName = ""
 
     private var host: String { session.relayURL.host ?? "" }
@@ -63,8 +64,7 @@ struct SettingsView: View {
                     Button {
                         isConfirmingSignOut = true
                     } label: {
-                        Label("Sign out", systemImage: "rectangle.portrait.and.arrow.right")
-                            .foregroundStyle(Palette.text)
+                        RowLabel(title: "Sign out", systemImage: "rectangle.portrait.and.arrow.right")
                     }
                     .confirmationDialog(
                         "Sign out of \(communityName)?",
@@ -86,13 +86,23 @@ struct SettingsView: View {
                 .combRows()
 
                 Section {
+                    // First, and phrased as the problem rather than the tool.
+                    // Someone who has just hit a bug is looking for a way to
+                    // say so, not for a diagnostics screen they have to work
+                    // out the relevance of.
+                    Button {
+                        isReportingProblem = true
+                    } label: {
+                        RowLabel(title: "Report a problem", systemImage: "exclamationmark.bubble")
+                    }
+
                     NavigationLink {
                         DiagnosticsView()
                     } label: {
                         Label("Diagnostics", systemImage: "stethoscope")
                     }
                 } footer: {
-                    Text("A local log you can copy into a bug report. It stays on your iPhone.")
+                    Text("A report attaches the local log so a bug can be traced. Nothing is sent unless you send it.")
                 }
                 .combRows()
 
@@ -115,6 +125,9 @@ struct SettingsView: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Done") { dismiss() }
                 }
+            }
+            .sheet(isPresented: $isReportingProblem) {
+                ReportProblemView()
             }
         }
     }

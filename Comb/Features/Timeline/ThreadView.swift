@@ -137,6 +137,7 @@ struct ThreadView: View {
             entry: entry,
             reactions: model.snapshot.reactions[entry.row.id] ?? [],
             loader: loader,
+                            channelID: channel.id,
             mentionNames: model.mentionNames,
             mentionsMe: entry.row.mentions(session.me.hex),
             onReact: { emoji in

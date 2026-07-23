@@ -2,6 +2,7 @@ import CombCore
 import CombStore
 import PhotosUI
 import SwiftUI
+import UIKit
 
 /// A channel's conversation, newest at the bottom, read from the store.
 struct ChannelTimelineView: View {
@@ -56,6 +57,7 @@ struct ChannelTimelineView: View {
                             entry: entry,
                             reactions: model.snapshot.reactions[entry.row.id] ?? [],
                             loader: loader,
+                            channelID: channel.id,
                             mentionNames: model.mentionNames,
                             mentionsMe: entry.row.mentions(session.me.hex),
                             onReact: { emoji in
@@ -319,10 +321,13 @@ struct MessageRow: View {
     let entry: ChannelTimeline.Entry
     let reactions: [ReactionSummary]
     let loader: MediaLoader
+    /// Needed only to build a "Copy link" URL, which names the channel as
+    /// well as the message.
+    let channelID: String
     /// Roster names, so `@mentions` in the body can be highlighted.
     var mentionNames: [String] = []
-    /// Whether this message names the reader, which earns it a wash of the
-    /// accent down the leading edge.
+    /// Whether this message names the reader. No longer drawn on the row
+    /// itself, but still announced first by VoiceOver.
     var mentionsMe: Bool = false
     let onReact: (String) -> Void
     let onRetry: () -> Void
@@ -514,6 +519,20 @@ struct MessageRow: View {
             }
             if let onZap {
                 Button("Zap", systemImage: "bolt.fill", action: onZap)
+            }
+
+            Divider()
+            if !entry.row.displayContent.isEmpty {
+                Button("Copy message", systemImage: "doc.on.doc") {
+                    UIPasteboard.general.string = entry.row.displayContent
+                }
+            }
+            Button("Copy link", systemImage: "link") {
+                UIPasteboard.general.string = MessageLink.build(
+                    channelID: channelID,
+                    messageID: entry.row.id,
+                    threadRootID: entry.row.rootID
+                )
             }
             if onEdit != nil || onDelete != nil {
                 Divider()
