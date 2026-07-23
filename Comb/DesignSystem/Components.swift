@@ -1,3 +1,4 @@
+import CombNet
 import SwiftUI
 
 // The recurring assemblies. A pattern that appears on two screens gets a
@@ -213,5 +214,47 @@ extension View {
     /// For toolbar glyphs, secondary text, and separators over the backdrop.
     func luminousChrome() -> some View {
         modifier(LuminousChrome())
+    }
+}
+
+
+// MARK: - Connection
+
+/// Tells the user when the app is not actually connected.
+///
+/// Without this a dropped socket looks identical to a healthy one: messages
+/// simply stop arriving and nothing explains why. It appears only when there is
+/// something to say, so a working connection stays silent.
+struct ConnectionBanner: View {
+    let state: ConnectionState
+
+    var body: some View {
+        if let message {
+            HStack(spacing: Space.xs) {
+                ProgressView()
+                    .controlSize(.mini)
+                    .tint(Palette.ink)
+                Text(message)
+                    .font(Typography.label)
+                    .foregroundStyle(Palette.ink)
+            }
+            .padding(.horizontal, Space.sm)
+            .padding(.vertical, Space.xs)
+            .frame(maxWidth: .infinity)
+            .background(Palette.chartreuse)
+            .transition(.move(edge: .top).combined(with: .opacity))
+            .accessibilityLabel(message)
+        }
+    }
+
+    /// Silent when connected: a banner that is always there stops being read.
+    private var message: String? {
+        switch state {
+        case .ready, .idle: nil
+        case .connecting, .authenticating: "Connecting…"
+        case .reconnecting(let attempt):
+            attempt <= 1 ? "Reconnecting…" : "Reconnecting, attempt \(attempt)…"
+        case .stopped: "Offline"
+        }
     }
 }

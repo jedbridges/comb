@@ -13,6 +13,11 @@ public struct ChannelSummary: Sendable, Equatable, Hashable, Identifiable {
     public let lastAuthor: String?
     /// Unix seconds of the newest message, nil for a silent channel.
     public let lastActivity: Int64?
+    /// Messages newer than the last time this channel was read, excluding your
+    /// own: seeing a badge for something you just sent would be nonsense.
+    public let unreadCount: Int
+
+    public var hasUnread: Bool { unreadCount > 0 }
 
     public var lastActivityDate: Date? {
         lastActivity.map { Date(timeIntervalSince1970: TimeInterval($0)) }
@@ -21,11 +26,11 @@ public struct ChannelSummary: Sendable, Equatable, Hashable, Identifiable {
 
 public extension EventStore {
     /// Every known channel, most recently active first, silent ones after.
-    nonisolated func channelSummaries() throws -> [ChannelSummary] {
-        try reader.read { db in try Self.fetchChannelSummaries(db) }
+    nonisolated func channelSummaries(me: String = "") throws -> [ChannelSummary] {
+        try reader.read { db in try Self.fetchChannelSummaries(db, me: me) }
     }
 
-    static func fetchChannelSummaries(_ db: Database) throws -> [ChannelSummary] {
+    static func fetchChannelSummaries(_ db: Database, me: String = "") throws -> [ChannelSummary] {
         // Correlated subqueries rather than joins: the channel count is small
         // (tens), and this keeps "latest message" unambiguous.
         let rows = try Row.fetchAll(db, sql: """
@@ -42,10 +47,21 @@ public extension EventStore {
                      ORDER BY e.created_at DESC, e.id DESC LIMIT 1)   AS last_author,
                    (SELECT e.created_at FROM event e
                      WHERE e.h = c.id AND e.kind = :kind
-                     ORDER BY e.created_at DESC, e.id DESC LIMIT 1)   AS last_at
+                     ORDER BY e.created_at DESC, e.id DESC LIMIT 1)   AS last_at,
+                   (SELECT COUNT(*) FROM event e
+                     WHERE e.h = c.id AND e.kind = :kind
+                       AND e.pubkey != :me
+                       AND e.created_at > COALESCE(
+                             (SELECT r.last_read_at FROM read_state r
+                               WHERE r.channel_id = c.id), 0)
+                       AND NOT EXISTS (SELECT 1 FROM deletion d WHERE d.target_id = e.id)
+                   )                                                  AS unread
             FROM channel c
             ORDER BY last_at IS NULL, last_at DESC, c.name COLLATE NOCASE ASC
-            """, arguments: ["kind": EventKind.groupChatMessage.rawValue])
+            """, arguments: [
+                "kind": EventKind.groupChatMessage.rawValue,
+                "me": me,
+            ])
 
         return rows.map { row in
             ChannelSummary(
@@ -56,7 +72,8 @@ public extension EventStore {
                 memberCount: row["members"],
                 lastMessage: row["last_message"],
                 lastAuthor: row["last_author"],
-                lastActivity: row["last_at"]
+                lastActivity: row["last_at"],
+                unreadCount: row["unread"] ?? 0
             )
         }
     }
@@ -102,12 +119,38 @@ public extension EventStore {
             .values(in: reader)
     }
 
-    /// Emits the channel list whenever channels, members, messages, or
-    /// profiles change.
-    nonisolated func observeChannelSummaries() -> AsyncValueObservation<[ChannelSummary]> {
+    /// Emits the channel list whenever channels, members, messages, profiles,
+    /// or read state change.
+    nonisolated func observeChannelSummaries(me: String = "") -> AsyncValueObservation<[ChannelSummary]> {
         ValueObservation
-            .tracking { db in try Self.fetchChannelSummaries(db) }
+            .tracking { db in try Self.fetchChannelSummaries(db, me: me) }
             .removeDuplicates()
             .values(in: reader)
+    }
+
+    /// Marks a channel read up to its newest message.
+    ///
+    /// Recorded as a timestamp rather than a set of ids, so a channel that
+    /// receives a hundred messages while you are away still costs one row, and
+    /// history arriving later cannot retroactively mark itself unread.
+    func markRead(channel: String) throws {
+        try writer.write { db in
+            let newest = try Int64.fetchOne(db, sql: """
+                SELECT MAX(created_at) FROM event WHERE h = ? AND kind = ?
+                """, arguments: [channel, EventKind.groupChatMessage.rawValue])
+
+            try db.execute(sql: """
+                INSERT INTO read_state (channel_id, last_read_at) VALUES (?, ?)
+                ON CONFLICT(channel_id) DO UPDATE SET
+                    last_read_at = MAX(read_state.last_read_at, excluded.last_read_at)
+                """, arguments: [channel, newest ?? 0])
+        }
+    }
+
+    /// Total unread across every channel, for a badge.
+    nonisolated func totalUnread(me: String = "") throws -> Int {
+        try reader.read { db in
+            try Self.fetchChannelSummaries(db, me: me).reduce(0) { $0 + $1.unreadCount }
+        }
     }
 }

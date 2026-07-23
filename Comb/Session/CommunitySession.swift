@@ -104,6 +104,11 @@ actor CommunitySession {
         liveSubscription = try await relay.subscribe([filter], label: "live")
     }
 
+    /// Live connection state, for the UI's status indicator.
+    func connectionStates() async -> AsyncStream<ConnectionState> {
+        await relay.connectionStates()
+    }
+
     // MARK: - Sending
 
     /// Signs, queues, and delivers a message. The queued row appears in the

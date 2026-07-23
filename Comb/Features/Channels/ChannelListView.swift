@@ -1,3 +1,4 @@
+import CombNet
 import CombStore
 import SwiftUI
 
@@ -14,6 +15,7 @@ struct ChannelListView: View {
 
     @State private var model: ChannelListModel
     @State private var isShowingSettings = false
+    @State private var connection: ConnectionState = .idle
     #if DEBUG
     @State private var autoOpened: ChannelSummary?
     #endif
@@ -30,7 +32,10 @@ struct ChannelListView: View {
         self.onSwitch = onSwitch
         self.onAddCommunity = onAddCommunity
         self.onDisconnect = onDisconnect
-        _model = State(initialValue: ChannelListModel(store: session.store))
+        _model = State(initialValue: ChannelListModel(
+            store: session.store,
+            me: session.me.hex
+        ))
     }
 
     /// The open community's name, derived from its host.
@@ -46,6 +51,15 @@ struct ChannelListView: View {
                 emptyState
             } else {
                 channelList
+            }
+        }
+        .safeAreaInset(edge: .top) {
+            ConnectionBanner(state: connection)
+                .animation(Motion.standard, value: connection)
+        }
+        .task {
+            for await state in await session.connectionStates() {
+                connection = state
             }
         }
         .navigationTitle(currentName)
@@ -175,7 +189,10 @@ private struct ChannelRow: View {
             VStack(alignment: .leading, spacing: Space.hairline) {
                 HStack(alignment: .firstTextBaseline) {
                     Text(channel.name)
-                        .font(Typography.name)
+                        // Unread channels carry more weight, which is the
+                        // scanning cue: you should find what is new without
+                        // reading a single word.
+                        .font(channel.hasUnread ? Typography.bodyEmphasis : Typography.name)
                         .foregroundStyle(Palette.text)
                         .lineLimit(1)
 
@@ -193,7 +210,7 @@ private struct ChannelRow: View {
                     if let preview {
                         Text(preview)
                             .font(Typography.secondary)
-                            .foregroundStyle(Palette.subtext)
+                            .foregroundStyle(channel.hasUnread ? Palette.text : Palette.subtext)
                             .lineLimit(1)
                     } else {
                         Text("No messages yet")
@@ -203,7 +220,9 @@ private struct ChannelRow: View {
 
                     Spacer(minLength: Space.xs)
 
-                    if channel.memberCount > 0 {
+                    if channel.hasUnread {
+                        UnreadBadge(count: channel.unreadCount)
+                    } else if channel.memberCount > 0 {
                         Label("\(channel.memberCount)", systemImage: "person.2")
                             .font(Typography.count)
                             .labelStyle(.titleAndIcon)
@@ -222,6 +241,9 @@ private struct ChannelRow: View {
 
     private var accessibilityDescription: String {
         var parts = [channel.name]
+        if channel.hasUnread {
+            parts.append("\(channel.unreadCount) unread")
+        }
         if channel.memberCount > 0 { parts.append("\(channel.memberCount) members") }
         if let preview { parts.append("Latest: \(preview)") }
         else { parts.append("No messages yet") }
@@ -240,24 +262,28 @@ private struct ChannelRow: View {
         return flattened
     }
 
-    /// A comb cell carrying the channel's initial. Channel icons come later;
-    /// this keeps rows scannable until then.
-    ///
-    /// A plain filled cell, not the `Mark`: the logo's inner detail collided
-    /// with the letter and some initials became unreadable.
+    /// A rounded comb cell carrying a symbol chosen from the channel's name.
+    /// An initial only repeats the title beside it; a symbol says what the
+    /// room is for.
     private var cell: some View {
-        ZStack {
-            CombCell()
-                .fill(Palette.ink)
-            CombCell()
-                .stroke(Palette.chartreuse.opacity(0.55), lineWidth: 1.5)
-            Text(channel.name.prefix(1).uppercased())
-                .font(Typography.name)
-                .foregroundStyle(Palette.chartreuse)
-                .minimumScaleFactor(0.7)
-        }
-        .frame(width: cellSize, height: cellSize)
-        .accessibilityHidden(true)
+        ChannelGlyph(name: channel.name, size: cellSize)
+    }
+}
+
+/// The count of what is new, in the brand's one loud colour.
+private struct UnreadBadge: View {
+    let count: Int
+
+    var body: some View {
+        Text(count > 99 ? "99+" : "\(count)")
+            .font(Typography.count)
+            .foregroundStyle(Palette.ink)
+            .padding(.horizontal, Space.xs)
+            .padding(.vertical, 2)
+            .background(Palette.chartreuse, in: .capsule)
+            // Chartreuse earns its place here: "what is new" is the most
+            // important thing on this screen.
+            .accessibilityHidden(true)
     }
 }
 
@@ -267,14 +293,16 @@ private struct ChannelRow: View {
 final class ChannelListModel {
     private(set) var channels: [ChannelSummary] = []
     private let store: EventStore
+    private let me: String
 
-    init(store: EventStore) {
+    init(store: EventStore, me: String) {
         self.store = store
+        self.me = me
     }
 
     func activate() async {
         do {
-            for try await summaries in store.observeChannelSummaries() {
+            for try await summaries in store.observeChannelSummaries(me: me) {
                 channels = summaries
             }
         } catch {

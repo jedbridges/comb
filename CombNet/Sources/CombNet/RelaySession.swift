@@ -59,7 +59,15 @@ public actor RelaySession {
 
     // MARK: - State
 
-    public private(set) var state: ConnectionState = .idle
+    public private(set) var state: ConnectionState = .idle {
+        didSet {
+            guard state != oldValue else { return }
+            for continuation in stateObservers.values { continuation.yield(state) }
+        }
+    }
+
+    private var stateObservers: [Int: AsyncStream<ConnectionState>.Continuation] = [:]
+    private var nextObserverID = 0
 
     private var subscriptions: [String: Subscription] = [:]
     private var nextSubscriptionID = 0
@@ -121,6 +129,24 @@ public actor RelaySession {
         self.transport = transport
         self.policy = policy
         self.backoffSleep = backoffSleep
+    }
+
+    /// A live stream of connection state, so the UI can show reconnecting or
+    /// offline instead of looking identical to healthy.
+    public func connectionStates() -> AsyncStream<ConnectionState> {
+        let (stream, continuation) = AsyncStream.makeStream(of: ConnectionState.self)
+        let id = nextObserverID
+        nextObserverID += 1
+        stateObservers[id] = continuation
+        continuation.yield(state)
+        continuation.onTermination = { [weak self] _ in
+            Task { await self?.removeObserver(id) }
+        }
+        return stream
+    }
+
+    private func removeObserver(_ id: Int) {
+        stateObservers.removeValue(forKey: id)
     }
 
     public func start() async throws {

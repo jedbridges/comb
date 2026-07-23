@@ -151,6 +151,11 @@ enum DemoSeed {
         try await store.enqueue(refused, channel: channel)
         try await store.markSending(refused.id)
         try await store.markFailed(refused.id, error: "restricted: demo has no relay")
+
+        // General is marked read so the two channels differ: one caught up,
+        // one with unread traffic. Without this every channel looks the same
+        // and the badge work is invisible.
+        try await store.markRead(channel: channel)
     }
 
     private static func date(_ seconds: Int64) -> Date {

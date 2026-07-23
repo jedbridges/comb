@@ -354,6 +354,14 @@ final class ChannelTimeline {
 
     func activate() async {
         observe()
+        await markRead()
+    }
+
+    /// Marks the channel read on open, and again whenever new messages land
+    /// while it is on screen, so a channel you are reading never accumulates a
+    /// badge behind your back.
+    func markRead() async {
+        try? await session.store.markRead(channel: channel)
     }
 
     func send(_ text: String) async {
@@ -408,6 +416,7 @@ final class ChannelTimeline {
                 ) {
                     guard !Task.isCancelled else { return }
                     self?.snapshot = value
+                    await self?.markRead()
                 }
             } catch {
                 // Database failure; the timeline stops updating rather than

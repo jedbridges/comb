@@ -147,3 +147,111 @@ struct ObservationTests {
         #expect(updated.map(\.name) == ["New Room"])
     }
 }
+
+@Suite("Unread", .timeLimit(.minutes(1)))
+struct UnreadTests {
+    private func seed(_ store: EventStore, _ fixture: Fixture) async throws {
+        _ = try await store.ingest([
+            try fixture.event(.groupMetadata, #"{"name":"General"}"#, tags: [["d", "room-1"]], at: 900),
+        ])
+    }
+
+    @Test("counts messages newer than the last read")
+    func countsUnread() async throws {
+        let store = try EventStore()
+        let other = try Fixture()
+        try await seed(store, other)
+
+        _ = try await store.ingest([
+            try other.message("one", at: 1000),
+            try other.message("two", at: 2000),
+            try other.message("three", at: 3000),
+        ])
+
+        let me = try Fixture()
+        #expect(try store.channelSummaries(me: me.pubkey).first?.unreadCount == 3)
+
+        try await store.markRead(channel: "room-1")
+        #expect(try store.channelSummaries(me: me.pubkey).first?.unreadCount == 0)
+
+        _ = try await store.ingest([try other.message("four", at: 4000)])
+        #expect(try store.channelSummaries(me: me.pubkey).first?.unreadCount == 1)
+    }
+
+    @Test("your own messages never count as unread")
+    func ownMessagesExcluded() async throws {
+        // A badge for something you just sent would be nonsense.
+        let store = try EventStore()
+        let me = try Fixture()
+        try await seed(store, me)
+
+        _ = try await store.ingest([
+            try me.message("mine", at: 1000),
+            try me.message("also mine", at: 2000),
+        ])
+
+        #expect(try store.channelSummaries(me: me.pubkey).first?.unreadCount == 0)
+    }
+
+    @Test("deleted messages do not keep a channel unread")
+    func deletedExcluded() async throws {
+        let store = try EventStore()
+        let other = try Fixture()
+        try await seed(store, other)
+
+        let message = try other.message("delete me", at: 1000)
+        _ = try await store.ingest([message])
+        #expect(try store.channelSummaries(me: "").first?.unreadCount == 1)
+
+        _ = try await store.ingest([
+            try other.event(.deletion, "", tags: [["e", message.id]], at: 1001),
+        ])
+        #expect(try store.channelSummaries(me: "").first?.unreadCount == 0)
+    }
+
+    @Test("backfilled history cannot mark a read channel unread again")
+    func backfillDoesNotUnread() async throws {
+        // Read state is a timestamp, so older history arriving later is already
+        // behind the mark. An id-set approach would light the channel back up.
+        let store = try EventStore()
+        let other = try Fixture()
+        try await seed(store, other)
+
+        _ = try await store.ingest([try other.message("recent", at: 5000)])
+        try await store.markRead(channel: "room-1")
+
+        _ = try await store.ingest([
+            try other.message("old", at: 1000),
+            try other.message("older", at: 500),
+        ])
+        #expect(try store.channelSummaries(me: "").first?.unreadCount == 0)
+    }
+
+    @Test("marking read never moves backwards")
+    func markReadMonotonic() async throws {
+        let store = try EventStore()
+        let other = try Fixture()
+        try await seed(store, other)
+
+        _ = try await store.ingest([try other.message("newest", at: 9000)])
+        try await store.markRead(channel: "room-1")
+
+        // A stale mark from a slow view must not reopen the unread state.
+        try await store.markRead(channel: "room-1")
+        #expect(try store.channelSummaries(me: "").first?.unreadCount == 0)
+    }
+
+    @Test("observation re-fires when a channel is marked read")
+    func observationFires() async throws {
+        let store = try EventStore()
+        let other = try Fixture()
+        try await seed(store, other)
+        _ = try await store.ingest([try other.message("unread", at: 1000)])
+
+        var iterator = store.observeChannelSummaries(me: "").makeAsyncIterator()
+        #expect(try await iterator.next()?.first?.unreadCount == 1)
+
+        try await store.markRead(channel: "room-1")
+        #expect(try await iterator.next()?.first?.unreadCount == 0)
+    }
+}
