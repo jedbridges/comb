@@ -15,13 +15,15 @@ struct CombApp: App {
                 case .welcome:
                     WelcomeView(
                         notice: model.launchNotice,
-                        onJoined: { model.adopt($0) },
+                        onJoined: { model.adopt($0, landingInBusiestChannel: true) },
                         pendingInvite: $pendingInvite
                     )
                 case .active(let session):
                     NavigationStack {
                         ChannelListView(
                             session: session,
+                            openOnArrival: model.openOnArrival,
+                            onArrivalConsumed: { model.consumeArrivalChannel() },
                             communities: model.communities,
                             onSwitch: { community in
                                 Task { await model.openCommunity(community) }

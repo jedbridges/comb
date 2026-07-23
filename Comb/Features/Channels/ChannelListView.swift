@@ -9,6 +9,10 @@ struct ChannelListView: View {
     /// Every community on this device, and how to move between them. Buzz
     /// cannot supply this list: it lives locally, exactly as Buzz's own desktop
     /// client keeps it in localStorage.
+    /// Set right after joining, so a new member lands in a conversation rather
+    /// than on a list of mostly-empty rooms.
+    var openOnArrival: ChannelSummary?
+    var onArrivalConsumed: () -> Void = {}
     var communities: [JoinedCommunity] = []
     var onSwitch: (JoinedCommunity) -> Void = { _ in }
     var onAddCommunity: () -> Void = {}
@@ -16,18 +20,21 @@ struct ChannelListView: View {
     @State private var model: ChannelListModel
     @State private var isShowingSettings = false
     @State private var connection: ConnectionState = .idle
-    #if DEBUG
-    @State private var autoOpened: ChannelSummary?
-    #endif
+    @State private var isSearching = false
+    @State private var arrivalChannel: ChannelSummary?
 
     init(
         session: CommunitySession,
+        openOnArrival: ChannelSummary? = nil,
+        onArrivalConsumed: @escaping () -> Void = {},
         communities: [JoinedCommunity] = [],
         onSwitch: @escaping (JoinedCommunity) -> Void = { _ in },
         onAddCommunity: @escaping () -> Void = {},
         onDisconnect: @escaping () -> Void
     ) {
         self.session = session
+        self.openOnArrival = openOnArrival
+        self.onArrivalConsumed = onArrivalConsumed
         self.communities = communities
         self.onSwitch = onSwitch
         self.onAddCommunity = onAddCommunity
@@ -70,6 +77,17 @@ struct ChannelListView: View {
             }
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
+                    isSearching = true
+                } label: {
+                    Image(systemName: "magnifyingglass")
+                        .font(Typography.actionSecondary)
+                        .foregroundStyle(Palette.text)
+                        .luminousChrome()
+                }
+                .accessibilityLabel("Search messages")
+            }
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
                     isShowingSettings = true
                 } label: {
                     Image(systemName: "gearshape")
@@ -80,6 +98,9 @@ struct ChannelListView: View {
                 .accessibilityLabel("Settings")
             }
         }
+        .sheet(isPresented: $isSearching) {
+            SearchView(session: session)
+        }
         .sheet(isPresented: $isShowingSettings) {
             SettingsView(session: session, onSignOut: onDisconnect)
         }
@@ -87,6 +108,17 @@ struct ChannelListView: View {
             ChannelTimelineView(session: session, channel: channel)
         }
         .task { await model.activate() }
+        // The single programmatic route into a channel: joining lands here, and
+        // in DEBUG the screenshot flag reuses it. Declaring a second
+        // navigationDestination for ChannelSummary would crash the stack.
+        .navigationDestination(item: $arrivalChannel) { channel in
+            ChannelTimelineView(session: session, channel: channel)
+        }
+        .onAppear {
+            guard let openOnArrival, arrivalChannel == nil else { return }
+            arrivalChannel = openOnArrival
+            onArrivalConsumed()
+        }
         #if DEBUG
         .onAppear {
             if ProcessInfo.processInfo.arguments.contains("--open-settings") {
@@ -94,12 +126,10 @@ struct ChannelListView: View {
             }
         }
         .onChange(of: model.channels) { _, channels in
-            if AppModel.LaunchFlags.opensFirstChannel, autoOpened == nil, let first = channels.first {
-                autoOpened = first
+            if AppModel.LaunchFlags.opensFirstChannel, arrivalChannel == nil,
+               let first = channels.first {
+                arrivalChannel = first
             }
-        }
-        .navigationDestination(item: $autoOpened) { channel in
-            ChannelTimelineView(session: session, channel: channel)
         }
         #endif
     }

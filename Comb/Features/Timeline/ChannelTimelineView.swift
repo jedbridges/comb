@@ -10,6 +10,7 @@ struct ChannelTimelineView: View {
     @State private var model: ChannelTimeline
     @State private var draft = ""
     @State private var zapTarget: ChannelTimeline.Entry?
+    @State private var profileTarget: ProfileTarget?
 
     init(session: CommunitySession, channel: ChannelSummary) {
         self.session = session
@@ -39,7 +40,8 @@ struct ChannelTimelineView: View {
                             onDiscard: { Task { await model.discard(entry.row.id) } },
                             onZap: entry.row.authorLightningAddress == nil
                                 ? nil
-                                : { zapTarget = entry }
+                                : { zapTarget = entry },
+                            onOpenAuthor: { profileTarget = ProfileTarget(pubkey: entry.row.pubkey) }
                         )
                     }
                 }
@@ -61,14 +63,26 @@ struct ChannelTimelineView: View {
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 if channel.memberCount > 0 {
-                    Label("\(channel.memberCount)", systemImage: "person.2")
-                        .font(Typography.count)
-                        .foregroundStyle(Palette.text)
-                        .luminousChrome()
+                    NavigationLink {
+                        MemberListView(
+                            session: session,
+                            channelID: channel.id,
+                            channelName: channel.name
+                        )
+                    } label: {
+                        Label("\(channel.memberCount)", systemImage: "person.2")
+                            .font(Typography.count)
+                            .foregroundStyle(Palette.text)
+                            .luminousChrome()
+                    }
+                    .accessibilityLabel("\(channel.memberCount) members")
                 }
             }
         }
         .task { await model.activate() }
+        .sheet(item: $profileTarget) { target in
+            ProfileSheet(session: session, pubkey: target.pubkey)
+        }
         .sheet(item: $zapTarget) { entry in
             if let address = entry.row.authorLightningAddress,
                let recipient = PublicKey(hex: entry.row.pubkey) {
@@ -112,6 +126,7 @@ private struct MessageRow: View {
     let onRetry: () -> Void
     let onDiscard: () -> Void
     let onZap: (() -> Void)?
+    let onOpenAuthor: () -> Void
 
     /// The quick palette. A full picker is later polish.
     private static let quickReactions = ["🐝", "👍", "❤️", "🔥", "😂"]
@@ -123,7 +138,11 @@ private struct MessageRow: View {
     var body: some View {
         HStack(alignment: .top, spacing: Space.xs) {
             if entry.showsHeader {
-                AvatarView(name: entry.row.displayName, picture: entry.row.authorPicture)
+                Button(action: onOpenAuthor) {
+                    AvatarView(name: entry.row.displayName, picture: entry.row.authorPicture)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("\(entry.row.displayName)'s profile")
             } else {
                 Color.clear.frame(width: avatarWidth, height: 1)
             }
@@ -131,9 +150,12 @@ private struct MessageRow: View {
             VStack(alignment: .leading, spacing: Space.hairline) {
                 if entry.showsHeader {
                     HStack(alignment: .firstTextBaseline, spacing: Space.xs) {
-                        Text(entry.row.displayName)
-                            .font(Typography.name)
-                            .foregroundStyle(Palette.text)
+                        Button(action: onOpenAuthor) {
+                            Text(entry.row.displayName)
+                                .font(Typography.name)
+                                .foregroundStyle(Palette.text)
+                        }
+                        .buttonStyle(.plain)
                         Text(entry.row.date, format: .dateTime.hour().minute())
                             .font(Typography.caption)
                             .foregroundStyle(Palette.subtext)

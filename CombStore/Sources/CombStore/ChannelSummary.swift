@@ -154,3 +154,137 @@ public extension EventStore {
         }
     }
 }
+
+
+/// A member's profile, as the app displays it.
+public struct ProfileSummary: Sendable, Equatable, Identifiable {
+    public let pubkey: String
+    public let displayName: String?
+    public let about: String?
+    public let picture: String?
+    public let nip05: String?
+    public let lightningAddress: String?
+    /// How many messages of theirs the local log holds. A rough sense of how
+    /// present someone is, without asking the relay anything.
+    public let messageCount: Int
+
+    public var id: String { pubkey }
+
+    /// Never the raw npub: a name or a short key, same rule as the timeline.
+    public var name: String {
+        if let displayName, !displayName.isEmpty { return displayName }
+        return String(pubkey.prefix(8))
+    }
+
+    public var canReceiveZaps: Bool {
+        lightningAddress?.isEmpty == false
+    }
+}
+
+/// One search hit, with enough context to render a result row.
+public struct SearchResult: Sendable, Equatable, Identifiable {
+    public let id: String
+    public let channelID: String
+    public let channelName: String
+    public let author: String
+    public let content: String
+    public let createdAt: Int64
+
+    public var date: Date { Date(timeIntervalSince1970: TimeInterval(createdAt)) }
+}
+
+public extension EventStore {
+    /// A member's profile, joined with how much they have said here.
+    nonisolated func profile(pubkey: String) throws -> ProfileSummary? {
+        try reader.read { db in
+            let row = try Row.fetchOne(db, sql: """
+                SELECT p.pubkey, p.display_name, p.about, p.picture, p.nip05, p.lud16,
+                       (SELECT COUNT(*) FROM event e
+                         WHERE e.pubkey = :pubkey AND e.kind = :kind) AS messages
+                FROM profile p WHERE p.pubkey = :pubkey
+                """, arguments: [
+                    "pubkey": pubkey,
+                    "kind": EventKind.groupChatMessage.rawValue,
+                ])
+
+            // Someone can be present without a profile event; show what we know
+            // rather than nothing.
+            guard let row else {
+                let messages = try Int.fetchOne(db, sql: """
+                    SELECT COUNT(*) FROM event WHERE pubkey = ? AND kind = ?
+                    """, arguments: [pubkey, EventKind.groupChatMessage.rawValue]) ?? 0
+                guard messages > 0 else { return nil }
+                return ProfileSummary(
+                    pubkey: pubkey, displayName: nil, about: nil, picture: nil,
+                    nip05: nil, lightningAddress: nil, messageCount: messages
+                )
+            }
+
+            return ProfileSummary(
+                pubkey: row["pubkey"],
+                displayName: row["display_name"],
+                about: row["about"],
+                picture: row["picture"],
+                nip05: row["nip05"],
+                lightningAddress: row["lud16"],
+                messageCount: row["messages"] ?? 0
+            )
+        }
+    }
+
+    /// The roster of a channel, most talkative first.
+    nonisolated func members(of channel: String) throws -> [ProfileSummary] {
+        let pubkeys: [String] = try reader.read { db in
+            try String.fetchAll(db, sql: """
+                SELECT pubkey FROM channel_member WHERE channel_id = ?
+                """, arguments: [channel])
+        }
+        return try pubkeys
+            .compactMap { try profile(pubkey: $0) }
+            .sorted { $0.messageCount > $1.messageCount }
+    }
+
+    /// Searches message text already on this device.
+    ///
+    /// Local-first on purpose: it answers instantly, works offline, and covers
+    /// what the person has actually seen. Relay-side NIP-50 can widen it later
+    /// without changing this path.
+    nonisolated func search(_ query: String, limit: Int = 50) throws -> [SearchResult] {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count >= 2 else { return [] }
+
+        return try reader.read { db in
+            try Row.fetchAll(db, sql: """
+                SELECT e.id, e.h, e.content, e.created_at,
+                       COALESCE(c.name, e.h)          AS channel_name,
+                       COALESCE(p.display_name, substr(e.pubkey, 1, 8)) AS author
+                FROM event e
+                LEFT JOIN channel c ON c.id = e.h
+                LEFT JOIN profile p ON p.pubkey = e.pubkey
+                WHERE e.kind = :kind
+                  AND e.content LIKE :needle ESCAPE '\\'
+                  AND NOT EXISTS (SELECT 1 FROM deletion d WHERE d.target_id = e.id)
+                ORDER BY e.created_at DESC
+                LIMIT :limit
+                """, arguments: [
+                    "kind": EventKind.groupChatMessage.rawValue,
+                    // Escaped so a query containing % or _ is treated literally
+                    // rather than as a wildcard.
+                    "needle": "%" + trimmed
+                        .replacingOccurrences(of: "\\", with: "\\\\")
+                        .replacingOccurrences(of: "%", with: "\\%")
+                        .replacingOccurrences(of: "_", with: "\\_") + "%",
+                    "limit": limit,
+                ]).map { row in
+                    SearchResult(
+                        id: row["id"],
+                        channelID: row["h"] ?? "",
+                        channelName: row["channel_name"] ?? "",
+                        author: row["author"] ?? "",
+                        content: row["content"],
+                        createdAt: row["created_at"]
+                    )
+                }
+        }
+    }
+}

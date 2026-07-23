@@ -255,3 +255,107 @@ struct UnreadTests {
         #expect(try await iterator.next()?.first?.unreadCount == 0)
     }
 }
+
+@Suite("Profiles and search", .timeLimit(.minutes(1)))
+struct ProfileSearchTests {
+    @Test("joins a profile with how much they have said")
+    func profileWithCount() async throws {
+        let store = try EventStore()
+        let fixture = try Fixture()
+
+        _ = try await store.ingest([
+            try fixture.event(
+                .metadata,
+                #"{"display_name":"Ada","about":"type systems","lud16":"ada@getalby.com"}"#,
+                at: 900
+            ),
+            try fixture.message("one", at: 1000),
+            try fixture.message("two", at: 2000),
+        ])
+
+        let profile = try #require(try store.profile(pubkey: fixture.pubkey))
+        #expect(profile.name == "Ada")
+        #expect(profile.about == "type systems")
+        #expect(profile.messageCount == 2)
+        #expect(profile.canReceiveZaps)
+    }
+
+    @Test("shows someone present without a profile event")
+    func profilelessMember() async throws {
+        // Plenty of people never publish a kind 0. Showing what we know beats
+        // showing nothing.
+        let store = try EventStore()
+        let fixture = try Fixture()
+        _ = try await store.ingest([try fixture.message("hello", at: 1000)])
+
+        let profile = try #require(try store.profile(pubkey: fixture.pubkey))
+        #expect(profile.displayName == nil)
+        #expect(profile.name == String(fixture.pubkey.prefix(8)))
+        #expect(profile.messageCount == 1)
+    }
+
+    @Test("returns nothing for a stranger")
+    func unknownPubkey() throws {
+        let store = try EventStore()
+        #expect(try store.profile(pubkey: String(repeating: "a", count: 64)) == nil)
+    }
+
+    @Test("finds messages by text, newest first")
+    func findsMessages() async throws {
+        let store = try EventStore()
+        let fixture = try Fixture()
+
+        _ = try await store.ingest([
+            try fixture.event(.groupMetadata, #"{"name":"General"}"#, tags: [["d", "room-1"]], at: 900),
+            try fixture.message("the gutters breathe", at: 1000),
+            try fixture.message("nothing to do with it", at: 2000),
+            try fixture.message("gutters at 20 then", at: 3000),
+        ])
+
+        let hits = try store.search("gutters")
+        #expect(hits.count == 2)
+        #expect(hits.first?.content == "gutters at 20 then")
+        #expect(hits.first?.channelName == "General")
+    }
+
+    @Test("ignores deleted messages")
+    func skipsDeleted() async throws {
+        let store = try EventStore()
+        let fixture = try Fixture()
+        let message = try fixture.message("findable", at: 1000)
+
+        _ = try await store.ingest([message])
+        #expect(try store.search("findable").count == 1)
+
+        _ = try await store.ingest([
+            try fixture.event(.deletion, "", tags: [["e", message.id]], at: 1001),
+        ])
+        #expect(try store.search("findable").isEmpty)
+    }
+
+    @Test("treats wildcards in the query literally")
+    func escapesWildcards() async throws {
+        // A bare LIKE would make "%" match everything, so a user typing a
+        // percent sign would get the whole log back.
+        let store = try EventStore()
+        let fixture = try Fixture()
+
+        _ = try await store.ingest([
+            try fixture.message("100% certain", at: 1000),
+            try fixture.message("nothing relevant", at: 2000),
+        ])
+
+        #expect(try store.search("100%").count == 1)
+        #expect(try store.search("%").isEmpty, "a lone wildcard must not match everything")
+    }
+
+    @Test("needs a real query")
+    func ignoresShortQueries() async throws {
+        let store = try EventStore()
+        let fixture = try Fixture()
+        _ = try await store.ingest([try fixture.message("anything", at: 1000)])
+
+        #expect(try store.search("").isEmpty)
+        #expect(try store.search("a").isEmpty)
+    }
+}

@@ -55,10 +55,27 @@ final class AppModel {
         }
     }
 
+    /// The channel to open immediately after joining.
+    ///
+    /// A new member landing on a list where most rows say "No messages yet"
+    /// concludes the community is dead. Dropping them into the busiest room
+    /// shows a conversation in progress, which is what they came for.
+    private(set) var openOnArrival: ChannelSummary?
+
     /// Hands the stage to a session an onboarding flow already opened.
-    func adopt(_ session: CommunitySession) {
+    func adopt(_ session: CommunitySession, landingInBusiestChannel: Bool = false) {
         launchNotice = nil
         stage = .active(session)
+
+        guard landingInBusiestChannel else { return }
+        // Busiest by recency: the channel summaries already sort active first.
+        openOnArrival = (try? session.store.channelSummaries(me: session.me.hex))?
+            .first { $0.lastActivity != nil }
+    }
+
+    /// Consumed once, so returning to the list later does not re-open it.
+    func consumeArrivalChannel() {
+        openOnArrival = nil
     }
 
     /// Every community this device has joined, most recent first.
