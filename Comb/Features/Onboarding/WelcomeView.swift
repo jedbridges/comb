@@ -1,4 +1,3 @@
-import CombNet
 import SwiftUI
 import UIKit
 
@@ -31,9 +30,6 @@ struct WelcomeView: View {
     /// opens Comb is an invite someone just sent them; if it is sitting on the
     /// clipboard, the fastest path in should be one tap, offered, not sprung.
     @State private var clipboardHasLink = false
-    /// Real community names from the bundled index, under the tagline. People
-    /// join communities, not apps; naming them makes the pitch concrete.
-    @State private var seededNames: [String] = []
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -91,19 +87,9 @@ struct WelcomeView: View {
                                 .kerning(Kerning.display)
                                 .foregroundStyle(Palette.text)
                                 .accessibilityLabel("Comb")
-                            Text("Join a community.")
+                            Text("Join a Buzz community")
                                 .font(Typography.secondary)
                                 .foregroundStyle(Palette.subtext)
-
-                            if !seededNames.isEmpty {
-                                // Interpunct-joined, lowercase, quiet: a hint
-                                // that real places exist behind the button,
-                                // not a second list to read.
-                                Text(seededNames.prefix(3).joined(separator: " · ") + " · more")
-                                    .font(Typography.caption)
-                                    .foregroundStyle(Palette.subtext.opacity(0.7))
-                                    .padding(.top, Space.xxs)
-                            }
                         }
                         .arrival(appeared, delay: 0.08)
                     }
@@ -114,30 +100,6 @@ struct WelcomeView: View {
                         if let notice {
                             InlineNotice(kind: .warning, text: notice)
                                 .multilineTextAlignment(.center)
-                        }
-
-                        // The clipboard shortcut, only when a link is probably
-                        // there. Reading happens on tap, so the system paste
-                        // chip appears exactly when the user asked for it and
-                        // never before. This is the invite-holder's whole
-                        // funnel: copy a link somewhere, open Comb, one tap.
-                        if clipboardHasLink {
-                            Button {
-                                guard let text = UIPasteboard.general.string,
-                                      !text.trimmingCharacters(in: .whitespaces).isEmpty
-                                else { return }
-                                // Prefills the join screen and pushes it, via
-                                // the same route a deep link takes. A copied
-                                // link that turns out not to be an invite gets
-                                // the join screen's own gentle correction.
-                                pendingInvite = text
-                            } label: {
-                                Label("Join from your copied link", systemImage: "link")
-                                    .font(Typography.actionSecondary)
-                                    .foregroundStyle(Palette.chartreuse)
-                                    .frame(minHeight: Sizing.hitTarget)
-                            }
-                            .transition(.opacity)
                         }
 
                         // Browse leads, because it is the one door a newcomer
@@ -152,12 +114,35 @@ struct WelcomeView: View {
                             path.append(.browse)
                         }
 
-                        // Still one tap, and still second, because most people
-                        // who reach this screen were handed a link. It simply no
-                        // longer competes with the identity for the loudest
-                        // colour.
-                        SecondaryButton(title: "I have an invite link") {
-                            path.append(.enterInvite)
+                        // The invite door, and one door only. When the
+                        // clipboard probably holds a link, this same slot
+                        // becomes its smarter self: it reads the clipboard on
+                        // tap (the system paste prompt is the user's own
+                        // action) and arrives at the join screen prefilled.
+                        // A separate shortcut chip was tried above the primary
+                        // and cut: it sat an inch from this button meaning
+                        // nearly the same thing, and two doors to one room is
+                        // exactly the choice overhead this screen exists to
+                        // avoid.
+                        if clipboardHasLink {
+                            SecondaryButton(title: "Join from your copied link") {
+                                guard let text = UIPasteboard.general.string,
+                                      !text.trimmingCharacters(in: .whitespaces).isEmpty
+                                else {
+                                    // The clipboard changed since detection;
+                                    // fall back to the plain join screen.
+                                    path.append(.enterInvite)
+                                    return
+                                }
+                                // Same route a deep link takes: join screen,
+                                // invite prefilled. A copied link that is not
+                                // an invite gets that screen's own correction.
+                                pendingInvite = text
+                            }
+                        } else {
+                            SecondaryButton(title: "I have an invite link") {
+                                path.append(.enterInvite)
+                            }
                         }
 
                         // Last, but legible. The question reads as prose in
@@ -203,14 +188,6 @@ struct WelcomeView: View {
             // Idempotent, so popping back from Join does not replay it.
             .onAppear { appeared = true }
             .task {
-                // Names for the tagline, from the bundled seed: offline,
-                // instant, and honest, since these communities are really in
-                // the index behind the button.
-                if let data = BrowseView.bundledIndex {
-                    seededNames = CommunityIndexService(bundledData: data)
-                        .seeded.map(\.name)
-                }
-
                 // Presence only, never content: detection reports that a URL
                 // is probably there without reading the clipboard, so no
                 // system banner. The read happens on tap or not at all.

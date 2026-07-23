@@ -281,9 +281,7 @@ struct BrowseView: View {
     }
 
     /// The seed shipped inside the app, so first launch has content offline.
-    /// Not private: the welcome screen reads it too, to name real communities
-    /// under its tagline.
-    static var bundledIndex: Data? {
+    private static var bundledIndex: Data? {
         Bundle.main.url(forResource: "index", withExtension: "json")
             .flatMap { try? Data(contentsOf: $0) }
     }
