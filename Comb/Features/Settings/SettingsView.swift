@@ -63,6 +63,16 @@ struct SettingsView: View {
                 }
 
                 Section {
+                    NavigationLink {
+                        DiagnosticsView()
+                    } label: {
+                        Label("Diagnostics", systemImage: "stethoscope")
+                    }
+                } footer: {
+                    Text("A local log you can copy into a bug report. It stays on your iPhone.")
+                }
+
+                Section {
                     LabeledContent("Comb", value: appVersion)
                 } footer: {
                     Text("An independent, open source client for Buzz relays. Not affiliated with Block, Inc.")

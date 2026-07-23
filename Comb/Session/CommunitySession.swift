@@ -61,6 +61,8 @@ actor CommunitySession {
     // MARK: - Lifecycle
 
     func start() async throws {
+        Log.session.info("connecting to \(self.relayURL.host ?? "?", privacy: .public)")
+        DiagnosticsBuffer.report("session", "connecting to \(relayURL.host ?? "?")")
         try await relay.start()
 
         // Bootstrap: one round trip, several filters. Group state, profiles,
@@ -74,7 +76,9 @@ actor CommunitySession {
             ],
             timeout: .seconds(25)
         )
-        _ = try await store.ingest(bootstrap)
+        let result = try await store.ingest(bootstrap)
+        Log.session.info("bootstrap ingested \(result.inserted.count) events, \(result.rejected.count) rejected")
+        DiagnosticsBuffer.report("session", "bootstrap: \(result.inserted.count) stored, \(result.rejected.count) rejected")
 
         try await subscribeLive()
 
