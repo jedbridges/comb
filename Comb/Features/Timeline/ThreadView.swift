@@ -19,6 +19,7 @@ struct ThreadView: View {
     @State private var profileTarget: ProfileTarget?
     @State private var zapTarget: TimelineRow?
     @State private var reactingTo: TimelineRow?
+    @FocusState private var isComposing: Bool
     @State private var tray: AttachmentTray
     @State private var loader: MediaLoader
 
@@ -48,12 +49,29 @@ struct ThreadView: View {
                             messageRow(entry)
                             replyDivider
                         } else {
+                            // Replies sit behind a rail, which is the standing
+                            // signal that everything below the divider belongs
+                            // to the message above it rather than to the
+                            // channel.
                             messageRow(entry)
+                                .padding(.leading, Space.sm)
+                                .overlay(alignment: .leading) {
+                                    Capsule()
+                                        .fill(Palette.hairlineOnGradient)
+                                        .frame(width: 2)
+                                }
                         }
+                    }
+
+                    if model.replyCount == 0 {
+                        emptyThread
                     }
                 }
                 .padding(.horizontal, Space.sm)
                 .padding(.vertical, Space.sm)
+                .frame(maxWidth: .infinity, minHeight: 0)
+                .contentShape(.rect)
+                .onTapGesture { isComposing = false }
             }
             .defaultScrollAnchor(.bottom)
             .scrollDismissesKeyboard(.interactively)
@@ -67,7 +85,8 @@ struct ThreadView: View {
                 mentionSuggestions: model.mentionSuggestions,
                 onPickMention: { profile in
                     draft = model.completeMention(in: draft, with: profile)
-                }
+                },
+                focus: $isComposing
             ) {
                 let text = draft
                 let media = tray.readyDescriptors
@@ -79,7 +98,7 @@ struct ThreadView: View {
                 model.updateMentionSuggestions(for: new)
             }
         }
-        .navigationTitle("Thread")
+        .navigationTitle("Thread with \(root.displayName)")
         .navigationBarTitleDisplayMode(.inline)
         .task { await model.activate() }
         .sheet(item: $profileTarget) { target in
@@ -124,9 +143,25 @@ struct ThreadView: View {
         )
     }
 
+    /// A thread nobody has answered yet. Reached by tapping any message, so
+    /// this is a common state, not an edge case.
+    private var emptyThread: some View {
+        VStack(spacing: Space.xxs) {
+            Text("No replies yet")
+                .font(Typography.bodyEmphasis)
+                .foregroundStyle(Palette.text)
+            Text("Start the thread below.")
+                .font(Typography.secondary)
+                .foregroundStyle(Palette.subtext)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, Space.xl)
+        .accessibilityElement(children: .combine)
+    }
+
     private var replyDivider: some View {
         HStack(spacing: Space.xs) {
-            Text(model.replyCount == 1 ? "1 reply" : "\(model.replyCount) replies")
+            Text(replyLabel)
                 .font(Typography.caption)
                 .foregroundStyle(Palette.subtext)
                 .luminousChrome()
@@ -136,6 +171,15 @@ struct ThreadView: View {
         }
         .padding(.vertical, Space.xs)
         .accessibilityElement(children: .combine)
+    }
+
+    /// "Thread" when empty, so the divider still says what the section is.
+    private var replyLabel: String {
+        switch model.replyCount {
+        case 0: "Thread"
+        case 1: "1 reply"
+        default: "\(model.replyCount) replies"
+        }
     }
 }
 

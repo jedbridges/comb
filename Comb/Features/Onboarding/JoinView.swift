@@ -24,25 +24,32 @@ struct JoinView: View {
     var body: some View {
         Form {
             Section {
-                TextField("Paste your invite", text: $model.inviteText, axis: .vertical)
-                    .lineLimit(1...3)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                    .focused($focus, equals: .invite)
-                    .onChange(of: model.inviteText) { _, _ in model.parseInvite() }
-                if model.inviteText.isEmpty {
-                    // Native paste, no permission prompt: the most likely
-                    // reason anyone is here is a link sitting on the
-                    // clipboard.
-                    PasteButton(payloadType: String.self) { strings in
-                        Task { @MainActor in
-                            model.inviteText = strings.first ?? ""
-                            model.parseInvite()
+                // Field and paste share one row. As its own row the button sat
+                // alone in a full-width card, which read as an empty container
+                // with something dropped into it.
+                HStack(spacing: Space.sm) {
+                    TextField("Paste your invite", text: $model.inviteText, axis: .vertical)
+                        .lineLimit(1...3)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .focused($focus, equals: .invite)
+                        .onChange(of: model.inviteText) { _, _ in model.parseInvite() }
+
+                    if model.inviteText.isEmpty {
+                        // Native paste, no permission prompt: the most likely
+                        // reason anyone is here is a link already sitting on
+                        // the clipboard.
+                        PasteButton(payloadType: String.self) { strings in
+                            Task { @MainActor in
+                                model.inviteText = strings.first ?? ""
+                                model.parseInvite()
+                            }
                         }
+                        .buttonBorderShape(.capsule)
+                        .controlSize(.small)
+                        .tint(Palette.chartreuse)
+                        .labelStyle(.iconOnly)
                     }
-                    .buttonBorderShape(.capsule)
-                    .controlSize(.small)
-                    .tint(Palette.chartreuse)
                 }
             } header: {
                 Text("Invite link")

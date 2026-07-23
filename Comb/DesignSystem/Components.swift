@@ -137,10 +137,7 @@ struct AvatarView: View {
                 .frame(width: size, height: size)
                 .clipShape(.circle)
             } else {
-                initial
-                    .compositingGroup()
-                    .luminousChrome()
-                    .frame(width: size, height: size)
+                initial.glyphChrome(size: size)
             }
         }
         // A face is not information: the row's label already says who spoke.
@@ -238,6 +235,18 @@ extension View {
                         .strokeBorder(Palette.hairlineOnGradient, lineWidth: 0.5)
                 )
         )
+    }
+
+    /// The glyph treatment: composited as one badge, then blended into the
+    /// light behind it.
+    ///
+    /// Shared by channel cells and avatars so the two read as one family. It
+    /// has to be one modifier: they were assembled separately once and drifted
+    /// into looking like different systems.
+    func glyphChrome(size: CGFloat) -> some View {
+        compositingGroup()
+            .luminousChrome()
+            .frame(width: size, height: size)
     }
 
     /// The capsule chip: a luminance lift in a pill, for tags, date breaks,

@@ -59,4 +59,7 @@ enum Sizing {
     static let inlineMark: CGFloat = 48
     /// Minimum hit target, per Apple.
     static let hitTarget: CGFloat = 44
+    /// A control drawn small inside a full-size target: the compose bar's
+    /// round buttons, which should not dominate a two-row input.
+    static let compactControl: CGFloat = 32
 }

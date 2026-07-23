@@ -47,7 +47,11 @@ enum Palette {
     /// scarcest colour on decoration.
     static let glyphSurface = adaptive(light: 0xDCDFE8, dark: 0x343850)
     /// The symbol inside it, soft enough to read as texture.
-    static let glyphTint = adaptive(light: 0x6C6F85, dark: 0x9BA3C4)
+    /// The symbol or initial inside a glyph. Kept close to `text` in
+    /// luminance rather than sitting at subtext level: after the blend it
+    /// loses contrast against its own cell, and a dim tint on a dim cell
+    /// reads as flat grey, which is the one thing the brand is not.
+    static let glyphTint = adaptive(light: 0x4C4F69, dark: 0xC3CAE6)
 
     // MARK: - Semantic
 

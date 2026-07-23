@@ -22,8 +22,11 @@ struct WelcomeView: View {
     var body: some View {
         NavigationStack(path: $path) {
             Backdrop {
-                // Bees over the gradient, behind everything readable.
-                BeeSwarmView()
+                // Bees over the gradient, behind everything readable, and
+                // gathered around the mark rather than patrolling the whole
+                // screen. 0.4 rather than 0.5: the identity block sits above
+                // centre, and the swarm should orbit the mark, not the type.
+                BeeSwarmView(hive: UnitPoint(x: 0.5, y: 0.4))
                     .ignoresSafeArea()
 
                 // Centred, deliberately. An asymmetric version was tried and

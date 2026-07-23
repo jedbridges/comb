@@ -14,32 +14,40 @@ static float hash(float n) {
     return fract(sin(n) * 43758.5453123);
 }
 
-static float2 beePosition(float index, float time, float2 size) {
+static float2 beePosition(float index, float time, float2 size, float2 hive) {
     float seedA = hash(index * 7.13);
     float seedB = hash(index * 13.7);
+    float seedC = hash(index * 3.71);
 
-    // Slow orbit. Frequencies land in ~0.11...0.26 rad/s, phase per bee, and
-    // the x/y ratio is kept irrational-ish so loops precess instead of
-    // repeating.
-    float2 orbitFrequency = float2(0.11 + seedA * 0.09, 0.13 + seedB * 0.13);
+    // Each bee holds its own elliptical orbit around the mark. The two
+    // frequencies differ per bee and never divide evenly, so a path precesses
+    // instead of retracing itself, which is what stops the swarm reading as a
+    // carousel.
+    float2 orbitFrequency = float2(0.13 + seedA * 0.14, 0.15 + seedB * 0.16);
     float2 orbitPhase = float2(seedA, seedB) * 6.28318;
     float2 orbit = float2(
         sin(time * orbitFrequency.x + orbitPhase.x),
-        sin(time * orbitFrequency.y + orbitPhase.y)
+        cos(time * orbitFrequency.y + orbitPhase.y)
     );
 
-    // Each bee patrols its own patch of the screen rather than all sharing
-    // the centre.
-    float2 home = float2(0.2 + seedA * 0.6, 0.15 + seedB * 0.6);
-    float2 range = float2(0.16 + seedB * 0.1, 0.12 + seedA * 0.1);
+    // Radii in points, not screen fractions: the swarm should sit the same
+    // distance off the mark regardless of how tall the phone is. The spread
+    // keeps some bees close in and some ranging wide.
+    float2 radius = float2(70.0 + seedC * 90.0, 55.0 + seedA * 75.0);
+
+    // A slow drift of the whole orbit, so bees do not sit on fixed rails.
+    float2 drift = 18.0 * float2(
+        sin(time * 0.07 + seedB * 6.28318),
+        cos(time * 0.09 + seedC * 6.28318)
+    );
 
     // The buzz: a fast, small wobble layered on the drift.
-    float2 wobble = 0.008 * float2(
+    float2 wobble = 3.0 * float2(
         sin(time * (5.0 + seedA * 3.0) + orbitPhase.y * 3.0),
         cos(time * (6.0 + seedB * 2.0) + orbitPhase.x * 2.0)
     );
 
-    return (home + orbit * range + wobble) * size;
+    return hive * size + orbit * radius + drift + wobble;
 }
 
 [[ stitchable ]] half4 beeSwarm(
@@ -47,19 +55,21 @@ static float2 beePosition(float index, float time, float2 size) {
     half4 currentColor,
     float2 size,
     float time,
-    float intensity
+    float intensity,
+    float2 hive
 ) {
-    const int beeCount = 7;
+    const int beeCount = 12;
     float glow = 0.0;
 
     for (int i = 0; i < beeCount; i++) {
-        float2 bee = beePosition(float(i) + 1.0, time, size);
+        float2 bee = beePosition(float(i) + 1.0, time, size, hive);
         float distanceToBee = length(position - bee);
 
-        // A tight bright core inside a soft halo, so each dot reads as a
-        // point of light rather than a blurry blob.
-        glow += exp(-distanceToBee * distanceToBee / 18.0);
-        glow += 0.35 * exp(-distanceToBee * distanceToBee / 220.0);
+        // A tight bright core inside a soft halo. Both are tighter than the
+        // first pass: the wide halo read as a lens flare rather than an
+        // insect, and shrinking it is most of what makes these look like bees.
+        glow += 0.9 * exp(-distanceToBee * distanceToBee / 7.0);
+        glow += 0.16 * exp(-distanceToBee * distanceToBee / 90.0);
     }
 
     glow = min(glow, 1.0) * intensity;

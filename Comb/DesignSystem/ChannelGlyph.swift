@@ -21,13 +21,9 @@ struct ChannelGlyph: View {
         }
         // Composited first, then blended as one badge: cell and symbol together
         // shift the light behind them instead of sitting on top as a flat
-        // indigo patch fighting the gradient's hue. Same rule as every other
-        // piece of chrome over the gradient, and the reason it is the shared
-        // token rather than a fixed blend mode: a dark symbol burned into an
-        // already-dark cell in dark mode collapses the contrast.
-        .compositingGroup()
-        .luminousChrome()
-        .frame(width: size, height: size)
+        // indigo patch fighting the gradient's hue. The shared modifier is what
+        // keeps avatars looking like part of the same system.
+        .glyphChrome(size: size)
         // The channel's name is right beside it; the glyph is atmosphere.
         .accessibilityHidden(true)
     }

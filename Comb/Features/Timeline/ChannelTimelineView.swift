@@ -18,6 +18,7 @@ struct ChannelTimelineView: View {
     @State private var editing: TimelineRow?
     @State private var deleting: TimelineRow?
     @State private var reactingTo: TimelineRow?
+    @FocusState private var isComposing: Bool
     @State private var scrollPosition = ScrollPosition()
     @State private var isAwayFromBottom = false
     @State private var arrivalsWhileAway = 0
@@ -81,6 +82,12 @@ struct ChannelTimelineView: View {
                 }
                 .padding(.horizontal, Space.sm)
                 .padding(.vertical, Space.sm)
+                // Taps that miss a message dismiss the keyboard. Rows carry
+                // their own tap gesture and win, being innermost, so opening a
+                // thread still works while typing.
+                .frame(maxWidth: .infinity, minHeight: 0)
+                .contentShape(.rect)
+                .onTapGesture { isComposing = false }
             }
             .defaultScrollAnchor(.bottom)
             .scrollDismissesKeyboard(.interactively)
@@ -124,7 +131,8 @@ struct ChannelTimelineView: View {
                 mentionSuggestions: model.mentionSuggestions,
                 onPickMention: { profile in
                     draft = model.completeMention(in: draft, with: profile)
-                }
+                },
+                focus: $isComposing
             ) {
                 let text = draft
                 draft = ""
@@ -364,6 +372,13 @@ struct MessageRow: View {
                 }
                 .accessibilityElement(children: .combine)
                 .accessibilityLabel(accessibilityDescription)
+                .accessibilityHint(onOpenThread == nil ? "" : "Opens the thread")
+                .contentShape(.rect)
+                // Tap opens the thread whether or not one exists yet: a
+                // message is the start of a conversation that has not happened
+                // yet, and requiring a long-press to discover that hid the
+                // feature behind knowledge.
+                .onTapGesture { onOpenThread?() }
                 .contextMenu { contextActions }
 
                 if !reactions.isEmpty {
@@ -375,11 +390,7 @@ struct MessageRow: View {
                 }
 
                 if entry.row.hasThread, let onOpenThread {
-                    ThreadAffordance(
-                        count: entry.row.replyCount,
-                        lastReply: entry.row.lastReplyDate,
-                        action: onOpenThread
-                    )
+                    ThreadAffordance(count: entry.row.replyCount, action: onOpenThread)
                 }
             }
 
@@ -506,8 +517,14 @@ struct MessageRow: View {
 
 /// The way into a thread, shown under the message that started it.
 ///
-/// Carries the reply count and how recently the thread moved, because those are
-/// the two things that decide whether it is worth opening.
+/// Deliberately not chartreuse. The accent already marks unread channels and
+/// messages that name you; a third use on one screen is the point where none
+/// of them mean anything. This is navigation, not an alert, so it takes the
+/// same neutral lift as every other chip.
+///
+/// No timestamp either: the message above already carries a time, and "22
+/// hours ago" beside "1 reply" answered a question nobody is asking at the
+/// moment they decide whether to tap.
 /// A date pill between calendar days, so scrolled history stays anchored in
 /// time. "Today" and "Yesterday" by name; further back, the day and date.
 struct DayBreak: View {
@@ -541,7 +558,6 @@ struct DayBreak: View {
 
 private struct ThreadAffordance: View {
     let count: Int
-    let lastReply: Date?
     let action: () -> Void
 
     var body: some View {
@@ -551,16 +567,12 @@ private struct ThreadAffordance: View {
                     .font(Typography.count)
                 Text(count == 1 ? "1 reply" : "\(count) replies")
                     .font(Typography.label)
-                if let lastReply {
-                    Text(lastReply, format: .relative(presentation: .named))
-                        .font(Typography.caption)
-                        .foregroundStyle(Palette.subtext)
-                }
+                Image(systemName: "chevron.right")
+                    .font(Typography.count)
+                    .foregroundStyle(Palette.subtext)
             }
-            .foregroundStyle(Palette.oliveInk)
-            .padding(.horizontal, Space.xs)
-            .padding(.vertical, Space.xxs)
-            .background(Palette.chartreuse.opacity(0.18), in: .capsule)
+            .foregroundStyle(Palette.text)
+            .combChip()
         }
         .buttonStyle(.plain)
         .padding(.top, Space.xxs)
@@ -652,6 +664,10 @@ struct ComposeBar: View {
     /// pick. Empty when the draft has no open mention.
     var mentionSuggestions: [ProfileSummary] = []
     var onPickMention: (ProfileSummary) -> Void = { _ in }
+    /// Owned by the screen, not the bar: the timeline needs to dismiss the
+    /// keyboard when someone taps away from it. Declared before `onSend` so
+    /// the trailing closure still binds to the send action.
+    var focus: FocusState<Bool>.Binding
     let onSend: () -> Void
 
     @State private var picked: [PhotosPickerItem] = []
@@ -721,65 +737,73 @@ struct ComposeBar: View {
                 .padding(.top, Space.xxs)
             }
 
-            // Centred, not bottom-aligned: the glass button style pads its
-            // label, so the send circle renders taller than the field, and
-            // bottom alignment visibly hangs the field off its foot. Centring
-            // absorbs the style's extra height evenly on both sides.
-            HStack(alignment: .center, spacing: Space.xs) {
-                if attachments != nil {
-                    PhotosPicker(
-                        selection: $picked,
-                        maxSelectionCount: 4,
-                        matching: .images,
-                        photoLibrary: .shared()
-                    ) {
-                        // No `luminousChrome()` here: the picker's label
-                        // closure is not main-actor isolated.
-                        Image(systemName: "photo.on.rectangle.angled")
-                            .font(Typography.actionSecondary)
-                            .foregroundStyle(Palette.subtext)
-                            .frame(width: Sizing.hitTarget, height: Sizing.hitTarget)
-                            .contentShape(.rect)
-                    }
-                    .accessibilityLabel("Add a photo")
-                }
-
+            // Text on its own row, controls beneath. One surface rather than
+            // a field-pill nested inside a bar-pill: the nesting forced the
+            // text into a narrow slot between two buttons, and two concentric
+            // rounded rectangles a few points apart never stop looking like
+            // an accident.
+            VStack(alignment: .leading, spacing: Space.xs) {
                 TextField(placeholder, text: $draft, axis: .vertical)
-                    .lineLimit(1...5)
+                    .lineLimit(1...6)
                     .font(Typography.body)
                     .foregroundStyle(Palette.text)
-                    .padding(.horizontal, Space.sm)
-                    // The field matches the buttons' height exactly, so all
-                    // three sit on one line instead of a small field floating
-                    // beside a larger button.
-                    .frame(minHeight: Sizing.hitTarget)
-                    .background(
-                        Palette.surface.opacity(0.45),
-                        in: .rect(cornerRadius: Radii.composeField)
-                    )
+                    .textFieldStyle(.plain)
+                    .focused(focus)
+                    .padding(.horizontal, Space.xs)
+                    .padding(.top, Space.xxs)
+                    // The field is one line tall inside a two-row bar, so
+                    // most of the bar is not the field. Without this, tapping
+                    // the obvious place to type does nothing.
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(.rect)
+                    .onTapGesture { focus.wrappedValue = true }
 
-                Button(action: onSend) {
-                    Image(systemName: "arrow.up")
-                        .font(Typography.action)
-                        .foregroundStyle(Palette.ink)
-                        .frame(width: Sizing.hitTarget, height: Sizing.hitTarget)
+                HStack(spacing: Space.xs) {
+                    if attachments != nil {
+                        PhotosPicker(
+                            selection: $picked,
+                            maxSelectionCount: 4,
+                            matching: .images,
+                            photoLibrary: .shared()
+                        ) {
+                            // No `luminousChrome()` here: the picker's label
+                            // closure is not main-actor isolated.
+                            Image(systemName: "plus")
+                                .font(Typography.actionSecondary)
+                                .foregroundStyle(Palette.text)
+                                .frame(width: Sizing.compactControl, height: Sizing.compactControl)
+                                .background(Palette.surface.opacity(0.5), in: .circle)
+                                .contentShape(.circle)
+                        }
+                        .accessibilityLabel("Add a photo")
+                    }
+
+                    Spacer(minLength: 0)
+
+                    Button(action: onSend) {
+                        Image(systemName: "arrow.up")
+                            .font(Typography.actionSecondary)
+                            .foregroundStyle(canSend ? Palette.ink : Palette.subtext)
+                            .frame(width: Sizing.compactControl, height: Sizing.compactControl)
+                            .background(
+                                canSend ? Palette.chartreuse : Palette.surface.opacity(0.5),
+                                in: .circle
+                            )
+                            .contentShape(.circle)
+                    }
+                    .buttonStyle(.plain)
+                    .animation(Motion.fast, value: canSend)
+                    .accessibilityLabel("Send message")
+                    .disabled(!canSend)
                 }
-                .accessibilityLabel("Send message")
-                .buttonStyle(.glassProminent)
-                // Circular rather than the style's default capsule: a 44pt
-                // capsule around a 44pt frame reads as a lozenge next to a
-                // rounded field, and the circle is what makes the send action
-                // the one distinct shape in the bar.
-                .buttonBorderShape(.circle)
-                .tint(Palette.chartreuse)
-                .disabled(!canSend)
+                // Both controls keep a full 44pt target while drawing at 32,
+                // so the row stays compact without shrinking what a thumb has
+                // to hit.
+                .frame(minHeight: Sizing.hitTarget)
             }
         }
-        // Space.xs all round, which is what makes the field's corner
-        // concentric with the shell's: 24 outer, 8 padding, 16 inner. The
-        // same 8pt then separates the bar from the screen edge, so the bar
-        // does not sit hard against the home indicator.
-        .padding(Space.xs)
+        .padding(.horizontal, Space.xs)
+        .padding(.vertical, Space.xxs)
         .glassEffect(in: .rect(cornerRadius: Radii.sheet))
         .padding(.horizontal, Space.sm)
         .padding(.bottom, Space.xs)
