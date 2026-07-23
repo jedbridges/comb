@@ -1,5 +1,20 @@
 import SwiftUI
 
+/// The welcome-screen logo. Uses the bundled `WelcomeSymbol` artwork when it is
+/// present, and falls back to the drawn mark so the build is never blocked on an
+/// asset the designer has not dropped in yet.
+struct WelcomeSymbol: View {
+    var body: some View {
+        if UIImage(named: "WelcomeSymbol") != nil {
+            Image("WelcomeSymbol")
+                .resizable()
+                .scaledToFit()
+        } else {
+            Mark()
+        }
+    }
+}
+
 /// Comb's mark: nested honeycomb cells, matching the app icon.
 ///
 /// Deliberately not Buzz's bee, which Apache 2.0 section 6 does not license for

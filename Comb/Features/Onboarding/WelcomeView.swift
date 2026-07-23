@@ -26,7 +26,7 @@ struct WelcomeView: View {
                     Spacer()
 
                     VStack(spacing: Space.md) {
-                        Mark().frame(width: Sizing.heroMark, height: Sizing.heroMark)
+                        WelcomeSymbol().frame(width: Sizing.heroMark, height: Sizing.heroMark)
                         Text("Comb")
                             .font(Typography.display)
                             .kerning(Kerning.display)
