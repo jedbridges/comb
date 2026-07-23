@@ -57,8 +57,22 @@ content appearing for the first time. `Motion.standard` (240ms) for layout
 changes. `Motion.instant` (120ms) for state flips. Reduce Motion collapses
 movement but keeps fades.
 
+**Never grey on colour.** A grey fill or grey text over the gradient reads
+washed out, because the grey fights the hue behind it. Use a luminance shift
+(`Palette.liftOnGradient`, white at low opacity) which preserves hue, or a
+shade of the background itself. Chrome riding on the gradient uses
+`.luminousChrome()`, which blends with `plusLighter` in dark and `plusDarker`
+in light.
+
 **Components are born on the second use.** A pattern appearing on two screens
 becomes a component; a third copy is where drift starts.
+
+## Context
+
+`.impeccable.md` in the project root carries the design context this system
+serves: who uses Comb, the brand's voice, the anti-references, and the calls
+on density, motion, and the accessibility bar. Read it before a design pass;
+this file is the how, that one is the why.
 
 ## Changing things
 
