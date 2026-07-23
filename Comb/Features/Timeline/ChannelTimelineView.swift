@@ -17,6 +17,9 @@ struct ChannelTimelineView: View {
     @State private var loader: MediaLoader
     @State private var editing: TimelineRow?
     @State private var deleting: TimelineRow?
+    @State private var scrollPosition = ScrollPosition()
+    @State private var isAwayFromBottom = false
+    @State private var arrivalsWhileAway = 0
 
     init(session: CommunitySession, channel: ChannelSummary) {
         self.session = session
@@ -32,12 +35,17 @@ struct ChannelTimelineView: View {
 
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: Space.hairline) {
-                    if model.canLoadOlder {
+                    // Hidden when the channel is empty: a backfill button over
+                    // a void promises history that does not exist.
+                    if model.canLoadOlder, !model.displayRows.isEmpty {
                         loadOlderControl
                     }
 
                     // Rendered oldest to newest; the query returns newest first.
                     ForEach(model.displayRows) { entry in
+                        if entry.showsDayBreak {
+                            DayBreak(date: entry.row.date)
+                        }
                         MessageRow(
                             entry: entry,
                             reactions: model.snapshot.reactions[entry.row.id] ?? [],
@@ -70,6 +78,32 @@ struct ChannelTimelineView: View {
             .defaultScrollAnchor(.bottom)
             .scrollDismissesKeyboard(.interactively)
             .softScrollEdges()
+            .scrollPosition($scrollPosition)
+            .onScrollGeometryChange(for: CGFloat.self) { geometry in
+                geometry.contentSize.height
+                    - geometry.visibleRect.maxY
+                    + geometry.contentInsets.bottom
+            } action: { _, distanceFromBottom in
+                isAwayFromBottom = distanceFromBottom > 300
+            }
+            .onChange(of: model.displayRows.last?.id) { previous, current in
+                // A message landing while the reader is up in history: count it
+                // on the pill rather than yanking them down.
+                guard isAwayFromBottom, previous != nil, previous != current else { return }
+                arrivalsWhileAway += 1
+            }
+            .onChange(of: isAwayFromBottom) { _, away in
+                if !away { arrivalsWhileAway = 0 }
+            }
+            .overlay(alignment: .bottomTrailing) {
+                if isAwayFromBottom {
+                    jumpToBottom
+                }
+            }
+
+            if model.displayRows.isEmpty {
+                emptyChannel
+            }
         }
         .safeAreaInset(edge: .bottom) {
             ComposeBar(
@@ -161,6 +195,52 @@ struct ChannelTimelineView: View {
         return action
     }
 
+    /// The way back to now, present only once the reader has left it.
+    private var jumpToBottom: some View {
+        Button {
+            withAnimation(Motion.standard) {
+                scrollPosition.scrollTo(edge: .bottom)
+            }
+        } label: {
+            HStack(spacing: Space.xxs) {
+                Image(systemName: "chevron.down")
+                if arrivalsWhileAway > 0 {
+                    Text("\(arrivalsWhileAway) new")
+                        .font(Typography.count)
+                }
+            }
+            .font(Typography.actionSecondary)
+            .foregroundStyle(Palette.text)
+            .padding(.horizontal, Space.sm)
+            .frame(minHeight: Sizing.hitTarget)
+        }
+        .buttonStyle(.glass)
+        .padding(.trailing, Space.sm)
+        .padding(.bottom, Space.sm)
+        .transition(.opacity.combined(with: .move(edge: .bottom)))
+        .accessibilityLabel(
+            arrivalsWhileAway > 0
+                ? "\(arrivalsWhileAway) new messages. Jump to latest."
+                : "Jump to latest"
+        )
+    }
+
+    /// The first-visit state: an invitation, not a void. The compose bar
+    /// right below it is the call to action.
+    private var emptyChannel: some View {
+        VStack(spacing: Space.sm) {
+            ChannelGlyph(name: channel.name, size: 64)
+            Text("Nothing here yet")
+                .font(Typography.bodyEmphasis)
+                .foregroundStyle(Palette.text)
+            Text("Say the first thing.")
+                .font(Typography.secondary)
+                .foregroundStyle(Palette.subtext)
+        }
+        .arrival(true)
+        .accessibilityElement(children: .combine)
+    }
+
     private var loadOlderControl: some View {
         HStack {
             Spacer()
@@ -200,8 +280,9 @@ struct MessageRow: View {
     var onEdit: (() -> Void)?
     var onDelete: (() -> Void)?
 
-    /// The quick palette. A full picker is later polish.
-    private static let quickReactions = ["🐝", "👍", "❤️", "🔥", "😂"]
+    /// The quick palette, shared with the reaction bar's add button so the
+    /// two ways to react can never disagree. A full picker is later polish.
+    static let quickReactions = ["🐝", "👍", "❤️", "🔥", "😂"]
 
     /// Matches AvatarView's scaled frame so continuation lines in a run stay
     /// aligned with the first at every text size.
@@ -287,7 +368,9 @@ struct MessageRow: View {
             let text = entry.row.displayContent
             parts.append(text.isEmpty ? "sent a picture" : text)
         }
-        parts.append(entry.row.date.formatted(date: .omitted, time: .shortened))
+        // Day included: VoiceOver users scroll history too, and "4:56 PM"
+        // with no day is the same disorientation the date pills fix visually.
+        parts.append(entry.row.date.formatted(date: .abbreviated, time: .shortened))
 
         if entry.row.isEdited { parts.append("edited") }
         switch entry.row.delivery {
@@ -312,7 +395,10 @@ struct MessageRow: View {
             // keeps the app whole on relays that never send it.
             let text = entry.row.displayContent
             if !text.isEmpty {
-                Text("\(text)\(editedMarker)")
+                // Linkified: a designers community trades in links, and dead
+                // URLs were the first papercut in every share. Tapping opens
+                // Safari through the standard openURL path.
+                Text("\(Text(MessageLinks.attributed(text)))\(editedMarker)")
                     .font(Typography.body)
                     .foregroundStyle(Palette.text)
                     .textSelection(.enabled)
@@ -370,6 +456,43 @@ struct MessageRow: View {
 ///
 /// Carries the reply count and how recently the thread moved, because those are
 /// the two things that decide whether it is worth opening.
+/// A date pill between calendar days, so scrolled history stays anchored in
+/// time. "Today" and "Yesterday" by name; further back, the day and date.
+struct DayBreak: View {
+    let date: Date
+
+    var body: some View {
+        HStack {
+            Spacer()
+            Text(label)
+                .font(Typography.caption)
+                .foregroundStyle(Palette.subtext)
+                .padding(.horizontal, Space.sm)
+                .padding(.vertical, Space.xxs)
+                .background(Color.white.opacity(0.07), in: .capsule)
+                .overlay(
+                    Capsule().strokeBorder(Color.white.opacity(0.10), lineWidth: 0.5)
+                )
+                .luminousChrome()
+            Spacer()
+        }
+        .padding(.vertical, Space.xs)
+        .accessibilityAddTraits(.isHeader)
+    }
+
+    private var label: String {
+        let calendar = Calendar.current
+        if calendar.isDateInToday(date) { return String(localized: "Today") }
+        if calendar.isDateInYesterday(date) { return String(localized: "Yesterday") }
+
+        // The year appears only once it stops being obvious.
+        if calendar.isDate(date, equalTo: .now, toGranularity: .year) {
+            return date.formatted(.dateTime.weekday(.wide).month(.abbreviated).day())
+        }
+        return date.formatted(.dateTime.month(.abbreviated).day().year())
+    }
+}
+
 private struct ThreadAffordance: View {
     let count: Int
     let lastReply: Date?
@@ -418,6 +541,24 @@ struct ReactionBar: View {
                         reaction.includesMe ? "Removes your reaction" : "Adds your reaction"
                     )
             }
+
+            // The visible way in, once a pile exists. Before this, reacting
+            // was long-press-only, which is knowledge rather than an
+            // affordance.
+            Menu {
+                ForEach(MessageRow.quickReactions, id: \.self) { emoji in
+                    Button(emoji) { onTap(emoji) }
+                }
+            } label: {
+                Image(systemName: "plus")
+                    .font(Typography.label)
+                    .foregroundStyle(Palette.subtext)
+                    .padding(.horizontal, Space.xs)
+                    .padding(.vertical, Space.xxs)
+                    .background(Palette.surface.opacity(0.5), in: .capsule)
+                    .luminousChrome()
+            }
+            .accessibilityLabel("Add a reaction")
         }
         .padding(.top, Space.hairline)
     }
@@ -663,8 +804,32 @@ final class ChannelTimeline {
         /// Whether this message starts a run: author changed or five minutes
         /// passed. Grouping is what keeps a busy channel readable.
         let showsHeader: Bool
+        /// Whether a new calendar day starts here, which draws a date pill
+        /// above the row. Without these, Tuesday reads as today.
+        let showsDayBreak: Bool
 
         var id: String { row.id }
+    }
+
+    /// Builds display entries from rows ordered oldest first. Shared with the
+    /// thread model so runs and day breaks can never behave differently in
+    /// the two places a message renders.
+    static func makeEntries(orderedOldestFirst rows: some Sequence<TimelineRow>) -> [Entry] {
+        let calendar = Calendar.current
+        var entries: [Entry] = []
+        var previous: TimelineRow?
+
+        for row in rows {
+            let startsRun = previous.map {
+                $0.pubkey != row.pubkey || row.createdAt - $0.createdAt > 300
+            } ?? true
+            let breaksDay = previous.map {
+                !calendar.isDate($0.date, inSameDayAs: row.date)
+            } ?? true
+            entries.append(Entry(row: row, showsHeader: startsRun, showsDayBreak: breaksDay))
+            previous = row
+        }
+        return entries
     }
 
     private(set) var snapshot = TimelineSnapshot.empty
@@ -681,21 +846,9 @@ final class ChannelTimeline {
         self.channel = channel
     }
 
-    /// Oldest first, with header grouping resolved.
+    /// Oldest first, with run grouping and day breaks resolved.
     var displayRows: [Entry] {
-        let ordered = snapshot.rows.reversed()
-        var entries: [Entry] = []
-        entries.reserveCapacity(snapshot.rows.count)
-
-        var previous: TimelineRow?
-        for row in ordered {
-            let startsRun = previous.map {
-                $0.pubkey != row.pubkey || row.createdAt - $0.createdAt > 300
-            } ?? true
-            entries.append(Entry(row: row, showsHeader: startsRun))
-            previous = row
-        }
-        return entries
+        Self.makeEntries(orderedOldestFirst: snapshot.rows.reversed())
     }
 
     func activate() async {

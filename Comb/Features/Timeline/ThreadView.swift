@@ -37,6 +37,9 @@ struct ThreadView: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: Space.hairline) {
                     ForEach(model.entries) { entry in
+                        if entry.showsDayBreak, entry.row.id != root.id {
+                            DayBreak(date: entry.row.date)
+                        }
                         // The opener is separated from its replies by a rule
                         // carrying the count, so it is obvious which message
                         // everything below is answering.
@@ -136,19 +139,10 @@ final class ThreadModel {
     /// Everything but the opener.
     var replyCount: Int { max(snapshot.rows.count - 1, 0) }
 
-    /// Oldest first, already the query's order, with header grouping resolved
-    /// the same way the channel does it.
+    /// Oldest first, already the query's order, built by the same helper as
+    /// the channel so runs and day breaks can never disagree between the two.
     var entries: [ChannelTimeline.Entry] {
-        var result: [ChannelTimeline.Entry] = []
-        var previous: TimelineRow?
-        for row in snapshot.rows {
-            let startsRun = previous.map {
-                $0.pubkey != row.pubkey || row.createdAt - $0.createdAt > 300
-            } ?? true
-            result.append(ChannelTimeline.Entry(row: row, showsHeader: startsRun))
-            previous = row
-        }
-        return result
+        ChannelTimeline.makeEntries(orderedOldestFirst: snapshot.rows)
     }
 
     func activate() async {
