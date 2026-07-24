@@ -1,0 +1,26 @@
+name: Feature request
+description: Suggest something Comb should do.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Comb has design principles that rule some things out on purpose. Worth
+        a look before writing:
+        [README](https://github.com/jedbridges/comb/blob/main/README.md#design-principles).
+  - type: textarea
+    id: problem
+    attributes:
+      label: What is the problem
+      description: >
+        What are you trying to do that Comb makes hard or impossible? Describe
+        the situation rather than the solution.
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: What you have in mind
+      description: Optional. If you have a specific idea, describe it.
+    validations:
+      required: false

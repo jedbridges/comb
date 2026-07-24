@@ -1,0 +1,53 @@
+name: Bug report
+description: Something in Comb does not work the way it should.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        From inside the app, **Settings → Report a problem** assembles a report
+        with your device, the version, and a local log. Pasting that here makes
+        a bug far easier to trace.
+
+        For anything security-sensitive, do not use this form. See
+        [SECURITY.md](https://github.com/jedbridges/comb/blob/main/SECURITY.md).
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open a channel with…
+        2. Tap…
+        3. …
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Comb version
+      description: Settings, at the bottom.
+      placeholder: "0.1.0 (3)"
+    validations:
+      required: false
+  - type: input
+    id: device
+    attributes:
+      label: Device and iOS version
+      placeholder: iPhone 16 Pro, iOS 26.1
+    validations:
+      required: false
+  - type: textarea
+    id: log
+    attributes:
+      label: Diagnostics log
+      description: From Settings, Report a problem. Optional but very helpful.
+      render: text
+    validations:
+      required: false

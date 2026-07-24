@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: What is Buzz?
+    url: https://buzz.xyz
+    about: Comb is a client for Buzz communities. This is Buzz itself.
+  - name: Buzz issues
+    url: https://github.com/block/buzz/issues
+    about: For problems with the relay, the desktop app, or hosted Buzz.
+  - name: Security vulnerability
+    url: https://github.com/jedbridges/comb/security/advisories/new
+    about: Report privately, not as a public issue.
