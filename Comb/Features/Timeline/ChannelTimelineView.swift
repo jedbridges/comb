@@ -122,6 +122,24 @@ struct ChannelTimelineView: View {
             } action: { _, distanceFromBottom in
                 isAwayFromBottom = distanceFromBottom > 300
             }
+            // Keep the newest message in view while the content height is still
+            // settling. A channel with media lays out tall, then shrinks as the
+            // images and the video placeholder resolve their real heights: a
+            // measured ~900pt drop moments after open. `defaultScrollAnchor`
+            // pins to the bottom of the content as it was at first layout, so
+            // once it shrinks underneath, the viewport is left parked past the
+            // new end, showing nothing. Re-pinning on every content-height
+            // change follows the shrink down.
+            //
+            // Gated on `isAwayFromBottom`, so it never fights a reader who has
+            // scrolled up into history: their scroll does not change the content
+            // height, only the settle does, and by then they are marked away.
+            .onScrollGeometryChange(for: CGFloat.self) { $0.contentSize.height } action: { old, new in
+                guard old != new, !isAwayFromBottom,
+                      let lastID = model.displayRows.last?.id
+                else { return }
+                proxy.scrollTo(lastID, anchor: .bottom)
+            }
             .onChange(of: model.displayRows.last?.id) { previous, current in
                 // A message landing while the reader is up in history: count it
                 // on the pill rather than yanking them down.
