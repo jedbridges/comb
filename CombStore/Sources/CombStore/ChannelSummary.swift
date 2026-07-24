@@ -39,6 +39,7 @@ public extension EventStore {
                      WHERE m.channel_id = c.id)                       AS members,
                    (SELECT e.content FROM event e
                      WHERE e.h = c.id AND e.kind = :kind
+                       AND NOT EXISTS (SELECT 1 FROM blocked b WHERE b.pubkey = e.pubkey)
                        AND NOT EXISTS (SELECT 1 FROM deletion d
                                         WHERE d.target_id = e.id
                                           AND (d.kind = 9005 OR d.deleted_by = e.pubkey))
@@ -56,6 +57,7 @@ public extension EventStore {
                        AND e.created_at > COALESCE(
                              (SELECT r.last_read_at FROM read_state r
                                WHERE r.channel_id = c.id), 0)
+                       AND NOT EXISTS (SELECT 1 FROM blocked b WHERE b.pubkey = e.pubkey)
                        AND NOT EXISTS (SELECT 1 FROM deletion d
                                         WHERE d.target_id = e.id
                                           AND (d.kind = 9005 OR d.deleted_by = e.pubkey))
@@ -305,6 +307,7 @@ public extension EventStore {
                 WHERE e.kind = :kind
                   AND e.content LIKE :needle ESCAPE '\\'
                   AND NOT EXISTS (SELECT 1 FROM deletion d WHERE d.target_id = e.id)
+                  AND NOT EXISTS (SELECT 1 FROM blocked b WHERE b.pubkey = e.pubkey)
                 ORDER BY e.created_at DESC
                 LIMIT :limit
                 """, arguments: [

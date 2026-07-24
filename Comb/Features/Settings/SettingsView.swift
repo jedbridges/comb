@@ -88,6 +88,17 @@ struct SettingsView: View {
                 .combRows()
 
                 Section {
+                    NavigationLink {
+                        BlockedListView(session: session)
+                    } label: {
+                        Label("Blocked", systemImage: "hand.raised")
+                    }
+                } footer: {
+                    Text("People you have hidden on this iPhone. Blocking is never published, and they are not told.")
+                }
+                .combRows()
+
+                Section {
                     Toggle("Notify me about mentions", isOn: $notifyMentions)
                         .tint(Palette.chartreuse)
                         .onChange(of: notifyMentions) { _, wantsOn in
@@ -143,6 +154,12 @@ struct SettingsView: View {
 
                 Section {
                     LabeledContent("Comb", value: appVersion)
+                    // What Buzz is, from the people who make it. Comb explains
+                    // itself but should not try to explain someone else's
+                    // product secondhand.
+                    Link(destination: URL(string: "https://buzz.xyz")!) {
+                        RowLabel(title: "What is Buzz?", systemImage: "arrow.up.right.square")
+                    }
                 } footer: {
                     Text("An independent, open source client for Buzz relays. Not affiliated with Block, Inc.")
                 }

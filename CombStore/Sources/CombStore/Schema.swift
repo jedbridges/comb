@@ -121,6 +121,21 @@ enum Schema {
                 """)
         }
 
+        // Local-only, and deliberately so: blocking is this reader's decision
+        // about their own screen, not an event anyone else should see. Nothing
+        // is published, the blocked person is not told, and the relay keeps
+        // delivering their messages; the timeline simply stops showing them.
+        // A projection rebuild must not wipe it, which is why it lives here in
+        // the local migration rather than with the derived tables.
+        migrator.registerMigration("v2.blocked") { db in
+            try db.execute(sql: """
+                CREATE TABLE blocked (
+                    pubkey     TEXT PRIMARY KEY NOT NULL,
+                    blocked_at INTEGER NOT NULL
+                )
+                """)
+        }
+
         migrator.registerMigration("v1.projections") { db in
             try createProjectionTables(db)
         }

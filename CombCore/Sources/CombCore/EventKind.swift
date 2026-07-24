@@ -17,6 +17,10 @@ public struct EventKind: RawRepresentable, Hashable, Codable, Sendable, Expressi
     public static let textNote: EventKind = 1            // NIP-01
     public static let deletion: EventKind = 5            // NIP-09
     public static let reaction: EventKind = 7            // NIP-25
+    /// Reporting a message or a person to whoever moderates the relay. The
+    /// standard every Nostr moderation tool already reads, which is why Comb
+    /// publishes this rather than inventing a reporting channel of its own.
+    public static let report: EventKind = 1984           // NIP-56
     public static let groupChatMessage: EventKind = 9    // NIP-29
     public static let giftWrap: EventKind = 1059         // NIP-17 encrypted DM
     public static let clientAuth: EventKind = 22242      // NIP-42 auth response

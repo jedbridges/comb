@@ -311,6 +311,49 @@ actor CommunitySession {
         }
     }
 
+    /// Reports a message to whoever moderates the community.
+    ///
+    /// A NIP-56 kind 1984, published to the community's own relay: the standard
+    /// every Nostr moderation tool already reads. Comb runs no moderation
+    /// service and will not invent one, so this is a message to the relay's
+    /// operators rather than an action with a guaranteed outcome, and the UI
+    /// says so.
+    ///
+    /// Both the message and its author are tagged, because a report about a
+    /// person and a report about one thing they said want different responses.
+    func report(
+        _ messageID: String,
+        author: String,
+        reason: Report.Reason,
+        in channel: String
+    ) async {
+        var tags: [[String]] = [["h", channel]]
+        if let type = reason.nip56Type {
+            tags.append(["e", messageID, "", type])
+            tags.append(["p", author, type])
+        } else {
+            tags.append(["e", messageID])
+            tags.append(["p", author])
+        }
+
+        do {
+            let report = try await signer.sign(
+                kind: .report,
+                // Free text is where NIP-56 puts the human explanation, and
+                // "other" has no tag type of its own to carry it.
+                content: reason.label,
+                tags: tags
+            )
+            try await relay.publish(report)
+            // Deliberately not ingested: a report is not part of the
+            // conversation and has no business appearing in anyone's timeline.
+        } catch {
+            // Blocking already took effect locally, which is the part the
+            // reporter can actually rely on.
+            Log.session.error("report failed")
+        }
+    }
+
     /// Publishes the user's profile. Kind 0 is replaceable per pubkey, so this
     /// overwrites any previous name; both `name` and `display_name` are set
     /// because clients disagree about which one they read.

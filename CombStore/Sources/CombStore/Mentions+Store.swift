@@ -54,6 +54,7 @@ public extension EventStore {
                   AND e.pubkey <> :me
                   AND e.h IS NOT NULL
                   AND NOT EXISTS (SELECT 1 FROM deletion d WHERE d.target_id = e.id)
+                  AND NOT EXISTS (SELECT 1 FROM blocked b WHERE b.pubkey = e.pubkey)
                 ORDER BY e.created_at ASC
                 LIMIT :limit
                 """, arguments: [

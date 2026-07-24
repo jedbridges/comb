@@ -32,6 +32,8 @@ struct ChannelTimelineView: View {
     /// the highlight fades rather than staying stuck to a message the reader
     /// has moved on from.
     @State private var highlightedID: String?
+    /// The message being reported, if any.
+    @State private var reportTarget: TimelineRow?
 
     init(session: CommunitySession, channel: ChannelSummary, scrollToMessageID: String? = nil) {
         self.session = session
@@ -75,14 +77,9 @@ struct ChannelTimelineView: View {
                             },
                             onRetry: { Task { await model.retry(entry.row.id) } },
                             onDiscard: { Task { await model.discard(entry.row.id) } },
-                            onZap: entry.row.authorLightningAddress == nil
-                                ? nil
-                                : { zapTarget = entry },
+                            onZap: entry.row.authorLightningAddress == nil ? nil : { zapTarget = entry },
                             onOpenAuthor: { profileTarget = ProfileTarget(pubkey: entry.row.pubkey) },
                             onOpenThread: { threadRoot = entry.row },
-                            // Replying opens the thread rather than composing in
-                            // place: the reply belongs there, and landing in the
-                            // thread shows what is already being said.
                             onReply: entry.row.isDeleted ? nil : { threadRoot = entry.row },
                             onEdit: ownMessageAction(entry.row) {
                                 editing = entry.row
@@ -90,42 +87,12 @@ struct ChannelTimelineView: View {
                             },
                             onDelete: ownMessageAction(entry.row) { deleting = entry.row },
                             onPickEmoji: entry.row.isDeleted ? nil : { reactingTo = entry.row },
-                            onShowReactors: { emoji in
-                                reactorsOf = ReactorsTarget(
-                                    messageID: entry.row.id,
-                                    emoji: emoji
-                                )
-                            },
-                            onMarkUnread: {
-                                // Mark first, then leave. Staying would let the
-                                // on-screen auto-read wipe it out; the badge is
-                                // only useful back on the list.
-                                Task {
-                                    await model.markUnread(from: entry.row.createdAt)
-                                    dismiss()
-                                }
-                            },
-                            onRemind: { when in
-                                Task {
-                                    let ok = await Reminders.schedule(
-                                        message: entry.row,
-                                        channelName: channel.name,
-                                        deepLink: MessageLink.build(
-                                            channelID: channel.id,
-                                            messageID: entry.row.id,
-                                            threadRootID: entry.row.rootID
-                                        ),
-                                        when: when
-                                    )
-                                    toast = ok
-                                        ? "Reminder set \(when.label.lowercased())"
-                                        : "Turn on notifications for Comb in Settings to be reminded."
-                                }
-                            }
+                            onShowReactors: { showReactors(entry.row, $0) },
+                            onMarkUnread: { markUnread(entry.row) },
+                            onRemind: { remind(entry.row, at: $0) },
+                            onReport: reportAction(entry.row),
+                            onBlock: blockAction(entry.row)
                         )
-                        // A brief wash when a deep link lands here, so the eye
-                        // finds the message it jumped to. Transient, unlike the
-                        // (removed) persistent mention wash.
                         .background {
                             if entry.row.id == highlightedID {
                                 RoundedRectangle(cornerRadius: Radii.bubble)
@@ -133,8 +100,6 @@ struct ChannelTimelineView: View {
                                     .padding(.horizontal, -Space.xs)
                             }
                         }
-                        // The anchor the jump-to-bottom pill and deep links
-                        // scroll to.
                         .id(entry.row.id)
                     }
                 }
@@ -293,6 +258,9 @@ struct ChannelTimelineView: View {
                 focusedEmoji: target.emoji
             )
         }
+        .sheet(item: $reportTarget) { row in
+            ReportSheet(session: session, message: row, channelID: channel.id)
+        }
         .sheet(item: $zapTarget) { entry in
             if let address = entry.row.authorLightningAddress,
                let recipient = PublicKey(hex: entry.row.pubkey) {
@@ -308,6 +276,56 @@ struct ChannelTimelineView: View {
     }
 
     /// The action, only when the message is the viewer's own and not deleted.
+    private func showReactors(_ row: TimelineRow, _ emoji: String) {
+        reactorsOf = ReactorsTarget(messageID: row.id, emoji: emoji)
+    }
+
+    /// Marks unread, then leaves: staying would let the on-screen auto-read
+    /// wipe it out, and the badge is only useful back on the list.
+    private func markUnread(_ row: TimelineRow) {
+        Task {
+            await model.markUnread(from: row.createdAt)
+            dismiss()
+        }
+    }
+
+    /// Schedules a reminder and reports the outcome. Lifted out of the row's
+    /// call site for the same reason as the actions below: that expression had
+    /// grown past what the type checker will solve in reasonable time.
+    private func remind(_ row: TimelineRow, at when: Reminders.When) {
+        Task {
+            let scheduled = await Reminders.schedule(
+                message: row,
+                channelName: channel.name,
+                deepLink: MessageLink.build(
+                    channelID: channel.id,
+                    messageID: row.id,
+                    threadRootID: row.rootID
+                ),
+                when: when
+            )
+            toast = scheduled
+                ? "Reminder set \(when.label.lowercased())"
+                : "Turn on notifications for Comb in Settings to be reminded."
+        }
+    }
+
+    /// Reporting and blocking are offered on other people's messages only:
+    /// doing either to yourself is not a thing. Extracted from the row's call
+    /// site because that expression had grown past what the type checker will
+    /// solve in reasonable time.
+    private func reportAction(_ row: TimelineRow) -> (() -> Void)? {
+        guard row.pubkey != session.me.hex else { return nil }
+        return { reportTarget = row }
+    }
+
+    private func blockAction(_ row: TimelineRow) -> (() -> Void)? {
+        guard row.pubkey != session.me.hex else { return nil }
+        return {
+            Task { try? await session.store.block(pubkey: row.pubkey) }
+        }
+    }
+
     private func ownMessageAction(
         _ row: TimelineRow,
         _ action: @escaping () -> Void
@@ -448,6 +466,11 @@ struct MessageRow: View {
     var onMarkUnread: (() -> Void)?
     /// Schedules a local reminder for this message at the chosen offset.
     var onRemind: ((Reminders.When) -> Void)?
+    /// Reports this message, and optionally blocks its author. Absent on the
+    /// viewer's own messages: reporting yourself is not a thing.
+    var onReport: (() -> Void)?
+    /// Hides everything from this author on this device, immediately.
+    var onBlock: (() -> Void)?
 
     /// The quick palette, shared with the reaction bar's add button so the
     /// two ways to react can never disagree. A full picker is later polish.
@@ -689,6 +712,19 @@ struct MessageRow: View {
                         Button(when.label) { onRemind(when) }
                     }
                 }
+            }
+
+            // Last in the menu and separated, because these are the actions
+            // about a person rather than about a message, and neither should
+            // sit next to something as ordinary as copying text.
+            if onReport != nil || onBlock != nil {
+                Divider()
+            }
+            if let onBlock {
+                Button("Block \(entry.row.displayName)", systemImage: "hand.raised", action: onBlock)
+            }
+            if let onReport {
+                Button("Report", systemImage: "flag", role: .destructive, action: onReport)
             }
             if onEdit != nil || onDelete != nil {
                 Divider()

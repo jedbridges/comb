@@ -311,7 +311,22 @@ public extension EventStore {
         LEFT JOIN profile p ON p.pubkey = e.pubkey
         LEFT JOIN thread t ON t.event_id = e.id
         WHERE \(predicate)
+          AND \(Self.notBlocked("e.pubkey"))
         """
+    }
+
+    /// Excludes a blocked author.
+    ///
+    /// Applied here, inside the one branch every timeline and thread query is
+    /// built from, rather than at each call site: a filter that has to be
+    /// remembered is a filter that will eventually be forgotten, and the
+    /// screen where it is forgotten is the one showing someone the messages
+    /// they asked never to see again.
+    ///
+    /// The events stay in the log, so unblocking restores the history with no
+    /// refetch.
+    static func notBlocked(_ column: String) -> String {
+        "NOT EXISTS (SELECT 1 FROM blocked b WHERE b.pubkey = \(column))"
     }
 
     /// A message we have signed but the relay has not acknowledged. It carries
@@ -412,6 +427,7 @@ public extension EventStore {
               AND NOT EXISTS (SELECT 1 FROM deletion d
                                WHERE d.target_id = reaction.event_id
                                  AND (d.kind = 9005 OR d.deleted_by = reaction.pubkey))
+              AND \(Self.notBlocked("reaction.pubkey"))
             GROUP BY target_id, emoji
             ORDER BY n DESC, emoji ASC
             """
@@ -456,6 +472,7 @@ public extension EventStore {
                   AND NOT EXISTS (SELECT 1 FROM deletion d
                                    WHERE d.target_id = r.event_id
                                      AND (d.kind = 9005 OR d.deleted_by = r.pubkey))
+                  AND \(Self.notBlocked("r.pubkey"))
                 ORDER BY r.created_at ASC, r.event_id ASC
                 """, arguments: ["target": targetID])
 

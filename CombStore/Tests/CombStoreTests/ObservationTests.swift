@@ -379,3 +379,82 @@ struct ProfileSearchTests {
         #expect(try store.search("a").isEmpty)
     }
 }
+
+@Suite("Blocking", .timeLimit(.minutes(1)))
+struct BlockingTests {
+    private func seed(_ store: EventStore, _ fixture: Fixture) async throws {
+        _ = try await store.ingest([
+            try fixture.event(
+                .groupMetadata, #"{"name":"General"}"#,
+                tags: [["d", "room-1"]], at: 900
+            ),
+        ])
+    }
+
+    @Test("a blocked person's messages leave the timeline")
+    func hidesMessages() async throws {
+        let store = try EventStore()
+        let other = try Fixture()
+        try await seed(store, other)
+        _ = try await store.ingest([try other.message("hello", at: 5000)])
+        #expect(try store.timeline(channel: "room-1").count == 1)
+
+        try await store.block(pubkey: other.pubkey)
+        #expect(try store.timeline(channel: "room-1").isEmpty)
+    }
+
+    @Test("unblocking restores the history without a refetch")
+    func unblockRestores() async throws {
+        let store = try EventStore()
+        let other = try Fixture()
+        try await seed(store, other)
+        _ = try await store.ingest([try other.message("still here", at: 5000)])
+
+        try await store.block(pubkey: other.pubkey)
+        try await store.unblock(pubkey: other.pubkey)
+
+        // The event never left the log, so the row comes straight back.
+        #expect(try store.timeline(channel: "room-1").first?.content == "still here")
+    }
+
+    @Test("a blocked person does not drive the preview or the unread badge")
+    func hidesFromChannelList() async throws {
+        let store = try EventStore()
+        let other = try Fixture()
+        try await seed(store, other)
+        _ = try await store.ingest([try other.message("noisy", at: 5000)])
+        #expect(try store.channelSummaries(me: "").first?.unreadCount == 1)
+
+        try await store.block(pubkey: other.pubkey)
+        let summary = try store.channelSummaries(me: "").first
+        #expect(summary?.unreadCount == 0)
+        #expect(summary?.lastMessage == nil)
+    }
+
+    @Test("a blocked person never produces a mention notification")
+    func hidesMentions() async throws {
+        let store = try EventStore()
+        let me = try Fixture()
+        let other = try Fixture()
+        _ = try await store.ingest([
+            try other.event(
+                .groupChatMessage, "hey @you",
+                tags: [["h", "room-1"], ["p", me.pubkey]], at: 5000
+            )
+        ])
+        #expect(try store.mentions(of: me.pubkey, since: 1000).count == 1)
+
+        try await store.block(pubkey: other.pubkey)
+        #expect(try store.mentions(of: me.pubkey, since: 1000).isEmpty)
+    }
+
+    @Test("blocking is idempotent and survives being repeated")
+    func idempotent() async throws {
+        let store = try EventStore()
+        let other = try Fixture()
+        try await store.block(pubkey: other.pubkey)
+        try await store.block(pubkey: other.pubkey)
+        #expect(try store.blockedPeople().count == 1)
+        #expect(try store.isBlocked(pubkey: other.pubkey))
+    }
+}
