@@ -254,7 +254,7 @@ struct BrowseView: View {
             // GitHub's editor, which meant a sign-in wall, a fork, and
             // hand-written JSON on a phone keyboard; the form asks for a name
             // and an address and leaves the JSON to the maintainer.
-            Text("Get it listed here. The button opens a short form on GitHub: add your community's name and address, and it gets added.")
+            Text("Get it listed here. The button opens a short form on GitHub: its name, its address, and a line about who it is for. A maintainer takes it from there.")
                 .font(Typography.secondary)
                 .foregroundStyle(Palette.subtext)
                 .multilineTextAlignment(.center)
