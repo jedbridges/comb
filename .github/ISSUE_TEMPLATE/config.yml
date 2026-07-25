@@ -1,11 +1,20 @@
+# Load-bearing: Settings ▸ Report a problem links to a bare `/issues/new` with
+# no template, which only opens a blank form while this is true. Setting it to
+# false would drop those people on the template chooser instead, silently, from
+# a shipped build that cannot be changed afterwards.
 blank_issues_enabled: true
+
+# These render above every template, so each one costs a row before anyone
+# reaches the form they came for. The two that remain are here because they
+# redirect an issue that would otherwise land in the wrong place: one publicly
+# when it should be private, the other on this repository when it belongs
+# upstream. "What is Buzz?" used to sit here as well and was removed. Someone
+# already on the new-issue page knows what they came to do, and the README is
+# where the explaining belongs.
 contact_links:
-  - name: What is Buzz?
-    url: https://buzz.xyz
-    about: Comb is a client for Buzz communities. This is Buzz itself.
-  - name: Buzz issues
-    url: https://github.com/block/buzz/issues
-    about: For problems with the relay, the desktop app, or hosted Buzz.
   - name: Security vulnerability
     url: https://github.com/jedbridges/comb/security/advisories/new
     about: Report privately, not as a public issue.
+  - name: Problem with Buzz itself
+    url: https://github.com/block/buzz/issues
+    about: The relay, the desktop app, or hosted Buzz. Comb is a separate project.
