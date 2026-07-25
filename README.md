@@ -184,6 +184,7 @@ release path.
 - [x] Deep links to a message, by `buzz://message` URL
 - [x] Typing indicators
 - [x] Direct messages named for the people in them, rather than "dm"
+- [x] Haptics on the moments that repeat, and only for what you did
 - [ ] Presence
 - [ ] Starting a new direct message
 - [ ] Creating, joining, and leaving channels
