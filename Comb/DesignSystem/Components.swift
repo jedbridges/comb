@@ -253,6 +253,12 @@ struct AvatarView: View {
 /// notifications are off. An alert would demand a tap to dismiss something the
 /// person does not need to acknowledge, and silence would leave them unsure
 /// the action landed.
+///
+/// The contract is the important part, and it is narrow: a toast is for an
+/// outcome nobody has to act on. A failure that has a next step belongs in an
+/// `InlineNotice` beside the control, or in a `confirmationDialog` that offers
+/// the step. Present it with `.toast(_:)` rather than by hand, so every screen
+/// gets the same placement, the same dwell, and the same announcement.
 struct Toast: View {
     let text: String
 
@@ -268,6 +274,67 @@ struct Toast: View {
             .padding(.horizontal, Space.xl)
             .shadow(color: .black.opacity(0.25), radius: 12, y: 4)
             .accessibilityAddTraits(.isStaticText)
+    }
+}
+
+/// Something to say once, carrying its own identity.
+///
+/// Identity rather than a bare `String` because the same failure happening
+/// twice is two events, and SwiftUI cannot see the difference between "set to
+/// the same text again" and "never changed". With a plain string the second of
+/// two identical failures neither re-announces nor restarts the clock: it
+/// inherits whatever is left of the first one's and vanishes early.
+struct ToastMessage: Equatable, Sendable {
+    let text: String
+    private let id = UUID()
+
+    init(_ text: String) { self.text = text }
+
+    static func == (lhs: Self, rhs: Self) -> Bool { lhs.id == rhs.id }
+}
+
+/// One toast, presented the same way everywhere.
+///
+/// Written as a modifier because the presentation is four decisions that must
+/// not drift between screens: where it sits, how long it stays, how it moves,
+/// and the fact that it is spoken. Hand-rolling it in each view is how the
+/// second copy silently loses the fourth.
+private struct ToastPresenter: ViewModifier {
+    @Binding var message: ToastMessage?
+
+    /// Long enough to read a sentence, short enough not to sit over the
+    /// compose bar while someone is typing the next thing.
+    private static let dwell = Duration.seconds(3)
+
+    func body(content: Content) -> some View {
+        content
+            .overlay(alignment: .bottom) {
+                if let message {
+                    Toast(text: message.text)
+                        .padding(.bottom, Space.xxxl)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
+            }
+            .animation(Motion.standard, value: message)
+            .task(id: message) {
+                guard let message else { return }
+                // VoiceOver does not move focus to an overlay that appears
+                // without being asked, so without this the toast is silent to
+                // the people least able to notice it visually.
+                AccessibilityNotification.Announcement(message.text).post()
+                try? await Task.sleep(for: Self.dwell)
+                // Only clears what it presented. A toast raised while this one
+                // was on screen has already replaced `message`, and the sleep
+                // it started owns the dismissal from here.
+                if self.message == message { self.message = nil }
+            }
+    }
+}
+
+extension View {
+    /// Presents `message` as a toast, then clears it.
+    func toast(_ message: Binding<ToastMessage?>) -> some View {
+        modifier(ToastPresenter(message: message))
     }
 }
 

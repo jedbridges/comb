@@ -16,11 +16,17 @@ struct ReportSheet: View {
     let session: CommunitySession
     let message: TimelineRow
     let channelID: String
+    /// What to tell the user once the sheet is gone. The sheet dismisses either
+    /// way, so this is the only place the outcome can still be said.
+    var onOutcome: (String) -> Void = { _ in }
 
     @Environment(\.dismiss) private var dismiss
     @State private var reason: Report.Reason = .spam
     @State private var alsoBlock = true
     @State private var isSending = false
+    /// Set when the report did not send, so the sheet can stay and offer the
+    /// retry rather than dismissing behind a notice that fades.
+    @State private var failure: String?
 
     var body: some View {
         NavigationStack {
@@ -31,8 +37,11 @@ struct ReportSheet: View {
                             Text(option.label).tag(option)
                         }
                     }
+                    // Deliberately untinted. Chartreuse marks the one most
+                    // important thing on a screen, and here that is Send
+                    // report. A checkmark on the chosen reason is already
+                    // unambiguous without spending the loudest colour on it.
                     .pickerStyle(.inline)
-                    .tint(Palette.chartreuse)
                 } header: {
                     Text("What is wrong with it")
                 }
@@ -52,9 +61,21 @@ struct ReportSheet: View {
                     Button {
                         send()
                     } label: {
-                        RowLabel(title: "Send report", systemImage: "flag")
+                        RowLabel(
+                            title: failure == nil ? "Send report" : "Try again",
+                            systemImage: "flag"
+                        )
                     }
                     .disabled(isSending)
+                } footer: {
+                    // The sheet stays open on failure rather than dismissing
+                    // behind a toast. There is an obvious next action, the
+                    // button offering it is right here, and a notice beside the
+                    // control it belongs to cannot be missed the way something
+                    // that fades in three seconds can.
+                    if let failure {
+                        InlineNotice(kind: .warning, text: failure)
+                    }
                 }
                 .combRows()
             }
@@ -72,14 +93,34 @@ struct ReportSheet: View {
 
     private func send() {
         isSending = true
+        failure = nil
         Task {
             if alsoBlock {
                 // Blocked first: it is the part that is guaranteed to work,
                 // and it should hold even if the relay rejects the report.
                 try? await session.store.block(pubkey: message.pubkey)
             }
-            await session.report(message.id, author: message.pubkey, reason: reason, in: channelID)
+            let sent = await session.report(
+                message.id, author: message.pubkey, reason: reason, in: channelID
+            )
+            isSending = false
+
+            guard sent else {
+                // Naming the half that worked, rather than a bare failure:
+                // blocking is the part the reporter can rely on, and it has
+                // already taken effect whatever the relay did.
+                failure = alsoBlock
+                    ? FailureText.reportFailedButBlocked
+                    : FailureText.reportFailed
+                return
+            }
+
             dismiss()
+            // "Report sent" and nothing more: what the relay accepted is an
+            // event, which is not evidence a person has read it. The sheet's
+            // own footer already says where it goes and what it does not
+            // promise.
+            onOutcome(FailureText.reportSent)
         }
     }
 }

@@ -10,6 +10,11 @@ import SwiftUI
 struct ChannelGlyph: View {
     let name: String
     var size: CGFloat = Sizing.channelCell
+    /// A direct message is titled with a person's name, so the keyword rules
+    /// would read that name as a topic. "Mark" is not a channel about
+    /// bookmarks.
+    var isDirectMessage: Bool = false
+    var memberCount: Int = 0
 
     var body: some View {
         ZStack {
@@ -20,7 +25,9 @@ struct ChannelGlyph: View {
             // where the gradient happens to match its own value.
             cell.fill(Palette.glyphLift)
             cell.stroke(Palette.glyphHairline, lineWidth: Stroke.hairline)
-            Image(systemName: ChannelSymbol.forName(name))
+            Image(systemName: ChannelSymbol.forChannel(
+                name: name, isDirectMessage: isDirectMessage, memberCount: memberCount
+            ))
                 // Derived from the cell, not the type ramp, and deliberately
                 // so: this symbol has to stay in proportion to the hexagon
                 // around it at every size the caller asks for. A ramp token
@@ -85,6 +92,14 @@ struct RoundedCombCell: Shape {
 /// and everything unrecognised gets the hash that has meant "channel" since
 /// IRC. The list is ordered so specific words win over general ones.
 enum ChannelSymbol {
+    /// A conversation is drawn as the people in it; a room by what it is for.
+    ///
+    /// Member count includes you, so a two-person row is one other person.
+    static func forChannel(name: String, isDirectMessage: Bool, memberCount: Int) -> String {
+        guard isDirectMessage else { return forName(name) }
+        return memberCount > 2 ? "person.2" : "person"
+    }
+
     /// Ordered: the first keyword found in the name wins, so "design jobs"
     /// resolves to jobs rather than design.
     private static let rules: [(keywords: [String], symbol: String)] = [

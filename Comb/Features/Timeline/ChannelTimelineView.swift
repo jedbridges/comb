@@ -23,7 +23,7 @@ struct ChannelTimelineView: View {
     @FocusState private var isComposing: Bool
     @State private var isAwayFromBottom = false
     @State private var arrivalsWhileAway = 0
-    @State private var toast: String?
+    @State private var toast: ToastMessage?
     @Environment(\.dismiss) private var dismiss
 
     /// A message to scroll to and briefly flag on open, from a deep link.
@@ -34,6 +34,9 @@ struct ChannelTimelineView: View {
     @State private var highlightedID: String?
     /// The message being reported, if any.
     @State private var reportTarget: TimelineRow?
+
+    /// The message whose delete failed, kept so the retry knows what to retry.
+    @State private var deleteFailed: TimelineRow?
 
     init(session: CommunitySession, channel: ChannelSummary, scrollToMessageID: String? = nil) {
         self.session = session
@@ -73,7 +76,11 @@ struct ChannelTimelineView: View {
                             mentionNames: model.mentionNames,
                             mentionsMe: entry.row.mentions(session.me.hex),
                             onReact: { emoji in
-                                Task { await model.toggleReaction(emoji, on: entry.row.id) }
+                                Task {
+                                    if await !model.toggleReaction(emoji, on: entry.row.id) {
+                                        toast = ToastMessage(FailureText.reaction)
+                                    }
+                                }
                             },
                             onRetry: { Task { await model.retry(entry.row.id) } },
                             onDiscard: { Task { await model.discard(entry.row.id) } },
@@ -172,21 +179,8 @@ struct ChannelTimelineView: View {
                 emptyChannel
             }
 
-            if let toast {
-                VStack {
-                    Spacer()
-                    Toast(text: toast)
-                        .padding(.bottom, Space.xxxl)
-                        .transition(.move(edge: .bottom).combined(with: .opacity))
-                }
-            }
         }
-        .animation(Motion.standard, value: toast)
-        .task(id: toast) {
-            guard toast != nil else { return }
-            try? await Task.sleep(for: .seconds(3))
-            toast = nil
-        }
+        .toast($toast)
         .safeAreaInset(edge: .bottom) {
             ComposeBar(
                 draft: $draft,
@@ -206,7 +200,11 @@ struct ChannelTimelineView: View {
                 draft = ""
                 if let editing {
                     self.editing = nil
-                    Task { await model.edit(editing.id, to: text) }
+                    Task {
+                        if await !model.edit(editing.id, to: text) {
+                            toast = ToastMessage(FailureText.edit)
+                        }
+                    }
                 } else {
                     let media = tray.readyDescriptors
                     tray.clear()
@@ -229,15 +227,39 @@ struct ChannelTimelineView: View {
             titleVisibility: .visible
         ) {
             Button("Delete message", role: .destructive) {
-                if let deleting {
-                    Task { await model.deleteMessage(deleting.id) }
+                if let target = deleting {
+                    Task { await attemptDelete(target) }
                 }
                 deleting = nil
             }
         } message: {
             Text("It disappears for everyone in the channel, though people may already have read it.")
         }
-        .navigationTitle(channel.name)
+        // A failed delete gets a dialog rather than a toast, and it is the one
+        // failure in this screen that does. The reader just asked, in an
+        // acknowledged dialog, to destroy something; answering "it did not
+        // work" with a hint that fades in three seconds means anyone who looks
+        // away walks off believing the message is gone. This is also the only
+        // one with an obvious next action, so there is something to offer.
+        .confirmationDialog(
+            FailureText.deleteTitle,
+            isPresented: Binding(
+                get: { deleteFailed != nil },
+                set: { if !$0 { deleteFailed = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Try again") {
+                if let target = deleteFailed {
+                    Task { await attemptDelete(target) }
+                }
+                deleteFailed = nil
+            }
+            Button("Leave it", role: .cancel) { deleteFailed = nil }
+        } message: {
+            Text(FailureText.deleteBody)
+        }
+        .navigationTitle(navigationTitle)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
@@ -266,7 +288,11 @@ struct ChannelTimelineView: View {
         }
         .sheet(item: $reactingTo) { row in
             EmojiPicker { emoji in
-                Task { await model.toggleReaction(emoji, on: row.id) }
+                Task {
+                    if await !model.toggleReaction(emoji, on: row.id) {
+                        toast = ToastMessage(FailureText.reaction)
+                    }
+                }
             }
         }
         .sheet(item: $reactorsOf) { target in
@@ -277,7 +303,9 @@ struct ChannelTimelineView: View {
             )
         }
         .sheet(item: $reportTarget) { row in
-            ReportSheet(session: session, message: row, channelID: channel.id)
+            ReportSheet(session: session, message: row, channelID: channel.id) { outcome in
+                toast = ToastMessage(outcome)
+            }
         }
         .sheet(item: $zapTarget) { entry in
             if let address = entry.row.authorLightningAddress,
@@ -300,6 +328,25 @@ struct ChannelTimelineView: View {
 
     /// Marks unread, then leaves: staying would let the on-screen auto-read
     /// wipe it out, and the badge is only useful back on the list.
+    /// An inline navigation title sits between a back button and the member
+    /// count, which leaves very little room. A group conversation's full
+    /// participant list cannot survive that, and a title truncated mid-name
+    /// tells the reader less than a count does. The names are one tap away in
+    /// the member list, and the channel list still shows them in full.
+    private var navigationTitle: String {
+        guard channel.isDirectMessage, channel.memberCount > 2 else { return channel.name }
+        return "\(channel.memberCount) people"
+    }
+
+    /// Deletes, and raises the retry dialog if it did not take. Shared by the
+    /// first attempt and the retry, so a second failure asks again rather than
+    /// giving up silently on the one path where silence is worst.
+    private func attemptDelete(_ row: TimelineRow) async {
+        if await !model.deleteMessage(row.id) {
+            deleteFailed = row
+        }
+    }
+
     private func markUnread(_ row: TimelineRow) {
         Task {
             await model.markUnread(from: row.createdAt)
@@ -322,9 +369,11 @@ struct ChannelTimelineView: View {
                 ),
                 when: when
             )
-            toast = scheduled
-                ? "Reminder set \(when.label.lowercased())"
-                : "Turn on notifications for Comb in Settings to be reminded."
+            toast = ToastMessage(
+                scheduled
+                    ? "Reminder set \(when.label.lowercased())"
+                    : "Turn on notifications for Comb in Settings to be reminded."
+            )
         }
     }
 
@@ -1443,15 +1492,18 @@ final class ChannelTimeline {
         )
     }
 
-    func edit(_ messageID: String, to newText: String) async {
+    /// These three return whether the relay took it, so the view can say when
+    /// it did not. Each one is a change the user watched themselves make; a
+    /// silent no-op reads as the app having ignored them.
+    func edit(_ messageID: String, to newText: String) async -> Bool {
         await session.edit(messageID, to: newText, in: channel)
     }
 
-    func deleteMessage(_ messageID: String) async {
+    func deleteMessage(_ messageID: String) async -> Bool {
         await session.deleteMessage(messageID, in: channel)
     }
 
-    func toggleReaction(_ emoji: String, on messageID: String) async {
+    func toggleReaction(_ emoji: String, on messageID: String) async -> Bool {
         await session.toggleReaction(emoji, on: messageID, in: channel)
     }
 

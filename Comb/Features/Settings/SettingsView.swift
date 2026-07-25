@@ -19,6 +19,9 @@ struct SettingsView: View {
     @State private var displayName = ""
     @State private var notifyMentions = NotificationSettings.isEnabled
     @State private var systemDenied = false
+    /// Set when a name change could not be published, so the footer can say so
+    /// instead of the field quietly looking saved.
+    @State private var nameUndelivered = false
 
     private var host: String { session.relayURL.host ?? "" }
     /// The subdomain reads as the community; the full host is the address.
@@ -34,6 +37,11 @@ struct SettingsView: View {
                     TextField("Your name", text: $displayName)
                         .textContentType(.nickname)
                         .onSubmit { saveName() }
+                        // Clears as soon as they start fixing it: a warning
+                        // about the previous attempt, still on screen while
+                        // they type the next one, reads as a verdict on what
+                        // they are typing now.
+                        .onChange(of: displayName) { _, _ in nameUndelivered = false }
 
                     NavigationLink {
                         RecoveryCodeView(host: host)
@@ -48,7 +56,17 @@ struct SettingsView: View {
                     // account, which Comb cannot know: anyone who arrived
                     // through Sign in with your key already has it on the
                     // machine they copied it from.
-                    Text("Your name is what people see in channels. Comb keeps this account on this iPhone: it is never copied to iCloud or included in a backup.")
+                    VStack(alignment: .leading, spacing: Space.xs) {
+                        Text("Your name is what people see in channels. Comb keeps this account on this iPhone: it is never copied to iCloud or included in a backup.")
+
+                        // Added below rather than swapped in. The privacy
+                        // sentence is most worth reading at exactly the moment
+                        // something went wrong with the name, so replacing it
+                        // takes the reassurance away when it is needed.
+                        if nameUndelivered {
+                            InlineNotice(kind: .warning, text: FailureText.nameUndelivered)
+                        }
+                    }
                 }
                 .combRows()
 
@@ -189,7 +207,7 @@ struct SettingsView: View {
     private func saveName() {
         let trimmed = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        Task { await session.setProfile(displayName: trimmed) }
+        Task { nameUndelivered = await !session.setProfile(displayName: trimmed) }
     }
 
     private var appVersion: String {

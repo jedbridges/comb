@@ -413,7 +413,12 @@ private struct ChannelRow: View {
         HStack(spacing: Space.sm) {
             // Same size in every state, so the left edge stays a straight line
             // down the list and only the weight changes.
-            ChannelGlyph(name: channel.name, size: cellSize)
+            ChannelGlyph(
+                name: channel.name,
+                size: cellSize,
+                isDirectMessage: channel.isDirectMessage,
+                memberCount: channel.memberCount
+            )
                 .opacity(activity == .quiet ? 0.45 : 1)
 
             VStack(alignment: .leading, spacing: Space.hairline) {
@@ -458,7 +463,12 @@ private struct ChannelRow: View {
             // without reading a single word.
             .font(activity == .unread ? Typography.bodyEmphasis : Typography.name)
             .foregroundStyle(activity == .quiet ? Palette.subtext : Palette.text)
-            .lineLimit(1)
+            // A group conversation is titled with names, and names do not
+            // abbreviate. One line would cut "Alice Chen & 3 others" mid-word
+            // and take the tail with it, losing the only part that says this is
+            // a group. A channel name is a word or two and never needs the
+            // second line, so nothing else in the list moves.
+            .lineLimit(channel.isDirectMessage && channel.memberCount > 2 ? 2 : 1)
     }
 
     @ViewBuilder
@@ -507,9 +517,16 @@ private struct ChannelRow: View {
             .fixedSize()
     }
 
+    /// A one-to-one conversation already says how many people are in it: the
+    /// title is the other person and the glyph is a single figure. A "2" beside
+    /// them counts the reader to their face, which nobody does out loud.
+    private var showsMemberCount: Bool {
+        channel.memberCount > 0 && !(channel.isDirectMessage && channel.memberCount <= 2)
+    }
+
     @ViewBuilder
     private var memberCount: some View {
-        if channel.memberCount > 0 {
+        if showsMemberCount {
             memberCountLabel
                 .foregroundStyle(Palette.subtext.opacity(activity == .quiet ? 0.7 : 1))
                 .luminousChrome()
@@ -517,11 +534,24 @@ private struct ChannelRow: View {
     }
 
     private var accessibilityDescription: String {
-        var parts = [channel.name]
+        // Says what kind of row this is, because the glyph that carries that
+        // distinction visually is deliberately hidden from VoiceOver. Without
+        // it a direct message with someone called Design is indistinguishable
+        // from a channel called Design.
+        var parts: [String] = []
+        if channel.isDirectMessage {
+            parts.append(
+                channel.memberCount > 2
+                    ? "Group conversation with \(channel.name)"
+                    : "Direct message with \(channel.name)"
+            )
+        } else {
+            parts.append(channel.name)
+        }
         if channel.hasUnread {
             parts.append("\(channel.unreadCount) unread")
         }
-        if channel.memberCount > 0 { parts.append("\(channel.memberCount) members") }
+        if showsMemberCount { parts.append("\(channel.memberCount) members") }
         if let preview { parts.append("Latest: \(preview)") }
         else { parts.append("No messages yet") }
         return parts.joined(separator: ", ")
@@ -533,18 +563,14 @@ private struct ChannelRow: View {
             .replacingOccurrences(of: "\n", with: " ")
             .trimmingCharacters(in: .whitespaces)
         guard !flattened.isEmpty else { return nil }
-        if let author = channel.lastAuthor, !author.isEmpty {
-            return "\(author): \(flattened)"
-        }
-        return flattened
+        guard let author = channel.lastAuthor, !author.isEmpty else { return flattened }
+        // In a one-to-one conversation the title is already the other person,
+        // so prefixing their line with their name says it twice in the space
+        // of two words. Their own messages just speak.
+        if author == channel.name { return flattened }
+        return "\(author): \(flattened)"
     }
 
-    /// A rounded comb cell carrying a symbol chosen from the channel's name.
-    /// An initial only repeats the title beside it; a symbol says what the
-    /// room is for.
-    private var cell: some View {
-        ChannelGlyph(name: channel.name, size: cellSize)
-    }
 }
 
 /// The count of what is new, in the brand's one loud colour.

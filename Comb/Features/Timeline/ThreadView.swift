@@ -23,6 +23,7 @@ struct ThreadView: View {
     @FocusState private var isComposing: Bool
     @State private var tray: AttachmentTray
     @State private var loader: MediaLoader
+    @State private var toast: ToastMessage?
 
     init(session: CommunitySession, channel: ChannelSummary, root: TimelineRow) {
         self.session = session
@@ -78,6 +79,7 @@ struct ThreadView: View {
             .scrollDismissesKeyboard(.interactively)
             .softScrollEdges()
         }
+        .toast($toast)
         .safeAreaInset(edge: .bottom) {
             ComposeBar(
                 draft: $draft,
@@ -108,7 +110,11 @@ struct ThreadView: View {
         }
         .sheet(item: $reactingTo) { row in
             EmojiPicker { emoji in
-                Task { await model.toggleReaction(emoji, on: row.id) }
+                Task {
+                    if await !model.toggleReaction(emoji, on: row.id) {
+                        toast = ToastMessage(FailureText.reaction)
+                    }
+                }
             }
         }
         .sheet(item: $reactorsOf) { target in
@@ -141,7 +147,11 @@ struct ThreadView: View {
             mentionNames: model.mentionNames,
             mentionsMe: entry.row.mentions(session.me.hex),
             onReact: { emoji in
-                Task { await model.toggleReaction(emoji, on: entry.row.id) }
+                Task {
+                    if await !model.toggleReaction(emoji, on: entry.row.id) {
+                        toast = ToastMessage(FailureText.reaction)
+                    }
+                }
             },
             onRetry: { Task { await model.retry(entry.row.id) } },
             onDiscard: { Task { await model.discard(entry.row.id) } },
@@ -254,7 +264,7 @@ final class ThreadModel {
         )
     }
 
-    func toggleReaction(_ emoji: String, on messageID: String) async {
+    func toggleReaction(_ emoji: String, on messageID: String) async -> Bool {
         await session.toggleReaction(emoji, on: messageID, in: channel)
     }
 

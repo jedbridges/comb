@@ -117,6 +117,42 @@ enum DemoSeed {
             at: now - 40_000
         ))
 
+        // Two direct messages, because Buzz names them "dm" and "Group DM (3)"
+        // on the wire and Comb has to retitle both from the roster. Without
+        // these the demo cannot show the state at all, and the naming rule is
+        // only ever exercised by unit tests.
+        //
+        // The `hidden` tag is the marker the relay actually sends
+        // (`side_effects.rs`: "NIP-29 hidden tag: hint to clients not to show
+        // DMs in public group lists"), so the fixture carries it verbatim.
+        events.append(contentsOf: try directMessage(
+            id: "demo-dm-ada",
+            relayName: "dm",
+            members: [ada],
+            me: me,
+            relayKey: relayKey,
+            at: now - 90_000
+        ))
+        events.append(try ada.message(
+            "Did you get a look at the revised masthead?",
+            in: "demo-dm-ada",
+            at: now - 7_000
+        ))
+
+        events.append(contentsOf: try directMessage(
+            id: "demo-dm-group",
+            relayName: "Group DM (4)",
+            members: [ada, mies, ray],
+            me: me,
+            relayKey: relayKey,
+            at: now - 90_000
+        ))
+        events.append(try ray.message(
+            "Pulling you three in so we stop having this in four places.",
+            in: "demo-dm-group",
+            at: now - 20_000
+        ))
+
         let result = try await store.ingest(events)
         assert(result.rejected.isEmpty, "demo fixtures must survive verification")
 
@@ -156,6 +192,37 @@ enum DemoSeed {
         // one with unread traffic. Without this every channel looks the same
         // and the badge work is invisible.
         try await store.markRead(channel: channel)
+    }
+
+    /// The relay-signed pair that makes a channel a direct message: metadata
+    /// carrying the bare `hidden` tag and a placeholder name, plus a roster
+    /// that includes the viewer. The viewer matters, because the naming rule
+    /// has to drop them and a fixture without them would never prove it does.
+    private static func directMessage(
+        id: String,
+        relayName: String,
+        members: [Persona],
+        me: PrivateKey,
+        relayKey: PrivateKey,
+        at seconds: Int64
+    ) throws -> [NostrEvent] {
+        [
+            try NostrEvent.signed(
+                kind: .groupMetadata,
+                content: #"{"name":"\#(relayName)"}"#,
+                tags: [["d", id], ["hidden"]],
+                createdAt: date(seconds),
+                with: relayKey
+            ),
+            try NostrEvent.signed(
+                kind: .groupMembers,
+                content: "",
+                tags: [["d", id], ["p", me.publicKey.hex]]
+                    + members.map { ["p", $0.key.publicKey.hex] },
+                createdAt: date(seconds),
+                with: relayKey
+            ),
+        ]
     }
 
     private static func date(_ seconds: Int64) -> Date {
