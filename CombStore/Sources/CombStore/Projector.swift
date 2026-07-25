@@ -27,6 +27,8 @@ enum Projector {
             try projectRichContent(event, into: db)
         case .groupChatMessage:
             try projectThread(event, into: db)
+        case .buzzMemberAdded, .buzzMemberRemoved:
+            try projectMembershipChange(event, into: db)
         default:
             // Everything else needs no projection; the timeline reads the log
             // directly.
@@ -104,6 +106,43 @@ enum Projector {
                 event.createdAt,
             ]
         )
+    }
+
+    /// Kinds 44100 and 44101, the relay-signed notices that this account was
+    /// added to or removed from a channel.
+    ///
+    /// These are only ever about the reader. The relay refuses a subscription
+    /// to them that is not scoped to the authenticated pubkey (`NOSTR.md`:
+    /// "p-gated events require #p matching your pubkey"), so an event of these
+    /// kinds cannot reach this log describing somebody else. That is what lets
+    /// this run without knowing who the viewer is, which a projector cannot.
+    ///
+    /// Newer wins rather than last-replayed wins: leaving and rejoining a
+    /// channel is ordinary, and a rebuild replays in timestamp order, so the
+    /// answer has to come from the timestamps rather than the order of arrival.
+    private static func projectMembershipChange(
+        _ event: NostrEvent, into db: Database
+    ) throws {
+        guard let channel = event.firstValue(for: "h") else { return }
+
+        if event.kind == .buzzMemberRemoved {
+            try db.execute(
+                sql: """
+                    INSERT INTO channel_departure (channel_id, removed_at)
+                    VALUES (?, ?)
+                    ON CONFLICT(channel_id) DO UPDATE SET removed_at = excluded.removed_at
+                    WHERE excluded.removed_at > channel_departure.removed_at
+                    """,
+                arguments: [channel, event.createdAt]
+            )
+        } else {
+            // Re-added: the departure only stops applying if this is the more
+            // recent of the two.
+            try db.execute(
+                sql: "DELETE FROM channel_departure WHERE channel_id = ? AND removed_at <= ?",
+                arguments: [channel, event.createdAt]
+            )
+        }
     }
 
     /// Kind 39002, the relay-signed member roster.

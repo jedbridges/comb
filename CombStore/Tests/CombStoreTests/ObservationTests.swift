@@ -601,3 +601,119 @@ struct DirectMessageNameTests {
         )
     }
 }
+
+@Suite("Membership changes", .timeLimit(.minutes(1)))
+struct MembershipChangeTests {
+    /// The relay signs these, and only ever sends them scoped to the reader.
+    private func seedChannel(_ store: EventStore, relay: Fixture) async throws {
+        _ = try await store.ingest([
+            try relay.event(
+                .groupMetadata, #"{"name":"General"}"#, tags: [["d", "general"]], at: 900
+            ),
+            try relay.event(
+                .groupMetadata, #"{"name":"Fonts"}"#, tags: [["d", "fonts"]], at: 901
+            ),
+        ])
+    }
+
+    @Test("a channel this account was removed from leaves the list")
+    func removalHidesChannel() async throws {
+        let store = try EventStore()
+        let relay = try Fixture()
+        let me = try Fixture()
+        try await seedChannel(store, relay: relay)
+        #expect(try store.channelSummaries().count == 2)
+
+        _ = try await store.ingest([
+            try relay.event(
+                .buzzMemberRemoved, "",
+                tags: [["p", me.pubkey], ["h", "general"]], at: 1000
+            ),
+        ])
+
+        #expect(try store.channelSummaries().map(\.name) == ["Fonts"])
+    }
+
+    @Test("survives a projection rebuild")
+    func removalSurvivesRebuild() async throws {
+        // The whole point of projecting the departure rather than deleting the
+        // channel row: a rebuild replays the log, and a delete would be undone.
+        let store = try EventStore()
+        let relay = try Fixture()
+        let me = try Fixture()
+        try await seedChannel(store, relay: relay)
+        _ = try await store.ingest([
+            try relay.event(
+                .buzzMemberRemoved, "",
+                tags: [["p", me.pubkey], ["h", "general"]], at: 1000
+            ),
+        ])
+
+        try await store.rebuildProjections()
+        #expect(try store.channelSummaries().map(\.name) == ["Fonts"])
+    }
+
+    @Test("being added back brings it home")
+    func readdRestoresChannel() async throws {
+        let store = try EventStore()
+        let relay = try Fixture()
+        let me = try Fixture()
+        try await seedChannel(store, relay: relay)
+
+        _ = try await store.ingest([
+            try relay.event(
+                .buzzMemberRemoved, "",
+                tags: [["p", me.pubkey], ["h", "general"]], at: 1000
+            ),
+            try relay.event(
+                .buzzMemberAdded, "",
+                tags: [["p", me.pubkey], ["h", "general"]], at: 2000
+            ),
+        ])
+
+        #expect(try store.channelSummaries().count == 2)
+        // And still after a replay, which is where an order-dependent
+        // implementation would settle on the wrong one of the two.
+        try await store.rebuildProjections()
+        #expect(try store.channelSummaries().count == 2)
+    }
+
+    @Test("an older re-add does not undo a newer removal")
+    func staleAddIgnored() async throws {
+        // A relay resending an old notice after a reconnect must not put back
+        // a channel the account has since been removed from.
+        let store = try EventStore()
+        let relay = try Fixture()
+        let me = try Fixture()
+        try await seedChannel(store, relay: relay)
+
+        _ = try await store.ingest([
+            try relay.event(
+                .buzzMemberRemoved, "",
+                tags: [["p", me.pubkey], ["h", "general"]], at: 2000
+            ),
+        ])
+        _ = try await store.ingest([
+            try relay.event(
+                .buzzMemberAdded, "",
+                tags: [["p", me.pubkey], ["h", "general"]], at: 1000
+            ),
+        ])
+
+        #expect(try store.channelSummaries().map(\.name) == ["Fonts"])
+    }
+
+    @Test("a notice without a channel is ignored rather than fatal")
+    func missingChannelTag() async throws {
+        let store = try EventStore()
+        let relay = try Fixture()
+        let me = try Fixture()
+        try await seedChannel(store, relay: relay)
+
+        _ = try await store.ingest([
+            try relay.event(.buzzMemberRemoved, "", tags: [["p", me.pubkey]], at: 1000),
+        ])
+
+        #expect(try store.channelSummaries().count == 2)
+    }
+}

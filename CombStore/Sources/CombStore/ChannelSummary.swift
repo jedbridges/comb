@@ -56,7 +56,6 @@ public extension EventStore {
             """, arguments: StatementArguments(channels + [me]))
 
         return rows.reduce(into: [String: [String]]()) { result, row in
-            let pubkey: String = row["pubkey"]
             // Not the usual `pubkey.prefix(8)` fallback. That is tolerable on a
             // profile sheet, where someone has gone looking; as the title of a
             // row on the first screen of the app it puts a raw key in front of
@@ -99,6 +98,13 @@ public extension EventStore {
                                           AND (d.kind = 9005 OR d.deleted_by = e.pubkey))
                    )                                                  AS unread
             FROM channel c
+            -- A channel this account was removed from. The metadata and the
+            -- messages stay in the log, because the log is append-only and they
+            -- really did happen, but a room you are no longer in has no
+            -- business sitting in the list waiting to be tapped.
+            WHERE NOT EXISTS (
+                SELECT 1 FROM channel_departure d WHERE d.channel_id = c.id
+            )
             ORDER BY last_at IS NULL, last_at DESC, c.name COLLATE NOCASE ASC
             """, arguments: [
                 "kind": EventKind.groupChatMessage.rawValue,

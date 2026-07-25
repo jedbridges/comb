@@ -15,7 +15,7 @@ import GRDB
 enum Schema {
     /// Bump when any projection's shape or meaning changes. On next open, every
     /// projection table is dropped and replayed from `event`.
-    static let projectionVersion = 5
+    static let projectionVersion = 6
 
     static var migrator: DatabaseMigrator {
         var migrator = DatabaseMigrator()
@@ -175,6 +175,20 @@ enum Schema {
             )
             """)
 
+        // Channels this account has been removed from.
+        //
+        // A projection rather than a deletion of the `channel` row, because the
+        // row is rebuilt from the log on every projection bump and a delete
+        // would simply be undone. Recording the departure lets the rebuild
+        // reach the same answer, and lets a later re-add reverse it by
+        // timestamp rather than by luck of replay order.
+        try db.execute(sql: """
+            CREATE TABLE channel_departure (
+                channel_id TEXT PRIMARY KEY NOT NULL,
+                removed_at INTEGER NOT NULL
+            )
+            """)
+
         try db.execute(sql: """
             CREATE TABLE channel_member (
                 channel_id TEXT NOT NULL,
@@ -267,7 +281,7 @@ enum Schema {
 
     static let projectionTables = [
         "thread", "rich_content", "edit", "deletion", "reaction",
-        "profile", "channel_member", "channel",
+        "profile", "channel_member", "channel", "channel_departure",
     ]
 
     static func dropProjectionTables(_ db: Database) throws {
