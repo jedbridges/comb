@@ -717,3 +717,77 @@ struct MembershipChangeTests {
         #expect(try store.channelSummaries().count == 2)
     }
 }
+
+@Suite("Profile document", .timeLimit(.minutes(1)))
+struct ProfileDocumentTests {
+    private func summary(
+        picture: String? = nil,
+        about: String? = nil,
+        nip05: String? = nil,
+        lud16: String? = nil
+    ) -> ProfileSummary {
+        ProfileSummary(
+            pubkey: "abc", displayName: "Old", about: about, picture: picture,
+            nip05: nip05, lightningAddress: lud16, messageCount: 1
+        )
+    }
+
+    @Test("a rename keeps the avatar, bio, handle, and lightning address")
+    func renamePreservesEverythingElse() {
+        // The bug this exists for: kind 0 is replaceable, so publishing only
+        // the name deleted all four of these for anyone who renamed themselves.
+        let document = ProfileDocument.rename(
+            to: "Jed",
+            preserving: summary(
+                picture: "https://example.test/a.jpg",
+                about: "https://x.com/someone",
+                nip05: "jed@example.test",
+                lud16: "jed@wallet.test"
+            )
+        )
+
+        #expect(document["name"] == "Jed")
+        #expect(document["display_name"] == "Jed")
+        #expect(document["picture"] == "https://example.test/a.jpg")
+        #expect(document["about"] == "https://x.com/someone")
+        #expect(document["nip05"] == "jed@example.test")
+        #expect(document["lud16"] == "jed@wallet.test")
+    }
+
+    @Test("writes both spellings of the name")
+    func bothSpellings() {
+        // Clients disagree about which one they read, so neither is optional.
+        let document = ProfileDocument.rename(to: "Jed", preserving: nil)
+        #expect(document["name"] == "Jed")
+        #expect(document["display_name"] == "Jed")
+        #expect(document.count == 2)
+    }
+
+    @Test("omits empty fields rather than publishing them blank")
+    func dropsEmpties() {
+        // An empty string is a present field to a reader, and some clients
+        // render it as a blank avatar rather than falling back.
+        let document = ProfileDocument.rename(
+            to: "Jed",
+            preserving: summary(picture: "", about: "", nip05: "", lud16: "")
+        )
+        #expect(document.count == 2)
+        #expect(document["picture"] == nil)
+    }
+
+    @Test("carries whichever fields happen to be known")
+    func partialProfile() {
+        let document = ProfileDocument.rename(
+            to: "Jed",
+            preserving: summary(picture: "https://example.test/a.jpg")
+        )
+        #expect(document["picture"] == "https://example.test/a.jpg")
+        #expect(document["about"] == nil)
+        #expect(document.count == 3)
+    }
+
+    @Test("an account with no profile yet publishes just the name")
+    func noExistingProfile() {
+        #expect(ProfileDocument.rename(to: "Jed", preserving: nil).count == 2)
+    }
+}

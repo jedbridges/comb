@@ -447,12 +447,19 @@ actor CommunitySession {
         }
     }
 
-    /// Publishes the user's profile. Kind 0 is replaceable per pubkey, so this
-    /// overwrites any previous name; both `name` and `display_name` are set
-    /// because clients disagree about which one they read.
+    /// Publishes the user's profile.
+    ///
+    /// Kind 0 replaces the whole document rather than patching it, so the
+    /// rename has to carry everything else forward or it deletes it. See
+    /// `ProfileDocument.rename(to:preserving:)`, which owns that rule and is
+    /// tested against it.
     @discardableResult
     func setProfile(displayName: String) async -> Bool {
-        let content: [String: String] = ["name": displayName, "display_name": displayName]
+        let content = ProfileDocument.rename(
+            to: displayName,
+            preserving: try? store.profile(pubkey: me.hex)
+        )
+
         guard let data = try? JSONEncoder().encode(content),
               let event = try? await signer.sign(
                   kind: .metadata,
