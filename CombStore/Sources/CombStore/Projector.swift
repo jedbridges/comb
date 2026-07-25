@@ -76,13 +76,14 @@ enum Projector {
         // already hold.
         try db.execute(
             sql: """
-                INSERT INTO channel (id, name, about, picture, is_private, source_event_id, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO channel (id, name, about, picture, is_private, is_dm, source_event_id, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     name = excluded.name,
                     about = excluded.about,
                     picture = excluded.picture,
                     is_private = excluded.is_private,
+                    is_dm = excluded.is_dm,
                     source_event_id = excluded.source_event_id,
                     updated_at = excluded.updated_at
                 WHERE excluded.updated_at > channel.updated_at
@@ -94,6 +95,11 @@ enum Projector {
                 meta?.picture ?? event.firstValue(for: "picture"),
                 // NIP-29 marks closed groups with a bare `private` tag.
                 event.tags.contains { $0.first == "private" },
+                // And a direct message with a bare `hidden` tag, whose stated
+                // purpose is to keep DMs out of a public channel list. It is a
+                // display hint, not access control, which is exactly what this
+                // column is used for.
+                event.tags.contains { $0.first == "hidden" },
                 event.id,
                 event.createdAt,
             ]

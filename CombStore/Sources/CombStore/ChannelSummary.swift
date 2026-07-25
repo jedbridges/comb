@@ -9,6 +9,9 @@ public struct ChannelSummary: Sendable, Equatable, Hashable, Identifiable {
     public let about: String?
     public let picture: String?
     public let memberCount: Int
+    /// A conversation with people rather than a room. Buzz marks these with a
+    /// bare `hidden` tag on the group metadata event.
+    public let isDirectMessage: Bool
     public let lastMessage: String?
     public let lastAuthor: String?
     /// Unix seconds of the newest message, nil for a silent channel.
@@ -30,11 +33,44 @@ public extension EventStore {
         try reader.read { db in try Self.fetchChannelSummaries(db, me: me) }
     }
 
+    /// Display names of everyone in each of the given channels except the
+    /// viewer, ordered so a conversation is named the same way every time.
+    ///
+    /// Sorted by pubkey rather than by name: a display name can change the
+    /// moment someone edits their profile, and a DM that silently reorders its
+    /// own title is worse than one ordered by something meaningless but stable.
+    static func fetchDirectMessageParticipants(
+        _ db: Database,
+        channels: [String],
+        me: String
+    ) throws -> [String: [String]] {
+        guard !channels.isEmpty else { return [:] }
+
+        let placeholders = databaseQuestionMarks(count: channels.count)
+        let rows = try Row.fetchAll(db, sql: """
+            SELECT m.channel_id, m.pubkey, p.display_name
+            FROM channel_member m
+            LEFT JOIN profile p ON p.pubkey = m.pubkey
+            WHERE m.channel_id IN (\(placeholders)) AND m.pubkey != ?
+            ORDER BY m.channel_id, m.pubkey
+            """, arguments: StatementArguments(channels + [me]))
+
+        return rows.reduce(into: [String: [String]]()) { result, row in
+            let pubkey: String = row["pubkey"]
+            // Not the usual `pubkey.prefix(8)` fallback. That is tolerable on a
+            // profile sheet, where someone has gone looking; as the title of a
+            // row on the first screen of the app it puts a raw key in front of
+            // a reader who was promised they would never see one.
+            let name = (row["display_name"] as String?).flatMap { $0.isEmpty ? nil : $0 }
+            result[row["channel_id"], default: []].append(name ?? "Someone new")
+        }
+    }
+
     static func fetchChannelSummaries(_ db: Database, me: String = "") throws -> [ChannelSummary] {
         // Correlated subqueries rather than joins: the channel count is small
         // (tens), and this keeps "latest message" unambiguous.
         let rows = try Row.fetchAll(db, sql: """
-            SELECT c.id, c.name, c.about, c.picture,
+            SELECT c.id, c.name, c.about, c.picture, c.is_dm,
                    (SELECT COUNT(*) FROM channel_member m
                      WHERE m.channel_id = c.id)                       AS members,
                    (SELECT e.content FROM event e
@@ -69,13 +105,26 @@ public extension EventStore {
                 "me": me,
             ])
 
+        // Rosters for the DM rows only, in one query rather than one per row.
+        // A channel list is tens of rows and most communities have no DMs at
+        // all, so this usually fetches nothing.
+        let dmIDs = rows.compactMap { ($0["is_dm"] as Bool) ? ($0["id"] as String) : nil }
+        let participants = try fetchDirectMessageParticipants(db, channels: dmIDs, me: me)
+
         return rows.map { row in
-            ChannelSummary(
-                id: row["id"],
-                name: row["name"] ?? row["id"],
+            let id: String = row["id"]
+            return ChannelSummary(
+                id: id,
+                name: DirectMessageName.resolve(
+                    name: row["name"],
+                    isDirectMessage: row["is_dm"],
+                    participants: participants[id] ?? [],
+                    fallback: id
+                ),
                 about: row["about"],
                 picture: row["picture"],
                 memberCount: row["members"],
+                isDirectMessage: row["is_dm"],
                 // Stripped here too: a channel whose newest message is a
                 // picture would otherwise preview as a relay URL.
                 lastMessage: (row["last_message"] as String?)

@@ -9,9 +9,12 @@ import Testing
 /// Builds signed events for tests. One key per instance so authorship is stable.
 struct Fixture {
     let key: PrivateKey
+    /// A display name, for tests that need to tell two people apart in output.
+    let name: String
 
-    init() throws {
+    init(name: String = "Someone") throws {
         key = try PrivateKey()
+        self.name = name
     }
 
     var pubkey: String { key.publicKey.hex }

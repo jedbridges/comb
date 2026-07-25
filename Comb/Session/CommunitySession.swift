@@ -33,6 +33,27 @@ actor CommunitySession {
     private static let stateKinds: [EventKind] = [
         .metadata, .groupMetadata, .groupMembers,
     ]
+    /// Kinds that are never stored, so nothing here is ever backfilled and the
+    /// store's newest timestamp says nothing about them. Kept separate from the
+    /// stored kinds for that reason, and because forgetting to list a kind here
+    /// is invisible: the pipeline still runs, it just never receives anything.
+    private static let ephemeralKinds: [EventKind] = [
+        .buzzTyping,
+    ]
+    /// Relay-signed notices that this account's membership changed.
+    ///
+    /// These are how a new channel is learned about while the app is running.
+    /// The group state events that describe the channel (39000, 39002) are
+    /// stored channel-scoped by Buzz and so never reach a live subscription;
+    /// they are only ever answered to a historical query. Without these, being
+    /// added to a channel is invisible until the next bootstrap.
+    private static let membershipKinds: [EventKind] = [
+        .buzzMemberAdded, .buzzMemberRemoved,
+    ]
+
+    static func isMembershipChange(_ kind: EventKind) -> Bool {
+        membershipKinds.contains(kind)
+    }
 
     /// `store` is injectable for the debug demo, which needs an in-memory
     /// store: the demo seeds fresh random identities every launch, so a
@@ -44,18 +65,28 @@ actor CommunitySession {
         self.store = resolvedStore
         self.signer = InMemorySigner(key)
 
-        // The box is captured by the sink closure rather than `self`, which
+        // The boxes are captured by the sink closures rather than `self`, which
         // does not exist yet during init.
         let box = EphemeralBox()
         self.ephemeralBox = box
+        let membership = CallbackBox()
+        self.membershipBox = membership
         self.relay = RelaySession(
             url: url,
             signer: signer,
-            sink: StoreSink(store: resolvedStore, onEphemeral: { box.emit($0) })
+            sink: StoreSink(
+                store: resolvedStore,
+                onEphemeral: { box.emit($0) },
+                onMembershipChange: { membership.fire() }
+            )
         )
+        membership.handler = { [weak self] in
+            Task { await self?.refreshGroupState() }
+        }
     }
 
     private let ephemeralBox: EphemeralBox
+    private let membershipBox: CallbackBox
 
     /// Live ephemeral events (typing, presence), never stored.
     nonisolated func ephemeralEvents() -> AsyncStream<[NostrEvent]> {
@@ -117,6 +148,32 @@ actor CommunitySession {
         await retryPendingSends()
     }
 
+    /// Re-reads the channels this account can see.
+    ///
+    /// Called when a membership notice says the answer just changed. Buzz
+    /// stores group state channel-scoped, so a live subscription never carries
+    /// it and a query is the only way to learn a new channel's name and roster.
+    /// Failure is not surfaced: the next reconnect bootstraps the same state,
+    /// and a toast about a refetch the user never asked for would be noise.
+    private func refreshGroupState() async {
+        guard let events = try? await relay.query(
+            [
+                Filter(kinds: [.groupMetadata], limit: 200),
+                Filter(kinds: [.groupMembers], limit: 200),
+            ],
+            timeout: .seconds(15)
+        ) else {
+            DiagnosticsBuffer.report("session", "membership refresh failed")
+            return
+        }
+
+        let result = try? await store.ingest(events)
+        DiagnosticsBuffer.report(
+            "session",
+            "membership changed: refreshed \(result?.inserted.count ?? 0) group events"
+        )
+    }
+
     /// Connects without holding up the caller, retrying until it works or
     /// the session stops.
     ///
@@ -170,7 +227,20 @@ actor CommunitySession {
         var filter = Filter(kinds: Self.contentKinds + Self.stateKinds)
         filter.since = newest - 5
 
-        liveSubscription = try await relay.subscribe([filter], label: "live")
+        // A second filter rather than more kinds on the first: `since` resumes
+        // the stored kinds from where the log left off, and applying that same
+        // bound to kinds that are never stored would be meaningless.
+        let ephemeral = Filter(kinds: Self.ephemeralKinds)
+
+        // The `p` scope is mandatory, not a courtesy: the relay rejects a
+        // subscription to these kinds that does not constrain them to the
+        // authenticated pubkey, because otherwise it would leak other people's
+        // membership changes.
+        let membership = Filter(kinds: Self.membershipKinds).taggingPubkey(me.hex)
+
+        liveSubscription = try await relay.subscribe(
+            [filter, ephemeral, membership], label: "live"
+        )
     }
 
     /// Live connection state, for the UI's status indicator.
@@ -239,7 +309,10 @@ actor CommunitySession {
     /// Reactions are fire-and-forget rather than queued: the outbox renders its
     /// rows as timeline messages, and a lost reaction is an annoyance where a
     /// lost message is a betrayal.
-    func toggleReaction(_ emoji: String, on targetID: String, in channel: String) async {
+    /// Returns whether the relay accepted it, so the caller can say so. A
+    /// reaction that silently never landed looks identical to one that did.
+    @discardableResult
+    func toggleReaction(_ emoji: String, on targetID: String, in channel: String) async -> Bool {
         do {
             if let existing = try store.ownReactionID(
                 target: targetID,
@@ -262,8 +335,10 @@ actor CommunitySession {
                 try await relay.publish(reaction)
                 _ = try await store.ingest([reaction])
             }
+            return true
         } catch {
-            // Dropped on failure, by design. The next tap tries again.
+            DiagnosticsBuffer.report("session", "reaction failed: \(error)")
+            return false
         }
     }
 
@@ -274,9 +349,10 @@ actor CommunitySession {
     /// Published directly rather than queued: an outbox row renders as a
     /// timeline message, so a queued edit would appear as a phantom message
     /// while in flight.
-    func edit(_ messageID: String, to newText: String, in channel: String) async {
+    @discardableResult
+    func edit(_ messageID: String, to newText: String, in channel: String) async -> Bool {
         let trimmed = newText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
+        guard !trimmed.isEmpty else { return false }
 
         do {
             let event = try await signer.sign(
@@ -286,10 +362,14 @@ actor CommunitySession {
             )
             try await relay.publish(event)
             _ = try await store.ingest([event])
+            return true
         } catch {
-            // Dropped on failure; the message simply stays as it was and the
-            // next attempt tries again. Nothing is lost because nothing was
-            // replaced locally until the relay accepted it.
+            // Nothing is lost: nothing was replaced locally until the relay
+            // accepted it. But the user asked for a change and did not get one,
+            // so the caller says so rather than leaving the old text to look
+            // like a rendering delay.
+            DiagnosticsBuffer.report("session", "edit failed: \(error)")
+            return false
         }
     }
 
@@ -297,7 +377,8 @@ actor CommunitySession {
     /// Buzz requires so channel-scoped subscriptions observe it. The timeline
     /// shows "Message deleted" rather than closing the hole, which is honest:
     /// others may have read it already.
-    func deleteMessage(_ messageID: String, in channel: String) async {
+    @discardableResult
+    func deleteMessage(_ messageID: String, in channel: String) async -> Bool {
         do {
             let deletion = try await signer.sign(
                 kind: .deletion,
@@ -306,8 +387,12 @@ actor CommunitySession {
             )
             try await relay.publish(deletion)
             _ = try await store.ingest([deletion])
+            return true
         } catch {
-            // Same policy as reactions: dropped, retry by tapping again.
+            // The most important of these to report: someone who believes a
+            // message is gone will act as though it is.
+            DiagnosticsBuffer.report("session", "delete failed: \(error)")
+            return false
         }
     }
 
@@ -321,12 +406,16 @@ actor CommunitySession {
     ///
     /// Both the message and its author are tagged, because a report about a
     /// person and a report about one thing they said want different responses.
+    /// Returns whether the report reached the relay. Telling someone their
+    /// report was filed when it never left the device is the worst failure in
+    /// this file: they stop expecting anything further and nobody was told.
+    @discardableResult
     func report(
         _ messageID: String,
         author: String,
         reason: Report.Reason,
         in channel: String
-    ) async {
+    ) async -> Bool {
         var tags: [[String]] = [["h", channel]]
         if let type = reason.nip56Type {
             tags.append(["e", messageID, "", type])
@@ -347,27 +436,42 @@ actor CommunitySession {
             try await relay.publish(report)
             // Deliberately not ingested: a report is not part of the
             // conversation and has no business appearing in anyone's timeline.
+            return true
         } catch {
             // Blocking already took effect locally, which is the part the
-            // reporter can actually rely on.
+            // reporter can actually rely on, and the sheet says which half
+            // worked rather than claiming both did.
             Log.session.error("report failed")
+            DiagnosticsBuffer.report("session", "report failed: \(error)")
+            return false
         }
     }
 
     /// Publishes the user's profile. Kind 0 is replaceable per pubkey, so this
     /// overwrites any previous name; both `name` and `display_name` are set
     /// because clients disagree about which one they read.
-    func setProfile(displayName: String) async {
+    @discardableResult
+    func setProfile(displayName: String) async -> Bool {
         let content: [String: String] = ["name": displayName, "display_name": displayName]
         guard let data = try? JSONEncoder().encode(content),
               let event = try? await signer.sign(
                   kind: .metadata,
                   content: String(decoding: data, as: UTF8.self)
               )
-        else { return }
+        else { return false }
 
-        try? await relay.publish(event)
-        _ = try? await store.ingest([event])
+        do {
+            try await relay.publish(event)
+            _ = try await store.ingest([event])
+            return true
+        } catch {
+            // Ingested anyway: the name is what this device believes it is
+            // called, and showing the old one back would read as the edit being
+            // rejected rather than undelivered.
+            _ = try? await store.ingest([event])
+            DiagnosticsBuffer.report("session", "profile update failed: \(error)")
+            return false
+        }
     }
 
     /// Re-delivers a failed message from its stored payload. No re-signing:
@@ -491,6 +595,20 @@ actor CommunitySession {
 /// A separate object rather than the session itself: the sink closure is
 /// built during `init` before `self` exists, and ephemeral delivery must not
 /// hop onto the session actor while the socket is reading.
+private final class CallbackBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: (@Sendable () -> Void)?
+
+    var handler: (@Sendable () -> Void)? {
+        get { lock.withLock { stored } }
+        set { lock.withLock { stored = newValue } }
+    }
+
+    func fire() {
+        lock.withLock { stored }?()
+    }
+}
+
 private final class EphemeralBox: @unchecked Sendable {
     private let lock = NSLock()
     private var continuations: [UUID: AsyncStream<[NostrEvent]>.Continuation] = [:]
@@ -548,10 +666,21 @@ struct ReplyContext: Sendable, Equatable {
 private struct StoreSink: EventSink {
     let store: EventStore
     let onEphemeral: @Sendable ([NostrEvent]) -> Void
+    let onMembershipChange: @Sendable () -> Void
 
     func ingest(_ events: [NostrEvent], subscription: String) async {
         guard let result = try? await store.ingest(events) else { return }
         if !result.ephemeral.isEmpty { onEphemeral(result.ephemeral) }
+
+        // Keyed on what was newly stored rather than on what arrived, so a
+        // relay replaying an old notice after a reconnect does not trigger a
+        // refetch of every channel each time.
+        let stored = Set(result.inserted)
+        if events.contains(where: {
+            CommunitySession.isMembershipChange($0.kind) && stored.contains($0.id)
+        }) {
+            onMembershipChange()
+        }
     }
 
     func endOfStoredEvents(subscription: String) async {}

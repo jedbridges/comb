@@ -458,3 +458,146 @@ struct BlockingTests {
         #expect(try store.isBlocked(pubkey: other.pubkey))
     }
 }
+
+@Suite("Direct message naming", .timeLimit(.minutes(1)))
+struct DirectMessageNameTests {
+    /// Buzz sends a DM channel with a bare `hidden` tag and a placeholder name,
+    /// and expects the client to title it from the roster.
+    private func seedDM(
+        _ store: EventStore,
+        relay: Fixture,
+        name: String,
+        members: [Fixture],
+        hidden: Bool = true
+    ) async throws {
+        var tags: [[String]] = [["d", "dm-1"]]
+        if hidden { tags.append(["hidden"]) }
+
+        var events = [
+            try relay.event(
+                .groupMetadata, #"{"name":"\#(name)"}"#, tags: tags, at: 900
+            ),
+            try relay.event(
+                .groupMembers, "",
+                tags: [["d", "dm-1"]] + members.map { ["p", $0.pubkey] },
+                at: 901
+            ),
+        ]
+        for member in members {
+            events.append(
+                try member.event(
+                    .metadata, #"{"display_name":"\#(member.name)"}"#, at: 902
+                )
+            )
+        }
+        _ = try await store.ingest(events)
+    }
+
+    @Test("titles a placeholder DM with the other people in it")
+    func namesFromRoster() async throws {
+        let store = try EventStore()
+        let relay = try Fixture()
+        let me = try Fixture(name: "Me")
+        let alice = try Fixture(name: "Alice")
+
+        try await seedDM(store, relay: relay, name: "dm", members: [me, alice])
+
+        let dm = try #require(try store.channelSummaries(me: me.pubkey).first)
+        #expect(dm.isDirectMessage)
+        // Only the other person: a conversation titled with your own name
+        // among the others reads as a list of strangers plus you.
+        #expect(dm.name == "Alice")
+    }
+
+    @Test("orders participants stably, not by a name that can change")
+    func stableOrder() async throws {
+        let store = try EventStore()
+        let relay = try Fixture()
+        let me = try Fixture(name: "Me")
+        let alice = try Fixture(name: "Alice")
+        let bob = try Fixture(name: "Bob")
+
+        try await seedDM(store, relay: relay, name: "Group DM (3)", members: [me, alice, bob])
+
+        let dm = try #require(try store.channelSummaries(me: me.pubkey).first)
+        // Ordered by pubkey, so the expectation is derived the same way rather
+        // than hardcoded: the keys are random per run.
+        let expected = [alice, bob]
+            .sorted { $0.pubkey < $1.pubkey }
+            .map(\.name)
+            .joined(separator: " & ")
+        #expect(dm.name == expected)
+    }
+
+    @Test("keeps a name the operator actually chose")
+    func keepsRealName() async throws {
+        let store = try EventStore()
+        let relay = try Fixture()
+        let me = try Fixture(name: "Me")
+        let alice = try Fixture(name: "Alice")
+
+        try await seedDM(store, relay: relay, name: "Release planning", members: [me, alice])
+
+        let dm = try #require(try store.channelSummaries(me: me.pubkey).first)
+        #expect(dm.isDirectMessage)
+        #expect(dm.name == "Release planning")
+    }
+
+    @Test("leaves an ordinary channel alone")
+    func ordinaryChannelUnaffected() async throws {
+        let store = try EventStore()
+        let relay = try Fixture()
+        let me = try Fixture(name: "Me")
+
+        try await seedDM(store, relay: relay, name: "dm", members: [me], hidden: false)
+
+        let channel = try #require(try store.channelSummaries(me: me.pubkey).first)
+        #expect(!channel.isDirectMessage)
+        // Without the hidden tag this is just a room unfortunately called "dm".
+        #expect(channel.name == "dm")
+    }
+
+    @Test("recognises the placeholder names Buzz actually sends")
+    func placeholders() {
+        #expect(DirectMessageName.isPlaceholder("dm"))
+        #expect(DirectMessageName.isPlaceholder("DM"))
+        #expect(DirectMessageName.isPlaceholder(" Direct Message "))
+        #expect(DirectMessageName.isPlaceholder("Group DM"))
+        #expect(DirectMessageName.isPlaceholder("Group DM (12)"))
+        #expect(DirectMessageName.isPlaceholder(""))
+        #expect(DirectMessageName.isPlaceholder(nil))
+
+        #expect(!DirectMessageName.isPlaceholder("Release planning"))
+        #expect(!DirectMessageName.isPlaceholder("dm-notes"))
+        #expect(!DirectMessageName.isPlaceholder("Group DM planning"))
+    }
+
+    @Test("caps a crowded conversation with a count")
+    func capsParticipants() {
+        #expect(DirectMessageName.label(participants: []) == nil)
+        #expect(DirectMessageName.label(participants: ["A"]) == "A")
+        #expect(DirectMessageName.label(participants: ["A", "B"]) == "A & B")
+        // Three is already an overflow: only two names are ever spelled out.
+        #expect(DirectMessageName.label(participants: ["A", "B", "C"]) == "A, B & 1 other")
+        #expect(
+            DirectMessageName.label(participants: ["A", "B", "C", "D", "E"])
+                == "A, B & 3 others"
+        )
+    }
+
+    @Test("never shows the relay's placeholder, even before the roster lands")
+    func rosterMissing() {
+        // Group state and membership are separate events, so this window is
+        // real on every cold launch. It must not render as "dm".
+        #expect(
+            DirectMessageName.resolve(
+                name: "dm", isDirectMessage: true, participants: [], fallback: "dm-1"
+            ) == "Direct message"
+        )
+        #expect(
+            DirectMessageName.resolve(
+                name: "Group DM (4)", isDirectMessage: true, participants: [], fallback: "dm-1"
+            ) == "Direct message"
+        )
+    }
+}

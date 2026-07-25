@@ -61,16 +61,23 @@ wrote, talking to communities nobody at Comb controls.
 
 ## Why Comb exists
 
-Buzz ships an official mobile app. It is a companion to the desktop client: pair
-with a QR code and carry your session in your pocket. That is a reasonable scope,
-and it leaves a gap.
+Buzz ships an official mobile app, built in Flutter and shared with Android. It
+joins by invite, mints its own identity, and covers most of what a phone client
+needs. Comb is not trying to out-feature it, and this file will not pretend
+otherwise.
 
-Invites get shared where people actually talk, in group chats and DMs, and those
-are read on a phone. A client that can only extend an existing desktop session
-cannot convert that tap. Comb can: it mints an identity at join, accepts an
-invite pasted on the device, and can browse communities that have listed
-themselves. It is also a deliberate proof that the protocol is open enough for
-somebody else to build a real client on it.
+Comb is a native one. Every screen is SwiftUI built on system components, which
+is a constraint with consequences: Dynamic Type, VoiceOver, and next year's iOS
+design language arrive by rebuilding rather than by reimplementing. An app made
+of `Form`, `List`, and standard navigation inherits the platform. One made of
+hand-drawn chrome inherits the year it was written in.
+
+That is the whole bet. It is a narrower claim than the one this section used to
+make, and a truer one.
+
+It is also a deliberate proof that the protocol is open enough for somebody else
+to build a real client on it. Nothing about Buzz requires Buzz's own app, and
+the way to demonstrate that is to ship one that is not.
 
 Comb is an independent project and is not affiliated with Block, Inc.
 
@@ -175,16 +182,26 @@ release path.
 - [x] Reporting (NIP-56) and local blocking
 - [x] Mention notifications by background refresh, and local reminders
 - [x] Deep links to a message, by `buzz://message` URL
-- [ ] Typing indicators and presence
+- [x] Typing indicators
+- [x] Direct messages named for the people in them, rather than "dm"
+- [ ] Presence
+- [ ] Starting a new direct message
+- [ ] Creating, joining, and leaving channels
 - [ ] Video playback for received attachments
 - [ ] Nostr Wallet Connect (NIP-47) for in-app zaps
 
 ### Notifications, honestly
 
-There is no real push, and there cannot be one today. Buzz's hosted push gateway
-verifies Apple App Attest against a single hardcoded app identifier, so no
-third-party client can register with it. Making that list configurable is an
-upstream change worth proposing.
+There is no real push. Buzz's hosted push gateway verifies Apple App Attest
+against a single hardcoded app identifier and its `AppProfile` is a two-variant
+enum, so no third-party client can register with it. Making that configurable is
+an upstream change worth proposing, and the payload the gateway sends is a
+contentless "reconnect" nudge, so any client could consume it unchanged.
+
+Worth stating plainly rather than implying an unfavourable comparison: no Buzz
+client has push today, the official mobile app included. It ships no push
+plugin, no `aps-environment`, and no entitlements file, and the gateway's own
+deployment notes say the client enrolment flow is still unbuilt.
 
 What Comb does instead: iOS wakes the app periodically, it syncs, and it posts a
 *local* notification for anything that mentioned you. No server is involved. The

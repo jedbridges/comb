@@ -80,6 +80,20 @@ struct FilterTests {
         #expect(!Filter(kinds: [.groupChatMessage]).needsPubkeyScope)
         #expect(!Filter().needsPubkeyScope)
     }
+
+    @Test("both membership notices are p-gated, and scoping satisfies both")
+    func membershipNoticesAreGated() {
+        // The live subscription asks for these to learn about a channel it was
+        // just added to. Removal is as gated as addition: leaving it unscoped
+        // would let the filter through here and be refused by the relay.
+        #expect(Filter(kinds: [.buzzMemberRemoved]).needsPubkeyScope)
+        #expect(Filter(kinds: [.buzzMemberAdded, .buzzMemberRemoved]).needsPubkeyScope)
+        #expect(
+            !Filter(kinds: [.buzzMemberAdded, .buzzMemberRemoved])
+                .taggingPubkey("me")
+                .needsPubkeyScope
+        )
+    }
 }
 
 @Suite("ClientMessage")

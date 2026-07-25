@@ -213,6 +213,38 @@ struct SubscriptionTests {
         let second = try await harness.session.subscribe([Filter(kinds: [.reaction])])
         #expect(first != second)
     }
+
+    @Test("carries every filter of a multi-filter subscription, and routes all of them")
+    func multipleFiltersInOneSubscription() async throws {
+        // The live subscription pairs a `since`-bounded filter for stored kinds
+        // with an unbounded one for ephemerals. Typing indicators were wired end
+        // to end but never arrived, because the ephemeral kind was in neither
+        // list on the single filter that existed. One REQ, both filters.
+        let harness = try await Harness(behaviour: Behaviour.cooperative(onReq: { _, _ in }))
+        try await harness.connect()
+
+        var stored = Filter(kinds: [.groupChatMessage])
+        stored.since = 1000
+        let id = try await harness.session.subscribe(
+            [stored, Filter(kinds: [.buzzTyping])]
+        )
+
+        let req = try #require(await harness.transport.sent(ofType: "REQ").last)
+        #expect(req.filters.count == 2)
+        #expect(req.filters[0].kinds == [.groupChatMessage])
+        #expect(req.filters[0].since == 1000)
+        #expect(req.filters[1].kinds == [.buzzTyping])
+        #expect(req.filters[1].since == nil)
+
+        let key = try PrivateKey()
+        let typing = try NostrEvent.signed(
+            kind: .buzzTyping, content: "", tags: [["h", "room-1"]], with: key
+        )
+        try await harness.transport.push(event: typing, subscription: id)
+
+        try await waitUntil("typing delivery") { await harness.sink.events.count == 1 }
+        #expect(await harness.sink.events.first == typing)
+    }
 }
 
 @Suite("Queries", .timeLimit(.minutes(1)))
