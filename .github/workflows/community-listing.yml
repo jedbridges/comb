@@ -1,0 +1,100 @@
+name: Community listing
+
+# Turns a "List your community" issue into a pull request against the index.
+#
+# The index is fetched by the app from `main` at runtime, so merging one of
+# these PRs puts the community on every installed phone within minutes. That
+# is why this opens a PR rather than committing: the merge is the review, and
+# it is the only human step left.
+#
+# Runs again on every edit, so a submitter who gets something wrong fixes it in
+# place and the check re-runs, instead of opening a second issue.
+
+on:
+  issues:
+    types: [opened, edited, labeled, reopened]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  propose:
+    name: Validate and propose
+    if: contains(github.event.issue.labels.*.name, 'community listing')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Save the issue body
+        env:
+          # Through the environment, never interpolated into the script: an
+          # issue body is a stranger's text and `${{ }}` would paste it
+          # straight into the shell.
+          ISSUE_BODY: ${{ github.event.issue.body }}
+        run: printf '%s' "$ISSUE_BODY" > /tmp/issue-body.md
+
+      - name: Validate the submission
+        id: validate
+        run: |
+          set +e
+          python3 scripts/community_submission.py \
+            --body /tmp/issue-body.md \
+            --index communities/index.json \
+            --out /tmp/index.json \
+            >/tmp/report.md 2>/tmp/slug
+          code=$?
+          set -e
+          # The report quotes the submitter's own text back at them, so it goes
+          # to a file and is posted with --body-file. Routed through
+          # GITHUB_OUTPUT it would need a heredoc delimiter, and a field
+          # containing that delimiter would let a stranger write arbitrary
+          # step outputs.
+          echo "slug=$(cat /tmp/slug)" >> "$GITHUB_OUTPUT"
+          echo "ok=$([ $code -eq 0 ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
+      - name: Explain what is missing
+        if: steps.validate.outputs.ok == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NUMBER: ${{ github.event.issue.number }}
+        run: gh issue comment "$NUMBER" --body-file /tmp/report.md
+
+      - name: Open the pull request
+        if: steps.validate.outputs.ok == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SLUG: ${{ steps.validate.outputs.slug }}
+          NUMBER: ${{ github.event.issue.number }}
+        run: |
+          branch="listing/$SLUG"
+          cp /tmp/index.json communities/index.json
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # Force-push the branch so an edited issue updates its existing PR
+          # rather than opening a second one for the same community.
+          git checkout -B "$branch"
+          git add communities/index.json
+          git commit -m "List $SLUG in the community index" \
+            -m "Proposed from #$NUMBER by the listing form. The relay answered a NIP-11 description before this was opened."
+          git push --force origin "$branch"
+
+          if ! gh pr view "$branch" >/dev/null 2>&1; then
+            printf '%s\n' \
+              "Closes #$NUMBER" \
+              "" \
+              "Built from the listing form and checked before opening: the relay address is a public \`wss://\` host, it is not already listed, and it answered a NIP-11 relay description." \
+              "" \
+              "Merging publishes it. The app reads the index from \`main\` at runtime, so this reaches every installed phone without a release." \
+              > /tmp/pr-body.md
+            gh pr create \
+              --base main \
+              --head "$branch" \
+              --title "List $SLUG in the community index" \
+              --body-file /tmp/pr-body.md
+          fi
+
+          gh issue comment "$NUMBER" --body "Thanks. The relay answered, so this is ready to review: $(gh pr view "$branch" --json url --jq .url)"
