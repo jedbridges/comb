@@ -68,9 +68,11 @@ targets:
         # override leaves those resolving against the device setting, which is
         # what made elements flip appearance mid-transition.
         #
-        # The brand is a dark gradient with one bright accent, and the light
-        # variant of it was never finished. Shipping a half-built appearance is
-        # worse than shipping one.
+        # The brand is a dark gradient with one bright accent, and Comb is dark
+        # only by decision rather than by omission. There is no light variant
+        # pending and none is wanted. `Palette` still declares its tokens as
+        # adaptive pairs, which reads like latent support: it is not, and the
+        # light halves are unverified.
         UIUserInterfaceStyle: Dark
         # Background refresh wakes the app to check for mentions while it is
         # closed, since hosted Buzz's push gateway will not enrol a third-party
