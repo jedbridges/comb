@@ -75,3 +75,17 @@ jobs:
             -skipPackagePluginValidation \
             -skipMacroValidation \
             CODE_SIGNING_ALLOWED=NO
+
+  # Issue forms fail silently: GitHub hides an unusable template and redirects
+  # its `?template=` link to the chooser without reporting anything. The app
+  # links straight to one of these from its Browse screen, so a broken form
+  # reads to a would-be contributor as a dead end in the product.
+  issue-templates:
+    name: Issue templates
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check templates parse and their labels exist
+        run: ./scripts/check-issue-templates.sh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

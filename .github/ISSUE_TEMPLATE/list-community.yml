@@ -29,7 +29,7 @@ body:
     attributes:
       label: Description
       description: One or two lines. What is it about, who is it for.
-      placeholder: Working designers talking shop: critique, fonts, jobs.
+      placeholder: "Working designers talking shop: critique, fonts, jobs."
     validations:
       required: true
   - type: input
