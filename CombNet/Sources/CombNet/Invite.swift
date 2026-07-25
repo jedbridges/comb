@@ -85,6 +85,57 @@ public struct InviteLink: Equatable, Sendable {
         return InviteLink(relayURL: relay, code: code)
     }
 
+    /// When the code says it stops working, if it says so at all.
+    ///
+    /// Read out of the payload segment, which is base64url JSON. Deliberately
+    /// **unverified**: the MAC covers this payload but only the relay holds the
+    /// key, so a forged expiry cannot be told from a real one here.
+    ///
+    /// That is why this is only ever allowed to fail an invite early, never to
+    /// pass one. The relay checks the real expiry on every claim, so the worst
+    /// a tampered date can do is make someone re-ask for a link that would have
+    /// been refused anyway. Reading it lets Comb say so before a name has been
+    /// typed and terms have been read, instead of after.
+    ///
+    /// Best-effort by construction: the format is Buzz's and may change, and
+    /// anything that does not decode simply has no opinion.
+    public var expiresAt: Date? {
+        guard let payload = code.split(separator: ".").first,
+              let data = Self.base64URLDecoded(String(payload)),
+              let fields = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let seconds = fields["e"] as? TimeInterval
+        else { return nil }
+        return Date(timeIntervalSince1970: seconds)
+    }
+
+    /// Whether the code says it has already expired. False whenever it does not
+    /// say, so an unreadable code is still worth sending to the relay.
+    public func hasExpired(asOf now: Date = Date()) -> Bool {
+        guard let expiresAt else { return false }
+        return expiresAt <= now
+    }
+
+    /// base64url, padding optional. Buzz mints without it.
+    static func base64URLDecoded(_ string: String) -> Data? {
+        var encoded = string
+            .replacingOccurrences(of: "-", with: "+")
+            .replacingOccurrences(of: "_", with: "/")
+        encoded += String(repeating: "=", count: (4 - encoded.count % 4) % 4)
+        return Data(base64Encoded: encoded)
+    }
+
+    /// The relay's HTTP surface for this community. Every non-socket call
+    /// (claiming, the join policy) is the same host over http(s), so the
+    /// mapping lives here once rather than in each client.
+    func httpURL(path: String) -> URL? {
+        var components = URLComponents()
+        components.scheme = relayURL.scheme?.lowercased() == "ws" ? "http" : "https"
+        components.host = host
+        components.port = relayURL.port
+        components.path = path
+        return components.url
+    }
+
     /// Buzz codes are `base64url(payload).base64url(mac)`. The check here is
     /// deliberately loose, enough to reject obvious garbage without breaking
     /// when the server evolves the format.
@@ -112,12 +163,26 @@ public struct InviteClient: Sendable {
         public var isMember: Bool { status == "joined" || status == "already_member" }
     }
 
+    /// Body for `POST /api/invites/claim`.
+    private struct ClaimRequest: Encodable {
+        let code: String
+        let policyReceipt: String?
+
+        enum CodingKeys: String, CodingKey {
+            case code
+            case policyReceipt = "policy_receipt"
+        }
+    }
+
     public enum Failure: Error, Equatable {
         /// The code is expired. The server distinguishes this one case because
         /// telling the user helps and telling a forger does not.
         case expired
         /// Bad code, wrong community, or forged. Deliberately coarse upstream.
         case invalid
+        /// The operator requires their join policy accepted before this invite
+        /// can be claimed. Recoverable: accept, then claim again with a receipt.
+        case policyRequired
         /// Too many attempts; the relay rate-limits claims per pubkey.
         case rateLimited
         case serverError(Int)
@@ -129,15 +194,16 @@ public struct InviteClient: Sendable {
     /// Buzz's own client mints a fresh keypair immediately before claiming, so
     /// per-community identity is the protocol's shape, not Comb's invention.
     /// The claim is idempotent: repeating it with the same key is safe.
-    public func claim(_ invite: InviteLink, signer: some EventSigner) async throws -> Claim {
-        var components = URLComponents()
-        components.scheme = invite.relayURL.scheme?.lowercased() == "ws" ? "http" : "https"
-        components.host = invite.host
-        components.port = invite.relayURL.port
-        components.path = "/api/invites/claim"
-        guard let url = components.url else { throw Failure.invalid }
+    public func claim(
+        _ invite: InviteLink,
+        signer: some EventSigner,
+        policyReceipt: String? = nil
+    ) async throws -> Claim {
+        guard let url = invite.httpURL(path: "/api/invites/claim") else { throw Failure.invalid }
 
-        let body = try JSONEncoder().encode(["code": invite.code])
+        let body = try JSONEncoder().encode(
+            ClaimRequest(code: invite.code, policyReceipt: policyReceipt)
+        )
 
         var request = URLRequest(url: url, timeoutInterval: 15)
         request.httpMethod = "POST"
@@ -161,7 +227,17 @@ public struct InviteClient: Sendable {
             return claim
         case 403:
             let error = (try? JSONDecoder().decode([String: String].self, from: data))?["error"]
-            throw error == "invite_expired" ? Failure.expired : Failure.invalid
+            switch error {
+            case "invite_expired":
+                throw Failure.expired
+            case "join_policy_required":
+                // Not a bad invite: the operator requires their terms accepted
+                // first. Told apart from `invalid` because the two ask entirely
+                // different things of the person reading the message.
+                throw Failure.policyRequired
+            default:
+                throw Failure.invalid
+            }
         case 429:
             throw Failure.rateLimited
         default:

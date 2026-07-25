@@ -32,8 +32,6 @@ enum Palette {
 
     static let text = adaptive(light: 0x4C4F69, dark: 0xCAD3F5)
     static let subtext = adaptive(light: 0x6C6F85, dark: 0xA5ADCB)
-    static let accent = adaptive(light: 0x8839EF, dark: 0xA875F5)
-    static let link = adaptive(light: 0x1E66F5, dark: 0x8AADF4)
 
     /// A hue-preserving lift for surfaces sitting on the gradient. White at low
     /// opacity shifts lightness without introducing a competing grey.

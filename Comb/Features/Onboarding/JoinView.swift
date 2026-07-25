@@ -22,9 +22,65 @@ struct JoinView: View {
     let onJoined: (CommunitySession) -> Void
 
     @State private var model = JoinModel()
+    @State private var reading: PolicyDocument?
     @FocusState private var focus: Field?
 
     private enum Field { case invite, name }
+
+    /// A policy document being read. Identifiable by title, which is unique
+    /// within a policy and stable across the sheet's lifetime.
+    struct PolicyDocument: Identifiable {
+        let title: String
+        let markdown: String
+        var id: String { title }
+
+        /// Links in the footer copy carry the document instead of a real
+        /// address: the text lives in the response Comb already holds, and a
+        /// tap should open it here rather than send anyone to a browser.
+        static let scheme = "comb-policy"
+        static let terms = "terms"
+        static let privacy = "privacy"
+    }
+
+    /// The grey line under the agreements: whose terms these are.
+    ///
+    /// The one sentence worth keeping. Comb did not write these and cannot
+    /// change them, and a screen that asks you to agree to something owes you
+    /// the name of who is asking.
+    ///
+    /// That name is the service, not the community. `designers` did not write
+    /// these terms; it inherited them from the host it runs on, and on the
+    /// hosted service that is Buzz. A community running its own relay gets the
+    /// general form, because there the operator is someone this app cannot name.
+    private static func policyFooter(host: String?) -> String {
+        let isHostedByBuzz = host == Self.buzzDomain || host?.hasSuffix(".\(Self.buzzDomain)") == true
+        return "Required by \(isHostedByBuzz ? "Buzz" : "this community's host"), not by Comb."
+    }
+
+    /// Matched as a whole label, never as a bare suffix: `notbuzz.xyz` ends with
+    /// the same eight characters and is not Buzz.
+    private static let buzzDomain = "buzz.xyz"
+
+    /// The agreement itself, with each document named as a link.
+    ///
+    /// The names were already in this sentence; making them the links removes a
+    /// second sentence that existed only to say them again.
+    private static func agreementLabel(_ policy: JoinPolicy) -> AttributedString {
+        var documents: [String] = []
+        if policy.termsMarkdown?.isEmpty == false {
+            documents.append(
+                "[Terms of Service](\(PolicyDocument.scheme)://\(PolicyDocument.terms))"
+            )
+        }
+        if policy.privacyMarkdown?.isEmpty == false {
+            documents.append(
+                "[Privacy Policy](\(PolicyDocument.scheme)://\(PolicyDocument.privacy))"
+            )
+        }
+
+        let sentence = "I agree to the \(documents.joined(separator: " and "))"
+        return (try? AttributedString(markdown: sentence)) ?? AttributedString(sentence)
+    }
 
     /// The name to show: the index's real name when the join came from browse,
     /// otherwise the one derived from the host.
@@ -52,8 +108,7 @@ struct JoinView: View {
                         isVerified: model.isVerified
                     )
                 }
-                .listRowInsets(EdgeInsets())
-                .listRowBackground(Color.clear)
+                .combRows()
             }
 
             Section {
@@ -61,12 +116,38 @@ struct JoinView: View {
                 // alone in a full-width card, which read as an empty container
                 // with something dropped into it.
                 HStack(spacing: Space.sm) {
-                    TextField("Paste your invite", text: $model.inviteText, axis: .vertical)
-                        .lineLimit(1...3)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                        .focused($focus, equals: .invite)
-                        .onChange(of: model.inviteText) { _, _ in model.parseInvite() }
+                    // Once it parses, the token stops being a field and becomes
+                    // one settled line. Left as three lines of a scrolled text
+                    // view, a perfectly good invite showed its own tail —
+                    // `…UF-BIn0.9bU4Gscg…` — which reads as a link that arrived
+                    // broken. Two people reported exactly that about links that
+                    // were fine. Elided from the middle, the same way the
+                    // timeline shortens a long URL, it reads as deliberate.
+                    if model.invite != nil {
+                        Text(model.inviteText)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .foregroundStyle(Palette.subtext)
+                            .accessibilityLabel("Invite link, entered")
+
+                        Spacer(minLength: 0)
+
+                        Button("Change") {
+                            model.inviteText = ""
+                            model.parseInvite()
+                            focus = .invite
+                        }
+                        .font(Typography.actionSecondary)
+                        .buttonStyle(.plain)
+                        .foregroundStyle(Palette.chartreuse)
+                    } else {
+                        TextField("Paste your invite", text: $model.inviteText, axis: .vertical)
+                            .lineLimit(1...3)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .focused($focus, equals: .invite)
+                            .onChange(of: model.inviteText) { _, _ in model.parseInvite() }
+                    }
 
                     if model.inviteText.isEmpty {
                         // Native paste, no permission prompt: the most likely
@@ -87,9 +168,17 @@ struct JoinView: View {
             } header: {
                 Text("Invite link")
             } footer: {
-                if let host = model.parsedHost {
-                    Label(host, systemImage: "checkmark.seal")
-                        .foregroundStyle(Palette.success)
+                // Said here, under the field, rather than after the join
+                // attempt: an expired link is the one problem the reader can do
+                // nothing about, and making them fill the rest of the form
+                // first only delays the same answer.
+                if let expiredOn = model.expiredOn {
+                    InlineNotice(
+                        kind: .failure,
+                        text: "This invite expired on \(expiredOn.formatted(date: .abbreviated, time: .omitted)). Ask for a fresh one."
+                    )
+                } else if let host = model.parsedHost {
+                    InlineNotice(kind: .success, text: host)
                 } else if !model.inviteText.isEmpty {
                     Text("Paste the whole link, including the https:// part.")
                 } else if let communityName {
@@ -104,27 +193,79 @@ struct JoinView: View {
                     .focused($focus, equals: .name)
             } header: {
                 Text("What should people call you?")
-            } footer: {
-                // The consequence of skipping it, stated: without a name the
-                // channel shows a code where a person should be.
-                Text("Without a name, people see a code instead of you. Comb keeps your account on this iPhone.")
             }
             .combRows()
 
+            // Only when it has something to ask. A policy with nothing to show
+            // is still accepted on your behalf at join time, silently, because
+            // there is no question to put to you.
+            if let policy = model.policy, !policy.isEmpty {
+                Section {
+                    // One row holding both, rather than a row each. Two
+                    // agreements are a single act of consent, and two full-size
+                    // rows gave them the weight of a settings screen.
+                    // No spacing of its own: each row now carries a full hit
+                    // target, and that height is the separation.
+                    VStack(alignment: .leading, spacing: 0) {
+                        if policy.hasDocuments {
+                            Toggle(isOn: $model.acceptsTerms) {
+                                Text(Self.agreementLabel(policy))
+                            }
+                        }
+                        // Asked as its own question because the relay records
+                        // it as its own answer, and because bundling an age
+                        // assertion into a terms checkbox is how you get one
+                        // that is not true.
+                        if policy.ageAttestationRequired {
+                            // No trailing full stop, to match the row above it.
+                            // These are labels, not sentences.
+                            Toggle("I am 18 years of age or older", isOn: $model.confirmsAge)
+                        }
+                    }
+                    .toggleStyle(.checkbox)
+                    .padding(.vertical, Space.xxs)
+                } footer: {
+                    // The documents sit in the footer copy as links rather than
+                    // as two full-width rows. Whose terms they are is the part
+                    // worth saying out loud; opening them is a detour most
+                    // people will not take, and rows that size promised more
+                    // than a link does.
+                    Text(Self.policyFooter(host: model.parsedHost))
+                }
+                // Its own, larger spacing. Every other group is introduced by a
+                // header, which carries its own space above it; this one has
+                // none, so at the shared value it sat closer to the name field
+                // than the name field sat to the invite, and read as part of
+                // the question above it rather than as a new one.
+                .listSectionSpacing(.custom(Space.xxxl))
+                .combRows()
+            }
+
             if let failure = model.failure {
                 Section {
-                    Label(failure, systemImage: "exclamationmark.triangle.fill")
-                        .foregroundStyle(Palette.danger)
+                    InlineNotice(kind: .failure, text: failure)
                 }
                 .combRows()
             }
         }
+        // One rhythm for the whole screen. A Form's default section spacing is
+        // tuned for sections that all carry headers and footers; here some do
+        // and some do not, so the default left the gap above the agreements
+        // nearly twice the gap above the name field. Setting it once makes the
+        // spacing a property of the screen rather than of which section
+        // happened to have a footer.
+        .listSectionSpacing(.custom(Space.lg))
+        // The card is the screen's answer to "which community is this?" and
+        // wants to sit near the title that asks it, not float in the middle of
+        // an empty field.
+        .contentMargins(.top, Space.xxs, for: .scrollContent)
         .scrollContentBackground(.hidden)
         .background(Palette.backgroundGradient.ignoresSafeArea())
         .scrollDismissesKeyboard(.interactively)
         .safeAreaInset(edge: .bottom) {
             PrimaryButton(
                 title: model.isJoining ? "Joining…" : model.joinLabel,
+                isBusy: model.isJoining,
                 isDisabled: !model.canJoin
             ) {
                 focus = nil
@@ -139,6 +280,25 @@ struct JoinView: View {
         }
         .navigationTitle(displayCommunityName.isEmpty ? "Join" : "Join \(displayCommunityName)")
         .navigationBarTitleDisplayMode(.inline)
+        .sheet(item: $reading) { document in
+            PolicyDocumentView(title: document.title, markdown: document.markdown)
+        }
+        .environment(\.openURL, OpenURLAction { url in
+            guard url.scheme == PolicyDocument.scheme, let policy = model.policy else {
+                return .systemAction
+            }
+            switch url.host() {
+            case PolicyDocument.terms:
+                guard let markdown = policy.termsMarkdown else { return .discarded }
+                reading = PolicyDocument(title: "Terms of Service", markdown: markdown)
+            case PolicyDocument.privacy:
+                guard let markdown = policy.privacyMarkdown else { return .discarded }
+                reading = PolicyDocument(title: "Privacy Policy", markdown: markdown)
+            default:
+                return .discarded
+            }
+            return .handled
+        })
         .onAppear {
             if let text = prefilledInvite, model.inviteText.isEmpty {
                 model.inviteText = text
@@ -188,12 +348,14 @@ private struct CommunityCard: View {
                         .lineLimit(2)
                 } else if isVerifying {
                     Label("Checking…", systemImage: "ellipsis")
+                        .labelStyle(.compact)
                         .font(Typography.caption)
                         .foregroundStyle(Palette.subtext)
                 } else if isVerified {
                     // The only claim the relay actually backs: it is real and
                     // reachable. Not "this community is X", which it will not say.
                     Label("Verified community", systemImage: "checkmark.seal.fill")
+                        .labelStyle(.compact)
                         .font(Typography.caption)
                         .foregroundStyle(Palette.success)
                 }
@@ -201,15 +363,12 @@ private struct CommunityCard: View {
 
             Spacer(minLength: 0)
         }
-        .padding(Space.md)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Palette.liftOnGradient, in: .rect(cornerRadius: Radii.card))
-        .overlay(
-            RoundedRectangle(cornerRadius: Radii.card)
-                .strokeBorder(Palette.hairlineOnGradient, lineWidth: Stroke.fine)
-        )
-        .padding(.horizontal, Space.lg)
+        // No fill or stroke of its own. It used to draw them itself, inside the
+        // row's content insets, which left it a stripe narrower on each side
+        // than every field below it. The surface now comes from `combRows`,
+        // the same one the rest of the form uses, so the two cannot drift.
         .padding(.vertical, Space.xs)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .animation(Motion.standard, value: icon)
         .animation(Motion.standard, value: isVerified)
     }
@@ -267,7 +426,31 @@ final class JoinModel {
     private var verifyTask: Task<Void, Never>?
 
     var parsedHost: String? { invite?.host }
-    var canJoin: Bool { invite != nil && !isJoining }
+
+    /// The operator's terms, when this relay requires any. Nil is the common
+    /// case and the one that must stay frictionless.
+    private(set) var policy: JoinPolicy?
+    var acceptsTerms = false
+    var confirmsAge = false
+
+    /// Whether the policy step, if there is one, has been answered.
+    var policySatisfied: Bool {
+        guard let policy, !policy.isEmpty else { return true }
+        let documentsAccepted = policy.hasDocuments ? acceptsTerms : true
+        let ageAnswered = policy.ageAttestationRequired ? confirmsAge : true
+        return documentsAccepted && ageAnswered
+    }
+
+    /// What the code says about its own expiry, when it says anything. Only
+    /// ever used to stop a join early; the relay decides for real.
+    var expiredOn: Date? {
+        guard let invite, invite.hasExpired() else { return nil }
+        return invite.expiresAt
+    }
+
+    var canJoin: Bool {
+        invite != nil && !isJoining && policySatisfied && expiredOn == nil
+    }
 
     /// The community's name. The host's subdomain is the only per-community
     /// name Comb can trust: a Buzz relay's NIP-11 `name` is the same string for
@@ -292,6 +475,12 @@ final class JoinModel {
         isVerified = false
         verifyTask?.cancel()
 
+        // A different community means different terms, and an answer given to
+        // one operator must never be carried to another.
+        policy = nil
+        acceptsTerms = false
+        confirmsAge = false
+
         guard let invite else {
             isVerifying = false
             return
@@ -306,9 +495,24 @@ final class JoinModel {
     private func verify(_ invite: InviteLink) {
         isVerifying = true
         verifyTask = Task {
-            let info = try? await RelayInfoClient().fetch(from: invite.relayURL)
+            // Both are unauthenticated reads of the same host, so they go out
+            // together rather than making the join step wait on the second.
+            async let document = RelayInfoClient().fetch(from: invite.relayURL)
+            async let declared = JoinPolicyClient().policy(for: invite)
+
+            let info = try? await document
+            let policy = try? await declared
             guard !Task.isCancelled else { return }
             isVerifying = false
+
+            // Kept whether or not it has anything to show. The relay demands a
+            // receipt for *any* configured policy, so a policy with no
+            // documents and no age question still has to be accepted; it just
+            // has nothing to put on screen. Storing only the ones with content
+            // meant those relays refused every claim and the recovery path had
+            // nothing to offer.
+            self.policy = policy
+
             guard let info else { return }
             isVerified = true
             if let icon = info.icon, let url = URL(string: icon),
@@ -334,7 +538,23 @@ final class JoinModel {
             let key = try (KeychainStore.load(host: invite.host)) ?? PrivateKey()
             let signer = InMemorySigner(key)
 
-            let claim = try await InviteClient().claim(invite, signer: signer)
+            // Acceptance is exchanged for a receipt bound to this code and the
+            // revision that was on screen, so a policy edited mid-join fails
+            // here rather than being silently agreed to.
+            var receipt: String?
+            if let policy {
+                receipt = try await JoinPolicyClient().acceptPolicy(
+                    for: invite,
+                    version: policy.version,
+                    ageConfirmed: confirmsAge
+                )
+            }
+
+            let claim = try await InviteClient().claim(
+                invite,
+                signer: signer,
+                policyReceipt: receipt
+            )
             guard claim.isMember else {
                 failure = "That community did not accept the invite. Ask for a fresh one."
                 return nil
@@ -363,11 +583,41 @@ final class JoinModel {
             failure = "That invite has expired. Ask for a fresh one."
         } catch InviteClient.Failure.invalid {
             failure = "That invite did not work. Check the whole link was copied."
+        } catch InviteClient.Failure.policyRequired {
+            // The policy fetch is best-effort, so it can miss: a host that was
+            // slow to answer, or terms added between opening this screen and
+            // tapping join. Fetch again and show the step rather than blaming
+            // the invite, which is what this used to do.
+            await loadPolicyAfterRefusal(invite)
+        } catch JoinPolicyClient.Failure.notAccepted {
+            await loadPolicyAfterRefusal(invite)
         } catch InviteClient.Failure.rateLimited {
             failure = "Too many tries. Give it a minute."
         } catch {
             failure = "Could not reach the community. Check the connection and try again."
         }
         return nil
+    }
+
+    /// The relay refused for want of an accepted policy. Load it and put the
+    /// step on screen; the answer, if one was already given, is cleared because
+    /// the revision it applied to is exactly what is in doubt.
+    private func loadPolicyAfterRefusal(_ invite: InviteLink) async {
+        acceptsTerms = false
+        confirmsAge = false
+        policy = try? await JoinPolicyClient().policy(for: invite)
+
+        failure = if policy == nil {
+            // Required by the community but unreadable by us: honest about
+            // which side is stuck, rather than sending the reader back to
+            // their clipboard.
+            "This community requires accepting its terms, and Comb could not load them. Try again in a moment."
+        } else if policy?.isEmpty == false {
+            "Please accept the terms above, then join."
+        } else {
+            // Nothing to accept and the claim still failed. Saying "accept the
+            // terms" would point at a step that is not on screen.
+            "That did not go through. Try again in a moment."
+        }
     }
 }

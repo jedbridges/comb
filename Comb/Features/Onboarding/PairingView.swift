@@ -196,7 +196,15 @@ final class PairingModel {
                     // the relay refuses.
                     let key = try PrivateKey(nsec: nsec)
                     let probe = try CommunitySession(url: url, key: key)
-                    try await probe.start()
+                    do {
+                        try await probe.start()
+                    } catch {
+                        // Stop on the way out too, or a refused account leaves
+                        // its socket and read loop running for the rest of the
+                        // app's life.
+                        await probe.stop()
+                        throw error
+                    }
                     await probe.stop()
                 }
             )
@@ -217,6 +225,12 @@ final class PairingModel {
 
     func reset() {
         driver?.cancel()
+        driver = nil
+        // Tell the other device, rather than letting it sit on a dead handshake
+        // until its own two-minute timeout.
+        if let pairing {
+            Task { await pairing.cancel() }
+        }
         pairing = nil
         manualURI = ""
         phase = .scanning
@@ -253,20 +267,36 @@ final class PairingModel {
             return
         }
 
+        // The other device is already gone: it was told the handoff succeeded
+        // and burned its session. Anything that fails from here costs the
+        // person a full re-pair, so take custody first and connect after.
+        // Sign-in orders these the other way round for a reason that does not
+        // apply here (a typed key can be wrong; a paired one was proven by the
+        // probe against this very relay).
+        let session: CommunitySession
         do {
-            let session = try CommunitySession(url: credentials.relayURL, key: key)
-            try await session.start()
-            try? KeychainStore.save(key, host: host)
+            try KeychainStore.save(key, host: host)
             CommunityRegistry.add(JoinedCommunity(
                 host: host,
                 relay: credentials.relayURL,
                 name: nil,
                 joinedAt: Date()
             ))
-            self.pairedSession = session
+            session = try CommunitySession(url: credentials.relayURL, key: key)
         } catch {
-            phase = .failed("Paired, but could not connect. Try again.")
+            DiagnosticsBuffer.report("pairing", "could not store the paired account: \(error)")
+            phase = .failed("Paired, but this iPhone could not save the account.")
+            return
         }
+
+        // Resilient rather than a blocking start, like launch: every screen
+        // reads from the on-disk store, so a dead spot in the seconds after
+        // pairing should narrate itself in the connection banner instead of
+        // discarding a completed handoff.
+        await session.startResilient()
+
+        guard !Task.isCancelled else { return }
+        self.pairedSession = session
     }
 
     static func describe(_ reason: PairingSession.FailureReason) -> String {

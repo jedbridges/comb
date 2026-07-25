@@ -571,7 +571,6 @@ struct MessageRow: View {
                 // yet, and requiring a long-press to discover that hid the
                 // feature behind knowledge.
                 .onTapGesture { onOpenThread?() }
-                .contextMenu { contextActions }
 
                 if !reactions.isEmpty {
                     ReactionBar(
@@ -598,6 +597,12 @@ struct MessageRow: View {
 
             Spacer(minLength: 0)
         }
+        // On the whole row, not on the text alone. UIKit lifts the subtree the
+        // menu is attached to into a preview positioned by its own bounds: from
+        // inside this HStack it lost the avatar column's leading offset and the
+        // lifted message landed to the left of where it had been sitting,
+        // printed over its own avatar and the name above it.
+        .contextMenu { contextActions }
         // A new speaker gets real air above them; a continuation line stays
         // close to what it continues.
         .padding(.top, entry.showsHeader ? Space.sm : 0)

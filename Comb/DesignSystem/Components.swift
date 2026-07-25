@@ -90,20 +90,76 @@ struct InlineNotice: View {
 
     var body: some View {
         Label(text, systemImage: kind.symbol)
+            .labelStyle(.compact)
             .font(Typography.label)
             .foregroundStyle(kind.tint)
     }
 }
 
-/// Fine print under a form: the privacy line, a hint.
-struct FootnoteText: View {
-    let text: String
-
-    var body: some View {
-        Text(text)
-            .font(Typography.caption)
-            .foregroundStyle(Palette.subtext)
+/// Symbol and text set at reading distance from each other.
+///
+/// A `Label` in a `Form` reserves an icon column wide enough to align the
+/// symbols of every row beneath it. That is right in Settings and wrong for a
+/// lone status line, where it strands the badge from the words it modifies.
+struct CompactLabelStyle: LabelStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: Space.xxs) {
+            configuration.icon
+            configuration.title
+        }
     }
+}
+
+extension LabelStyle where Self == CompactLabelStyle {
+    static var compact: CompactLabelStyle { CompactLabelStyle() }
+}
+
+/// A checkbox, for consent rows where a switch overpromises.
+///
+/// A switch is for a setting you will come back and change. An agreement is
+/// answered once, on the way past, and a row of full-size switches gives two
+/// sentences the visual weight of a settings screen. iOS ships no checkbox
+/// style, so this is drawn by hand, but it stays a real `Toggle`: VoiceOver
+/// still announces a switch with an on/off value, and the whole row stays the
+/// hit target rather than just the mark.
+///
+/// Checked is `success`, not `chartreuse`. Chartreuse belongs to the one
+/// primary action on a screen, and on the join screen that is already spent on
+/// the button and the links.
+struct CheckboxToggleStyle: ToggleStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        Button {
+            configuration.isOn.toggle()
+        } label: {
+            HStack(alignment: .firstTextBaseline, spacing: Space.xs) {
+                Image(systemName: configuration.isOn ? "checkmark.circle.fill" : "circle")
+                    .font(Typography.secondary)
+                    .foregroundStyle(
+                        configuration.isOn ? Palette.success : Palette.subtext
+                    )
+                    // The mark carries the state, so it is the only thing that
+                    // moves. Animating the label would read as the sentence
+                    // changing rather than the answer.
+                    .animation(Motion.instant, value: configuration.isOn)
+
+                configuration.label
+                    .font(Typography.secondary)
+                    .foregroundStyle(Palette.text)
+
+                Spacer(minLength: 0)
+            }
+            // The mark is small on purpose, but the target must not be. A
+            // single-line agreement is about 20pt of text, so without this the
+            // row is less than half Apple's minimum.
+            .frame(minHeight: Sizing.hitTarget)
+            .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+extension ToggleStyle where Self == CheckboxToggleStyle {
+    static var checkbox: CheckboxToggleStyle { CheckboxToggleStyle() }
 }
 
 /// A person, as initials until image loading lands.

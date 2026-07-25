@@ -58,6 +58,47 @@ struct InviteLinkTests {
     }
 }
 
+@Suite("Invite expiry")
+struct InviteExpiryTests {
+    /// A real Buzz code: `base64url({"c":…,"r":"member","e":<epoch>,"n":…}).mac`
+    /// with `e` at 2026-07-28T00:34:51Z.
+    static let code = """
+        eyJjIjoiNzQ4ZmQxNDItMDZkNC00MzllLThmYzgtZTcyN2QwNGNlMGQwIiwiciI6Im1lbWJlciIsImUiOjE3ODUyMjA0OTEsIm4iOiJlel9wX0luUTV3b2pNbUhIcUxGVUFBIn0.9bU4Gscg2p1-62eRGqxR9mMpSJ6nZf_I-wguq0dvjRQ
+        """
+
+    private var invite: InviteLink {
+        InviteLink.parse("https://designers.communities.buzz.xyz/invite/\(Self.code)")!
+    }
+
+    @Test("reads the expiry out of the payload")
+    func readsExpiry() throws {
+        let expiresAt = try #require(invite.expiresAt)
+        #expect(Int(expiresAt.timeIntervalSince1970) == 1_785_220_491)
+    }
+
+    @Test("expires only once the moment has passed")
+    func comparesAgainstNow() {
+        let expiry = Date(timeIntervalSince1970: 1_785_220_491)
+        #expect(!invite.hasExpired(asOf: expiry.addingTimeInterval(-1)))
+        #expect(invite.hasExpired(asOf: expiry))
+        #expect(invite.hasExpired(asOf: expiry.addingTimeInterval(1)))
+    }
+
+    @Test("has no opinion about a code it cannot read")
+    func staysQuietOnUnknownFormats() {
+        // The check exists to fail an invite early, never to pass one, so a
+        // format this does not understand has to reach the relay untouched
+        // rather than be called expired.
+        for code in ["abc123XYZ.def456", "notbase64!!.mac", "eyJ4IjoxfQ.mac"] {
+            let link = try? #require(
+                InviteLink.parse("https://designers.communities.buzz.xyz/invite/\(code)")
+            )
+            #expect(link?.expiresAt == nil)
+            #expect(link?.hasExpired() == false)
+        }
+    }
+}
+
 // Serialized because URLProtocol registration is process-global: the stub's
 // responder is a static, and Swift Testing's default parallelism lets two
 // tests overwrite each other's scripted responses. The symptom was tests that
@@ -165,6 +206,163 @@ struct InviteClaimTests {
         StubProtocol.respond = { _ in (429, Data()) }
         await #expect(throws: InviteClient.Failure.rateLimited) {
             _ = try await makeClient().claim(invite, signer: try InMemorySigner())
+        }
+    }
+
+    @Test("tells a missing policy acceptance apart from a bad invite")
+    func mapsPolicyRequired() async throws {
+        // The whole reason this case exists: the relay refuses with a 403 the
+        // person can act on, and reading it as `invalid` told them to check
+        // their paste when the link was never the problem.
+        StubProtocol.respond = { _ in (403, Data(#"{"error":"join_policy_required"}"#.utf8)) }
+        await #expect(throws: InviteClient.Failure.policyRequired) {
+            _ = try await makeClient().claim(invite, signer: try InMemorySigner())
+        }
+    }
+
+    @Test("sends the policy receipt with the claim")
+    func claimsWithReceipt() async throws {
+        StubProtocol.respond = { _ in (200, Data(#"{"status":"joined"}"#.utf8)) }
+        _ = try await makeClient().claim(
+            invite,
+            signer: try InMemorySigner(),
+            policyReceipt: "receipt-abc"
+        )
+
+        let body = try #require(StubProtocol.lastRequest.flatMap(Self.body(of:)))
+        let json = try JSONDecoder().decode([String: String].self, from: body)
+        #expect(json["code"] == "abc123XYZ")
+        #expect(json["policy_receipt"] == "receipt-abc")
+    }
+
+    @Test("omits the receipt key entirely when there is nothing to send")
+    func claimsWithoutReceipt() async throws {
+        // A relay with no policy configured must see exactly the body it saw
+        // before this field existed.
+        StubProtocol.respond = { _ in (200, Data(#"{"status":"joined"}"#.utf8)) }
+        _ = try await makeClient().claim(invite, signer: try InMemorySigner())
+
+        let body = try #require(StubProtocol.lastRequest.flatMap(Self.body(of:)))
+        let json = try JSONDecoder().decode([String: String?].self, from: body)
+        #expect(json.keys.sorted() == ["code"])
+    }
+
+    // MARK: - Join policy
+
+    private func makePolicyClient() -> JoinPolicyClient {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [StubProtocol.self]
+        return JoinPolicyClient(session: URLSession(configuration: configuration))
+    }
+
+    @Test("reads a configured join policy")
+    func readsPolicy() async throws {
+        StubProtocol.respond = { _ in
+            (200, Data(#"""
+            {"policy":{"terms_markdown":"# Terms","privacy_markdown":"# Privacy",
+            "age_attestation_required":true,"version":"2026-07-17"}}
+            """#.utf8))
+        }
+
+        let policy = try #require(try await makePolicyClient().policy(for: invite))
+        #expect(policy.version == "2026-07-17")
+        #expect(policy.ageAttestationRequired)
+        #expect(policy.termsMarkdown == "# Terms")
+        #expect(!policy.isEmpty)
+
+        #expect(StubProtocol.lastRequest?.url?.absoluteString
+            == "https://designers.communities.buzz.xyz/api/join-policy")
+    }
+
+    @Test("reads no policy as no policy, not as an error")
+    func readsAbsentPolicy() async throws {
+        // A relay without one answers `{}`. That is the common case, and it
+        // must leave the join screen exactly as it was.
+        StubProtocol.respond = { _ in (200, Data("{}".utf8)) }
+        let policy = try await makePolicyClient().policy(for: invite)
+        #expect(policy == nil)
+    }
+
+    @Test("a policy with nothing to show is still a policy")
+    func readsSilentPolicy() async throws {
+        // The relay demands a receipt for any configured policy, including one
+        // that asks nothing. That must come back as a real policy with
+        // `isEmpty` true, not as no policy at all: the caller mints a receipt
+        // on the first and skips it on the second, and confusing the two locks
+        // such a relay out entirely.
+        StubProtocol.respond = { _ in
+            (200, Data(#"{"policy":{"age_attestation_required":false,"version":"v1"}}"#.utf8))
+        }
+
+        let policy = try #require(try await makePolicyClient().policy(for: invite))
+        #expect(policy.isEmpty)
+        #expect(!policy.hasDocuments)
+        #expect(policy.version == "v1")
+    }
+
+    @Test("exchanges acceptance for a receipt")
+    func acceptsPolicy() async throws {
+        StubProtocol.respond = { _ in (200, Data(#"{"receipt":"receipt-abc"}"#.utf8)) }
+
+        let receipt = try await makePolicyClient().acceptPolicy(
+            for: invite,
+            version: "2026-07-17",
+            ageConfirmed: true
+        )
+        #expect(receipt == "receipt-abc")
+
+        let request = try #require(StubProtocol.lastRequest)
+        #expect(request.url?.absoluteString
+            == "https://designers.communities.buzz.xyz/api/invites/accept-policy")
+        #expect(request.httpMethod == "POST")
+
+        // The receipt is bound to this code and this revision, so both must go
+        // out exactly as the person saw them.
+        let body = try #require(Self.body(of: request))
+        let json = try JSONDecoder().decode([String: JSONValue].self, from: body)
+        #expect(json["code"] == .string("abc123XYZ"))
+        #expect(json["policy_version"] == .string("2026-07-17"))
+        #expect(json["age_confirmed"] == .bool(true))
+    }
+
+    @Test("surfaces a stale revision as needing acceptance again")
+    func rejectsStaleAcceptance() async throws {
+        StubProtocol.respond = { _ in (400, Data(#"{"error":"join_policy_not_accepted"}"#.utf8)) }
+        await #expect(throws: JoinPolicyClient.Failure.notAccepted) {
+            _ = try await makePolicyClient().acceptPolicy(
+                for: invite, version: "stale", ageConfirmed: true
+            )
+        }
+    }
+
+    /// `URLProtocol` hands the body back as a stream once it has been sent.
+    private static func body(of request: URLRequest) -> Data? {
+        if let body = request.httpBody { return body }
+        guard let stream = request.httpBodyStream else { return nil }
+        stream.open()
+        defer { stream.close() }
+        var data = Data()
+        var buffer = [UInt8](repeating: 0, count: 4096)
+        while stream.hasBytesAvailable {
+            let read = stream.read(&buffer, maxLength: buffer.count)
+            guard read > 0 else { break }
+            data.append(buffer, count: read)
+        }
+        return data
+    }
+
+    /// Just enough to assert on a mixed-type JSON body.
+    private enum JSONValue: Decodable, Equatable {
+        case string(String)
+        case bool(Bool)
+
+        init(from decoder: any Decoder) throws {
+            let container = try decoder.singleValueContainer()
+            if let value = try? container.decode(Bool.self) {
+                self = .bool(value)
+            } else {
+                self = .string(try container.decode(String.self))
+            }
         }
     }
 }
