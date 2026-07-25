@@ -285,10 +285,22 @@ struct Toast: View {
 /// two identical failures neither re-announces nor restarts the clock: it
 /// inherits whatever is left of the first one's and vanishes early.
 struct ToastMessage: Equatable, Sendable {
+    /// Whether this is news or bad news. The words differ either way; the tone
+    /// is what decides how it feels, so a reminder being set cannot arrive with
+    /// the same buzz as a message that failed to send.
+    enum Tone: Sendable {
+        case neutral
+        case failure
+    }
+
     let text: String
+    let tone: Tone
     private let id = UUID()
 
-    init(_ text: String) { self.text = text }
+    init(_ text: String, tone: Tone = .neutral) {
+        self.text = text
+        self.tone = tone
+    }
 
     static func == (lhs: Self, rhs: Self) -> Bool { lhs.id == rhs.id }
 }
@@ -316,6 +328,13 @@ private struct ToastPresenter: ViewModifier {
                 }
             }
             .animation(Motion.standard, value: message)
+            // Owned here rather than at each call site, so a screen cannot
+            // present a toast and forget the feeling that goes with it, and so
+            // good news never arrives with the buzz of bad.
+            .sensoryFeedback(trigger: message) { _, new in
+                guard new?.tone == .failure else { return nil }
+                return Haptics.failure
+            }
             .task(id: message) {
                 guard let message else { return }
                 // VoiceOver does not move focus to an overlay that appears

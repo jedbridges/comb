@@ -24,6 +24,9 @@ struct ThreadView: View {
     @State private var tray: AttachmentTray
     @State private var loader: MediaLoader
     @State private var toast: ToastMessage?
+    /// Replies this reader sent, so a reply is felt like a send. Same rule as
+    /// the channel: only what you did, never what arrived.
+    @State private var sends = 0
 
     init(session: CommunitySession, channel: ChannelSummary, root: TimelineRow) {
         self.session = session
@@ -80,6 +83,7 @@ struct ThreadView: View {
             .softScrollEdges()
         }
         .toast($toast)
+        .sensoryFeedback(Haptics.send, trigger: sends)
         .safeAreaInset(edge: .bottom) {
             ComposeBar(
                 draft: $draft,
@@ -95,6 +99,7 @@ struct ThreadView: View {
                 let media = tray.readyDescriptors
                 draft = ""
                 tray.clear()
+                sends += 1
                 Task { await model.reply(text, attachments: media) }
             }
             .onChange(of: draft) { _, new in
@@ -112,7 +117,7 @@ struct ThreadView: View {
             EmojiPicker { emoji in
                 Task {
                     if await !model.toggleReaction(emoji, on: row.id) {
-                        toast = ToastMessage(FailureText.reaction)
+                        toast = ToastMessage(FailureText.reaction, tone: .failure)
                     }
                 }
             }
@@ -149,7 +154,7 @@ struct ThreadView: View {
             onReact: { emoji in
                 Task {
                     if await !model.toggleReaction(emoji, on: entry.row.id) {
-                        toast = ToastMessage(FailureText.reaction)
+                        toast = ToastMessage(FailureText.reaction, tone: .failure)
                     }
                 }
             },

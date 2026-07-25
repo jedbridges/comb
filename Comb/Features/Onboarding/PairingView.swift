@@ -36,6 +36,15 @@ struct PairingView: View {
             // flag is what drives the handoff.
             if ready, let session = model.pairedSession { onPaired(session) }
         }
+        // The end of a handshake the person had to read six digits for. One of
+        // the few moments in the app that only happens once.
+        .sensoryFeedback(Haptics.milestone, trigger: model.pairedSession != nil) { _, ready in
+            ready
+        }
+        .sensoryFeedback(Haptics.failure, trigger: model.phase) { _, phase in
+            if case .failed = phase { return true }
+            return false
+        }
     }
 
     private func comparePane(_ code: String) -> some View {
@@ -109,17 +118,25 @@ private struct ScannerPane: View {
     @Binding var manualEntry: String
     let onScan: (String) -> Void
 
+    /// Bumped when a code is recognised, so the scan is felt as well as seen.
+    /// The camera preview gives no other confirmation that the moment landed.
+    @State private var scans = 0
+
     var body: some View {
         VStack(spacing: Space.lg) {
             #if targetEnvironment(simulator)
             simulatorFallback
             #else
-            QRScannerView(onScan: onScan)
+            QRScannerView(onScan: { code in
+                scans += 1
+                onScan(code)
+            })
                 .clipShape(.rect(cornerRadius: Radii.card))
                 .padding(Space.lg)
             manualField
             #endif
         }
+        .sensoryFeedback(Haptics.milestone, trigger: scans)
     }
 
     private var manualField: some View {

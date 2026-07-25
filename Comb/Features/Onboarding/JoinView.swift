@@ -23,6 +23,9 @@ struct JoinView: View {
 
     @State private var model = JoinModel()
     @State private var reading: PolicyDocument?
+    /// Bumped once, when a community is actually joined. The first thing this
+    /// app is for, and the only time most people will ever see this screen.
+    @State private var joined = 0
     @FocusState private var focus: Field?
 
     private enum Field { case invite, name }
@@ -271,12 +274,20 @@ struct JoinView: View {
                 focus = nil
                 Task {
                     if let session = await model.join() {
+                        joined += 1
                         onJoined(session)
                     }
                 }
             }
             .padding(.horizontal, Space.lg)
             .padding(.bottom, Space.xs)
+        }
+        .sensoryFeedback(Haptics.milestone, trigger: joined)
+        // Paired with the message on screen, never alone. An invite that did
+        // not work is the most common way this screen ends badly, and it is
+        // worth feeling as well as reading.
+        .sensoryFeedback(Haptics.failure, trigger: model.failure) { _, failure in
+            failure != nil
         }
         .navigationTitle(displayCommunityName.isEmpty ? "Join" : "Join \(displayCommunityName)")
         .navigationBarTitleDisplayMode(.inline)

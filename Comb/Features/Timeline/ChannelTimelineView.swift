@@ -38,6 +38,12 @@ struct ChannelTimelineView: View {
     /// The message whose delete failed, kept so the retry knows what to retry.
     @State private var deleteFailed: TimelineRow?
 
+    /// Counts messages this reader sent, so the send can be felt. Deliberately
+    /// not the row count: that includes everything arriving from other people,
+    /// and a channel that buzzes when someone else talks is a channel nobody
+    /// leaves in their pocket.
+    @State private var sends = 0
+
     init(session: CommunitySession, channel: ChannelSummary, scrollToMessageID: String? = nil) {
         self.session = session
         self.channel = channel
@@ -78,7 +84,7 @@ struct ChannelTimelineView: View {
                             onReact: { emoji in
                                 Task {
                                     if await !model.toggleReaction(emoji, on: entry.row.id) {
-                                        toast = ToastMessage(FailureText.reaction)
+                                        toast = ToastMessage(FailureText.reaction, tone: .failure)
                                     }
                                 }
                             },
@@ -181,6 +187,11 @@ struct ChannelTimelineView: View {
 
         }
         .toast($toast)
+        // Fired on the local enqueue rather than on the relay's acknowledgement.
+        // The row is already on screen by then; waiting for the round trip would
+        // put the tap seconds after the gesture that earned it, and a failed
+        // send has its own reporting.
+        .sensoryFeedback(Haptics.send, trigger: sends)
         .safeAreaInset(edge: .bottom) {
             ComposeBar(
                 draft: $draft,
@@ -202,12 +213,13 @@ struct ChannelTimelineView: View {
                     self.editing = nil
                     Task {
                         if await !model.edit(editing.id, to: text) {
-                            toast = ToastMessage(FailureText.edit)
+                            toast = ToastMessage(FailureText.edit, tone: .failure)
                         }
                     }
                 } else {
                     let media = tray.readyDescriptors
                     tray.clear()
+                    sends += 1
                     Task { await model.send(text, attachments: media) }
                 }
             }
@@ -290,7 +302,7 @@ struct ChannelTimelineView: View {
             EmojiPicker { emoji in
                 Task {
                     if await !model.toggleReaction(emoji, on: row.id) {
-                        toast = ToastMessage(FailureText.reaction)
+                        toast = ToastMessage(FailureText.reaction, tone: .failure)
                     }
                 }
             }
@@ -369,11 +381,12 @@ struct ChannelTimelineView: View {
                 ),
                 when: when
             )
-            toast = ToastMessage(
-                scheduled
-                    ? "Reminder set \(when.label.lowercased())"
-                    : "Turn on notifications for Comb in Settings to be reminded."
-            )
+            toast = scheduled
+                ? ToastMessage("Reminder set \(when.label.lowercased())")
+                : ToastMessage(
+                    "Turn on notifications for Comb in Settings to be reminded.",
+                    tone: .failure
+                )
         }
     }
 
@@ -982,8 +995,8 @@ private struct ReactionChip: View {
             // second is the swarm cresting, and the gap between them is what
             // makes the burst feel like it has weight rather than being a
             // single click with a picture attached.
-            .sensoryFeedback(.impact(flexibility: .solid, intensity: 0.75), trigger: joins)
-            .sensoryFeedback(.impact(flexibility: .soft, intensity: 0.4), trigger: apex)
+            .sensoryFeedback(Haptics.reaction, trigger: joins)
+            .sensoryFeedback(Haptics.reactionSettles, trigger: apex)
             .accessibilityLabel(
                 "\(reaction.emoji), \(reaction.count)"
                     + (reaction.includesMe ? ", including yours" : "")

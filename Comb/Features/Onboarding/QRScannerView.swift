@@ -87,7 +87,10 @@ final class ScannerController: UIViewController, @preconcurrency AVCaptureMetada
         else { return }
 
         hasReported = true
-        UINotificationFeedbackGenerator().notificationOccurred(.success)
+        // The haptic is not fired here. Feedback belongs to the design system
+        // and to the view that owns the moment, and a hand-rolled generator
+        // ignores the person's own haptics setting where `.sensoryFeedback`
+        // does not. `ScannerPane` marks the scan.
         onScan?(value)
     }
 }
