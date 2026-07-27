@@ -34,6 +34,10 @@ public struct TimelineRow: Sendable, Hashable, Identifiable {
     /// Pubkeys this message mentions via `p` tags. Comparing against the
     /// viewer is what lets a message that names you carry extra weight.
     public let mentionedPubkeys: [String]
+    /// NIP-30 images this message defines, resolving the `:shortcode:` runs in
+    /// its own text. Scoped to the event: there is no shared registry, and a
+    /// shortcode means only what the message carrying it says it means.
+    public let customEmoji: [CustomEmoji.Entry]
 
     public func mentions(_ pubkey: String) -> Bool {
         mentionedPubkeys.contains { $0.caseInsensitiveCompare(pubkey) == .orderedSame }
@@ -132,6 +136,8 @@ public struct ReactionSummary: Sendable, Equatable, Identifiable {
     /// Whether the current user is among the reactors, which drives the
     /// highlighted state and makes the tap a toggle.
     public let includesMe: Bool
+    /// The image for a NIP-30 reaction, nil for an ordinary Unicode one.
+    public let emojiURL: String?
 
     public var id: String { emoji }
 }
@@ -393,7 +399,8 @@ public extension EventStore {
             attachments: Blossom.attachments(in: tags),
             mentionedPubkeys: tags.compactMap {
                 $0.count >= 2 && $0[0] == "p" ? $0[1] : nil
-            }
+            },
+            customEmoji: CustomEmoji.entries(in: tags)
         )
     }
 
@@ -421,7 +428,12 @@ public extension EventStore {
         // take effect visually.
         let sql = """
             SELECT target_id, emoji, COUNT(*) AS n,
-                   MAX(pubkey = ?) AS mine
+                   MAX(pubkey = ?) AS mine,
+                   -- Any one of them: the group is a single shortcode, and two
+                   -- events using it should be naming the same image. If they
+                   -- disagree the pile is already one tally, so there is only
+                   -- one picture to draw.
+                   MAX(emoji_url) AS emoji_url
             FROM reaction
             WHERE target_id IN (\(placeholders))
               AND NOT EXISTS (SELECT 1 FROM deletion d
@@ -445,7 +457,8 @@ public extension EventStore {
                 ReactionSummary(
                     emoji: row["emoji"],
                     count: row["n"],
-                    includesMe: row["mine"] ?? false
+                    includesMe: row["mine"] ?? false,
+                    emojiURL: row["emoji_url"]
                 )
             )
         }

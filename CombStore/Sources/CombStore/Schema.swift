@@ -15,7 +15,7 @@ import GRDB
 enum Schema {
     /// Bump when any projection's shape or meaning changes. On next open, every
     /// projection table is dropped and replayed from `event`.
-    static let projectionVersion = 6
+    static let projectionVersion = 7
 
     static var migrator: DatabaseMigrator {
         var migrator = DatabaseMigrator()
@@ -217,6 +217,11 @@ enum Schema {
                 target_id  TEXT NOT NULL,
                 pubkey     TEXT NOT NULL,
                 emoji      TEXT NOT NULL,
+                -- Set only for a NIP-30 reaction, whose content is a
+                -- `:shortcode:` that means nothing without the image its own
+                -- event named. Carried on the row because the tally groups by
+                -- emoji and the reacting events are gone by then.
+                emoji_url  TEXT,
                 created_at INTEGER NOT NULL
             )
             """)

@@ -210,13 +210,21 @@ enum Projector {
         guard let target = event.referencedEventIDs.last else { return }
         let emoji = event.content.isEmpty || event.content == "+" ? "❤️" : event.content
 
+        // NIP-30: a reaction whose content is `:shortcode:` is an image the
+        // same event defines. Resolved now, while the tags are still in hand:
+        // the tally groups reactions by their content, so by the time anything
+        // reads this row the event that named the image is out of reach.
+        let emojiURL = CustomEmoji.entries(in: event.tags).first {
+            emoji == ":\($0.shortcode):"
+        }?.url
+
         try db.execute(
             sql: """
-                INSERT INTO reaction (event_id, target_id, pubkey, emoji, created_at)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT INTO reaction (event_id, target_id, pubkey, emoji, emoji_url, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
                 ON CONFLICT(event_id) DO NOTHING
                 """,
-            arguments: [event.id, target, event.pubkey, emoji, event.createdAt]
+            arguments: [event.id, target, event.pubkey, emoji, emojiURL, event.createdAt]
         )
     }
 
