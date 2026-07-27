@@ -7,6 +7,10 @@ import Foundation
 /// a relay or a real key. Debug builds only; the button that triggers it does
 /// not exist in release.
 enum DemoSeed {
+    /// A 32px chartreuse disc, inlined so the demo needs no network.
+    private static let demoEmoji =
+        "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAZElEQVR42u3Xyw0AIAhEQfpvkHK0Aj8ouBuzJJ7fnBTNNMFxtzY7sHAZJBpOhdzGrxBZ8SNEdjyEqIpvI6CA6vgSAQW8ig8RAgggABygm1CvIc1CQrGSUSylFGs5xceE5mv27XTRwHCjJoiX/QAAAABJRU5ErkJggg=="
+
     /// Builds and signs the fixture set. Every event goes through the same
     /// verified ingest as real traffic, so the demo cannot mask a validation
     /// bug.
@@ -86,12 +90,50 @@ enum DemoSeed {
             with: ray.key
         ))
 
+        // A NIP-30 reaction, which is a shortcode plus the image its own event
+        // defines. Inlined as `data:` because the demo never reaches a relay,
+        // and because the emoji rule allows it for the same reason avatars do:
+        // it fetches nothing.
+        events.append(try NostrEvent.signed(
+            kind: .reaction,
+            content: ":comb:",
+            tags: [["e", contested.id], ["emoji", "comb", Self.demoEmoji]],
+            createdAt: date(now - 6900),
+            with: mies.key
+        ))
+
         events.append(try NostrEvent.signed(
             kind: .buzzEdit,
             content: "It is eight columns now. Discuss.",
             tags: [["e", contested.id]],
             createdAt: date(now - 7100),
             with: ada.key
+        ))
+
+        // Something of the viewer's own, so the activity list has all three of
+        // its shapes rather than just the mention: a reply and a reaction need
+        // a message of yours to land on.
+        let mine = try NostrEvent.signed(
+            kind: .groupChatMessage,
+            content: "I can take the ramp review if nobody else has started.",
+            tags: [["h", channel]],
+            createdAt: date(now - 3600),
+            with: me
+        )
+        events.append(mine)
+        events.append(try NostrEvent.signed(
+            kind: .groupChatMessage,
+            content: "All yours, thank you.",
+            tags: [["h", channel], ["e", mine.id, "", "reply"], ["p", me.publicKey.hex]],
+            createdAt: date(now - 3400),
+            with: ada.key
+        ))
+        events.append(try NostrEvent.signed(
+            kind: .reaction,
+            content: "🐝",
+            tags: [["e", mine.id]],
+            createdAt: date(now - 3300),
+            with: ray.key
         ))
 
         let regretted = try ray.message("wait wrong channel", in: channel, at: now - 4600)
@@ -116,6 +158,23 @@ enum DemoSeed {
             "Reminder that Univers is not a personality.",
             in: "demo-fonts",
             at: now - 40_000
+        ))
+        // The same shortcode inline in a sentence, so the demo covers both
+        // places NIP-30 shows up: a reaction pile and running text.
+        events.append(try NostrEvent.signed(
+            kind: .groupChatMessage,
+            content: "Shipping the ramp :comb: tonight.",
+            tags: [["h", "demo-fonts"], ["emoji", "comb", Self.demoEmoji]],
+            createdAt: date(now - 39_500),
+            with: ray.key
+        ))
+        // Named here and nowhere else, so the list shows both weights at once:
+        // Fonts carries a mention, General is merely busy.
+        events.append(try mies.mention(
+            "Can you take the type ramp review?",
+            of: me.publicKey.hex,
+            in: "demo-fonts",
+            at: now - 39_000
         ))
 
         // Two direct messages, because Buzz names them "dm" and "Group DM (3)"
@@ -255,6 +314,23 @@ enum DemoSeed {
                 kind: .groupChatMessage,
                 content: text,
                 tags: [["h", channel]],
+                createdAt: Date(timeIntervalSince1970: TimeInterval(seconds)),
+                with: key
+            )
+        }
+
+        /// A message that names someone, which the channel list weighs more
+        /// heavily than ordinary unread.
+        func mention(
+            _ text: String,
+            of pubkey: String,
+            in channel: String,
+            at seconds: Int64
+        ) throws -> NostrEvent {
+            try NostrEvent.signed(
+                kind: .groupChatMessage,
+                content: text,
+                tags: [["h", channel], ["p", pubkey]],
                 createdAt: Date(timeIntervalSince1970: TimeInterval(seconds)),
                 with: key
             )

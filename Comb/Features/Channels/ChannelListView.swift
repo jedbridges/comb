@@ -25,9 +25,13 @@ struct ChannelListView: View {
     /// to a channel and pushed, with the timeline scrolling to it.
     var pendingMessage: MessageLink.Target?
     var onMessageConsumed: () -> Void = {}
+    /// Opens a message in another community, which means switching to it
+    /// first. Only the app model can do that, so the list hands it up.
+    var onRoute: (MessageLink.Target, String) -> Void = { _, _ in }
 
     @State private var model: ChannelListModel
     @State private var isShowingSettings = false
+    @State private var isShowingActivity = false
     @State private var connection: ConnectionState = .idle
     @State private var query = ""
     @State private var messageHits: [SearchResult] = []
@@ -54,6 +58,7 @@ struct ChannelListView: View {
         pendingInvite: Binding<String?> = .constant(nil),
         pendingMessage: MessageLink.Target? = nil,
         onMessageConsumed: @escaping () -> Void = {},
+        onRoute: @escaping (MessageLink.Target, String) -> Void = { _, _ in },
         onDisconnect: @escaping () -> Void
     ) {
         self.session = session
@@ -65,6 +70,7 @@ struct ChannelListView: View {
         self._pendingInvite = pendingInvite
         self.pendingMessage = pendingMessage
         self.onMessageConsumed = onMessageConsumed
+        self.onRoute = onRoute
         self.onDisconnect = onDisconnect
         _model = State(initialValue: ChannelListModel(
             store: session.store,
@@ -117,6 +123,18 @@ struct ChannelListView: View {
                 communityMenu
             }
             ToolbarItem(placement: .topBarTrailing) {
+                // Left of settings, because this is a place you go often and
+                // settings is a place you go twice.
+                Button {
+                    isShowingActivity = true
+                } label: {
+                    Image(systemName: "bell")
+                        .font(Typography.actionSecondary)
+                        .foregroundStyle(Palette.chrome)
+                }
+                .accessibilityLabel("Activity")
+            }
+            ToolbarItem(placement: .topBarTrailing) {
                 Button {
                     isShowingSettings = true
                 } label: {
@@ -157,6 +175,21 @@ struct ChannelListView: View {
         }
         .sheet(isPresented: $isShowingSettings) {
             SettingsView(session: session, onSignOut: onDisconnect)
+        }
+        .sheet(isPresented: $isShowingActivity) {
+            NavigationStack {
+                ActivityView(session: session) { target, host in
+                    // An item from another community has to switch first, and
+                    // the model is the only thing that can: it owns the stage.
+                    // Same path a notification tap takes, which already carried
+                    // a host for exactly this reason.
+                    if host == session.relayURL.host {
+                        resolveDeepLink(target)
+                    } else {
+                        onRoute(target, host)
+                    }
+                }
+            }
         }
         .navigationDestination(for: ChannelSummary.self) { channel in
             ChannelTimelineView(session: session, channel: channel)
@@ -501,7 +534,7 @@ private struct ChannelRow: View {
             Spacer(minLength: Space.xs)
 
             if channel.hasUnread {
-                UnreadBadge(count: channel.unreadCount)
+                UnreadBadge(count: channel.unreadCount, isMention: channel.hasMention)
             } else {
                 memberCount
             }
@@ -551,6 +584,15 @@ private struct ChannelRow: View {
         if channel.hasUnread {
             parts.append("\(channel.unreadCount) unread")
         }
+        // Said in words, because the only thing carrying it visually is the
+        // badge's colour, and colour alone is not a signal every reader gets.
+        if channel.hasMention {
+            parts.append(
+                channel.mentionCount == 1
+                    ? "Mentions you"
+                    : "\(channel.mentionCount) messages mention you"
+            )
+        }
         if showsMemberCount { parts.append("\(channel.memberCount) members") }
         if let preview { parts.append("Latest: \(preview)") }
         else { parts.append("No messages yet") }
@@ -573,9 +615,20 @@ private struct ChannelRow: View {
 
 }
 
-/// The count of what is new, in the brand's one loud colour.
+/// The count of what is new, louder when some of it names you.
+///
+/// Both tiers carry the same number, because the count of unread messages is
+/// the thing a reader is actually asking this badge for. What changes is the
+/// weight: a channel that mentioned you takes the brand's one loud colour, and
+/// everything else steps back to a lift.
+///
+/// Chartreuse was on every unread badge before, which spent the loudest colour
+/// on the screen at the same rate whether a room had said your name or had
+/// simply been busy. The app already knows the difference, and already wakes a
+/// notification for it; the list was the one place still treating them alike.
 private struct UnreadBadge: View {
     let count: Int
+    let isMention: Bool
 
     var body: some View {
         Text(count > 99 ? "99+" : "\(count)")
@@ -583,12 +636,13 @@ private struct UnreadBadge: View {
             // Rolls as messages land, so a badge climbing while you watch
             // reads as activity rather than a redraw.
             .contentTransition(.numericText())
-            .foregroundStyle(Palette.ink)
+            .foregroundStyle(isMention ? Palette.ink : Palette.text)
             .padding(.horizontal, Space.xs)
             .padding(.vertical, Space.hairline)
-            .background(Palette.chartreuse, in: .capsule)
-            // Chartreuse earns its place here: "what is new" is the most
-            // important thing on this screen.
+            .background(isMention ? AnyShapeStyle(Palette.chartreuse)
+                                  : AnyShapeStyle(Palette.liftOnGradient),
+                        in: .capsule)
+            .animation(Motion.fast, value: isMention)
             .accessibilityHidden(true)
     }
 }

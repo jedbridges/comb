@@ -558,4 +558,72 @@ struct OwnershipTests {
         #expect(summary.lastMessage == "the preview")
         #expect(summary.unreadCount == 1)
     }
+
+    @Test("mentions are counted apart from ordinary unread")
+    func mentionsCountedSeparately() async throws {
+        let store = try EventStore()
+        let author = try Fixture()
+        let me = try Fixture()
+
+        _ = try await store.ingest([
+            try author.event(.groupMetadata, #"{"name":"General"}"#, tags: [["d", "room-1"]], at: 900),
+            try author.message("just chatter", at: 1000),
+            try author.event(
+                .groupChatMessage,
+                "hey you",
+                tags: [["h", "room-1"], ["p", me.pubkey]],
+                at: 1100
+            ),
+        ])
+
+        let summary = try #require(try store.channelSummaries(me: me.pubkey).first)
+        #expect(summary.unreadCount == 2)
+        #expect(summary.mentionCount == 1)
+        #expect(summary.hasMention)
+    }
+
+    @Test("a channel that is merely busy carries no mention")
+    func busyChannelHasNoMention() async throws {
+        let store = try EventStore()
+        let author = try Fixture()
+        let someoneElse = try Fixture()
+        let me = try Fixture()
+
+        _ = try await store.ingest([
+            try author.event(.groupMetadata, #"{"name":"General"}"#, tags: [["d", "room-1"]], at: 900),
+            // Names somebody, just not the viewer.
+            try author.event(
+                .groupChatMessage,
+                "hey you",
+                tags: [["h", "room-1"], ["p", someoneElse.pubkey]],
+                at: 1000
+            ),
+        ])
+
+        let summary = try #require(try store.channelSummaries(me: me.pubkey).first)
+        #expect(summary.unreadCount == 1)
+        #expect(summary.mentionCount == 0)
+        #expect(!summary.hasMention)
+    }
+
+    @Test("reading the channel clears the mention count with the unread count")
+    func readingClearsMentions() async throws {
+        let store = try EventStore()
+        let author = try Fixture()
+        let me = try Fixture()
+
+        _ = try await store.ingest([
+            try author.event(.groupMetadata, #"{"name":"General"}"#, tags: [["d", "room-1"]], at: 900),
+            try author.event(
+                .groupChatMessage,
+                "hey you",
+                tags: [["h", "room-1"], ["p", me.pubkey]],
+                at: 1000
+            ),
+        ])
+        #expect(try store.channelSummaries(me: me.pubkey).first?.mentionCount == 1)
+
+        try await store.markRead(channel: "room-1")
+        #expect(try store.channelSummaries(me: me.pubkey).first?.mentionCount == 0)
+    }
 }

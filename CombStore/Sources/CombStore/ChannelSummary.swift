@@ -19,8 +19,16 @@ public struct ChannelSummary: Sendable, Equatable, Hashable, Identifiable {
     /// Messages newer than the last time this channel was read, excluding your
     /// own: seeing a badge for something you just sent would be nonsense.
     public let unreadCount: Int
+    /// How many of the unread ones name you by a `p` tag. Always at most
+    /// `unreadCount`, and counted over the same window.
+    ///
+    /// A mention is already what wakes a notification, so a channel list that
+    /// weighed it the same as any other message was disagreeing with the app's
+    /// own idea of what matters.
+    public let mentionCount: Int
 
     public var hasUnread: Bool { unreadCount > 0 }
+    public var hasMention: Bool { mentionCount > 0 }
 
     public var lastActivityDate: Date? {
         lastActivity.map { Date(timeIntervalSince1970: TimeInterval($0)) }
@@ -96,7 +104,24 @@ public extension EventStore {
                        AND NOT EXISTS (SELECT 1 FROM deletion d
                                         WHERE d.target_id = e.id
                                           AND (d.kind = 9005 OR d.deleted_by = e.pubkey))
-                   )                                                  AS unread
+                   )                                                  AS unread,
+                   -- The same count again, narrowed to messages that name you.
+                   -- A separate subquery rather than a second pass over the
+                   -- unread rows, because `unread` is a COUNT and there are no
+                   -- rows left to filter by the time it has one.
+                   (SELECT COUNT(*) FROM event e
+                     JOIN event_tag t ON t.event_id = e.id
+                                     AND t.name = 'p' AND t.value = :me
+                     WHERE e.h = c.id AND e.kind = :kind
+                       AND e.pubkey != :me
+                       AND e.created_at > COALESCE(
+                             (SELECT r.last_read_at FROM read_state r
+                               WHERE r.channel_id = c.id), 0)
+                       AND NOT EXISTS (SELECT 1 FROM blocked b WHERE b.pubkey = e.pubkey)
+                       AND NOT EXISTS (SELECT 1 FROM deletion d
+                                        WHERE d.target_id = e.id
+                                          AND (d.kind = 9005 OR d.deleted_by = e.pubkey))
+                   )                                                  AS mentions
             FROM channel c
             -- A channel this account was removed from. The metadata and the
             -- messages stay in the log, because the log is append-only and they
@@ -137,7 +162,8 @@ public extension EventStore {
                     .map(MessageText.display),
                 lastAuthor: row["last_author"],
                 lastActivity: row["last_at"],
-                unreadCount: row["unread"] ?? 0
+                unreadCount: row["unread"] ?? 0,
+                mentionCount: row["mentions"] ?? 0
             )
         }
     }
@@ -212,17 +238,21 @@ public extension EventStore {
     /// Recorded as a timestamp rather than a set of ids, so a channel that
     /// receives a hundred messages while you are away still costs one row, and
     /// history arriving later cannot retroactively mark itself unread.
-    func markRead(channel: String) throws {
+    func markRead(channel: String, at now: Int64 = Int64(Date().timeIntervalSince1970)) throws {
         try writer.write { db in
             let newest = try Int64.fetchOne(db, sql: """
                 SELECT MAX(created_at) FROM event WHERE h = ? AND kind = ?
                 """, arguments: [channel, EventKind.groupChatMessage.rawValue])
 
             try db.execute(sql: """
-                INSERT INTO read_state (channel_id, last_read_at) VALUES (?, ?)
+                INSERT INTO read_state (channel_id, last_read_at, updated_at) VALUES (?, ?, ?)
                 ON CONFLICT(channel_id) DO UPDATE SET
-                    last_read_at = MAX(read_state.last_read_at, excluded.last_read_at)
-                """, arguments: [channel, newest ?? 0])
+                    last_read_at = MAX(read_state.last_read_at, excluded.last_read_at),
+                    -- Stamped whenever this runs, even when MAX keeps the old
+                    -- marker: the point of the timestamp is when this device
+                    -- last had an opinion, and it just had one.
+                    updated_at = excluded.updated_at
+                """, arguments: [channel, newest ?? 0, now])
         }
     }
 
@@ -235,13 +265,18 @@ public extension EventStore {
     ///
     /// One second before the message, so the message itself lands on the
     /// unread side of the line rather than just outside it.
-    func markUnread(channel: String, from createdAt: Int64) throws {
+    func markUnread(
+        channel: String,
+        from createdAt: Int64,
+        at now: Int64 = Int64(Date().timeIntervalSince1970)
+    ) throws {
         try writer.write { db in
             try db.execute(sql: """
-                INSERT INTO read_state (channel_id, last_read_at) VALUES (?, ?)
+                INSERT INTO read_state (channel_id, last_read_at, updated_at) VALUES (?, ?, ?)
                 ON CONFLICT(channel_id) DO UPDATE SET
-                    last_read_at = excluded.last_read_at
-                """, arguments: [channel, max(0, createdAt - 1)])
+                    last_read_at = excluded.last_read_at,
+                    updated_at = excluded.updated_at
+                """, arguments: [channel, max(0, createdAt - 1), now])
         }
     }
 
