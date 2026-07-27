@@ -102,10 +102,15 @@ struct CombApp: App {
                     // Opening the app is the moment the badge is certainly
                     // stale: the user is now looking at the unread it counted.
                     Task { try? await UNUserNotificationCenter.current().setBadgeCount(0) }
+                    // Before waiting for a read error to notice: the socket is
+                    // usually already dead by now, and finding out the slow way
+                    // means the first thing the user sees is stale.
+                    model.foreground()
                 case .background:
                     // Line up the next check as we leave, so a fresh wake is
                     // always pending while notifications are on.
                     BackgroundRefresh.schedule()
+                    model.background()
                 default:
                     break
                 }
@@ -189,6 +194,11 @@ private struct CommunityRoot: View {
                 pendingInvite: $pendingInvite,
                 pendingMessage: model.pendingMessage,
                 onMessageConsumed: { model.consumePendingMessage() },
+                // Activity spans every community, so a tap may land somewhere
+                // this session is not. `route` switches first, then resolves.
+                onRoute: { target, host in
+                    Task { await model.route(to: target, host: host) }
+                },
                 onDisconnect: {
                     Task { await model.signOut() }
                 }

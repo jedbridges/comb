@@ -74,6 +74,10 @@ public actor RelaySession {
 
     private var readTask: Task<Void, Never>?
     private var isStopping = false
+    /// Set while the app is backgrounded. Tells the read loop and the reconnect
+    /// loop that this socket was closed on purpose, so neither tries to climb
+    /// back up on its own: only `resume` restarts the connection.
+    private var isSuspended = false
 
     /// Continuations waiting for authentication to complete, keyed so a
     /// watchdog can fail one individually.
@@ -95,7 +99,7 @@ public actor RelaySession {
     private var authFailure: Error?
 
     /// Publishes waiting on their OK, keyed by event id.
-    private var pendingPublishes: [String: CheckedContinuation<Void, Error>] = [:]
+    private var pendingPublishes: [String: CheckedContinuation<String, Error>] = [:]
 
     // MARK: - Stall detection
 
@@ -179,11 +183,61 @@ public actor RelaySession {
     public func start() async throws {
         guard state == .idle || state == .stopped else { return }
         isStopping = false
+        // Cleared here too, not just in `resume`. A session suspended before it
+        // ever connected comes back through a full start rather than a replay,
+        // and leaving the flag set would tell the read loop to treat the first
+        // genuine drop as deliberate and never reconnect.
+        isSuspended = false
         try await connect()
+    }
+
+    /// Puts the socket down on purpose, keeping every subscription.
+    ///
+    /// For backgrounding. iOS will tear the connection down anyway once the app
+    /// stops running, but it does it by killing the socket underneath us, which
+    /// surfaces as a read error and sends the reconnect loop into a backoff
+    /// nobody is awake to serve. Closing deliberately means the app decides
+    /// when the connection ends, and `resume` decides when it comes back.
+    ///
+    /// Distinct from `stop`, which is for signing out: this keeps the
+    /// subscription table so `resume` can replay it.
+    public func suspend() async {
+        guard !isSuspended, !isStopping, state != .stopped else { return }
+        isSuspended = true
+
+        readTask?.cancel()
+        readTask = nil
+        stopStallDetector()
+
+        // Flushed rather than dropped. These events are already verified and
+        // counted against `lastSeen`; discarding them would lean on the replay
+        // skew to fetch them again, which is a wide margin to spend on work
+        // already done.
+        flushTask?.cancel()
+        flushTask = nil
+        await flushLiveBatch()
+
+        await transport.close()
+        failPendingPublishes(with: RelayError.notConnected)
+        state = .stopped
+    }
+
+    /// Brings the connection back after `suspend`, replaying every subscription.
+    ///
+    /// Routed through the reconnect path rather than `connect`, because coming
+    /// back needs the whole sequence: authenticate, re-send every REQ from just
+    /// before the last event seen, restart the stall detector. `connect` only
+    /// opens a socket, which is right for a first launch that subscribes
+    /// afterwards and wrong for a resume that already has subscriptions.
+    public func resume() async {
+        guard isSuspended, !isStopping else { return }
+        isSuspended = false
+        await scheduleReconnect()
     }
 
     public func stop() async {
         isStopping = true
+        isSuspended = false
         readTask?.cancel()
         readTask = nil
         stopStallDetector()
@@ -215,7 +269,9 @@ public actor RelaySession {
                 let frame = try await transport.receive()
                 await handle(frame: frame)
             } catch {
-                guard !isStopping, !Task.isCancelled else { return }
+                // A suspend closes the socket underneath this loop, so the
+                // throw is expected and is not a fault to recover from.
+                guard !isStopping, !isSuspended, !Task.isCancelled else { return }
                 await scheduleReconnect()
                 return
             }
@@ -412,13 +468,19 @@ public actor RelaySession {
     // MARK: - Publishing
 
     /// Publishes an event, suspending until the relay accepts or rejects it.
-    public func publish(_ event: NostrEvent) async throws {
+    ///
+    /// Returns the OK message's trailing text. Usually empty, and usually
+    /// ignored: NIP-01 treats it as a human-readable reason. Buzz uses it to
+    /// answer command kinds, which is the only way a caller learns the id of
+    /// something the relay just created on its behalf.
+    @discardableResult
+    public func publish(_ event: NostrEvent) async throws -> String {
         guard !event.kind.isRelaySigned else {
             throw RelayError.publishRejected("kind \(event.kind) is signed by the relay")
         }
         try await waitForAuthentication()
 
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+        return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<String, Error>) in
             pendingPublishes[event.id] = continuation
             Task {
                 do {
@@ -430,7 +492,7 @@ public actor RelaySession {
         }
     }
 
-    private func resumePublish(_ eventID: String, with result: Result<Void, Error>) {
+    private func resumePublish(_ eventID: String, with result: Result<String, Error>) {
         guard let continuation = pendingPublishes.removeValue(forKey: eventID) else { return }
         continuation.resume(with: result)
     }
@@ -499,7 +561,7 @@ public actor RelaySession {
 
         resumePublish(
             eventID,
-            with: accepted ? .success(()) : .failure(RelayError.publishRejected(reason))
+            with: accepted ? .success(reason) : .failure(RelayError.publishRejected(reason))
         )
     }
 
@@ -550,7 +612,12 @@ public actor RelaySession {
         stopStallDetector()
         flushTask?.cancel()
         flushTask = nil
-        liveBatch.removeAll()
+        // Flushed, not dropped. Buffered events are already verified and have
+        // already moved `lastSeen`, so discarding them would rely on the replay
+        // skew being wider than the flush interval to fetch them a second time.
+        // It is, by a long way, but that is a coincidence to lean on rather
+        // than a reason to throw away work that is done.
+        await flushLiveBatch()
 
         // In-flight publishes cannot be answered across a reconnect, because the
         // relay never sends an OK for a socket that no longer exists. The outbox
@@ -558,7 +625,10 @@ public actor RelaySession {
         failPendingPublishes(with: RelayError.notConnected)
 
         var attempt = 0
-        while !isStopping {
+        // A backoff sleep can be sitting here when the app goes to the
+        // background. Without the suspend check this loop would climb back up
+        // and reopen the socket we just closed on purpose.
+        while !isStopping, !isSuspended {
             attempt += 1
             state = .reconnecting(attempt: attempt)
 
@@ -593,6 +663,14 @@ public actor RelaySession {
 
             var updated = subscription
             updated.retriedAfterAuth = false
+            // The stall clock restarts with the REQ. `lastActivityAt` is read
+            // against `ContinuousClock`, which keeps counting while the app is
+            // suspended, so a subscription carried across a long background
+            // would look stalled the moment the detector woke, and be re-sent
+            // or escalated on the strength of an outage it had already
+            // recovered from.
+            updated.lastActivityAt = .now
+            updated.stallStrikes = 0
             subscriptions[id] = updated
 
             try? await send(.req(subscriptionID: id, filters: filters))

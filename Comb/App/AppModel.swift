@@ -166,6 +166,43 @@ final class AppModel {
         stage = .welcome
     }
 
+    /// Puts the open session's connection down after a short grace period.
+    ///
+    /// The grace exists because backgrounding is usually not leaving: a glance
+    /// at Control Centre, a notification pulled down, a tapped link that comes
+    /// straight back. Tearing the socket down on the first frame of that and
+    /// rebuilding it a second later costs more than holding it open, so the
+    /// disconnect waits to find out whether the user actually left.
+    ///
+    /// Cancellation is what makes it work. `foreground` cancels the pending
+    /// task, so a quick round trip never disconnects at all.
+    func background() {
+        guard case .active(let session) = stage else { return }
+
+        lifecycleTask?.cancel()
+        lifecycleTask = Task {
+            try? await Task.sleep(for: Self.backgroundGrace)
+            guard !Task.isCancelled else { return }
+            await session.suspend()
+        }
+    }
+
+    /// Brings the connection back, or cancels a disconnect that had not fired.
+    func foreground() {
+        guard case .active(let session) = stage else { return }
+
+        lifecycleTask?.cancel()
+        lifecycleTask = Task { await session.resume() }
+    }
+
+    /// Long enough to cover a glance away, short enough that a phone in a
+    /// pocket is not holding a socket open on the relay's behalf.
+    private static let backgroundGrace: Duration = .seconds(5)
+
+    /// The pending suspend or resume. One at a time: the phases arrive in
+    /// order, and the newest is the only one whose answer is still wanted.
+    private var lifecycleTask: Task<Void, Never>?
+
     /// Forgets the community on this device. The Keychain key is deliberately
     /// kept even here: without a backup flow, deleting it would destroy an
     /// identity irrecoverably, and rejoining by invite quietly reuses it.

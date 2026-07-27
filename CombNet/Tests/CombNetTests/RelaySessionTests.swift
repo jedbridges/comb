@@ -543,6 +543,84 @@ struct RecoveryTests {
         #expect(await harness.session.state == .stopped)
     }
 
+    @Test("suspending closes the socket without reconnecting")
+    func suspendDoesNotReconnect() async throws {
+        // The whole point of a deliberate close: iOS kills the socket on the
+        // way to the background anyway, and letting that surface as a read
+        // error sends the reconnect loop into a backoff nobody is awake for.
+        let harness = try await Harness(behaviour: Behaviour.cooperative(onReq: { _, _ in }))
+        try await harness.connect()
+        try await harness.session.subscribe([Filter(kinds: [.groupChatMessage])])
+
+        await harness.session.suspend()
+        #expect(await harness.session.state == .stopped)
+
+        // Long enough that a reconnect would have fired: the first backoff is
+        // a second, and this waits past it.
+        try await Task.sleep(for: .milliseconds(1200))
+        #expect(await harness.transport.openCount == 1)
+    }
+
+    @Test("resuming replays every subscription from the last event seen")
+    func resumeReplays() async throws {
+        let harness = try await Harness(behaviour: Behaviour.cooperative(onReq: { _, _ in }))
+        try await harness.connect()
+
+        let id = try await harness.session.subscribe(
+            [Filter(kinds: [.groupChatMessage]).inGroup("room-1")]
+        )
+        let event = try NostrEvent.signed(
+            kind: .groupChatMessage,
+            content: "last before background",
+            tags: [["h", "room-1"]],
+            createdAt: Date(timeIntervalSince1970: 1_700_000_000),
+            with: try PrivateKey()
+        )
+        try await harness.transport.push(event: event, subscription: id)
+        try await waitUntil("first event") { await harness.sink.events.count == 1 }
+
+        await harness.session.suspend()
+        await harness.transport.reset()
+
+        // Not awaited: resuming does not return until the relay has answered
+        // the challenge, and the challenge is pushed below.
+        let resuming = Task { await harness.session.resume() }
+        try await waitUntil("reopen") { await harness.transport.openCount == 2 }
+        await harness.transport.push("[\"AUTH\",\"challenge-2\"]")
+        try await waitUntil("resubscribe") {
+            await !harness.transport.sent(ofType: "REQ").isEmpty
+        }
+        await resuming.value
+
+        let reqs = await harness.transport.sent(ofType: "REQ")
+        #expect(reqs.count == 1)
+        let filter = try #require(reqs.first?.filters.first)
+        let since = try #require(filter.since)
+        #expect(since == 1_700_000_000 - 5)
+        #expect(filter.tags["h"] == ["room-1"])
+    }
+
+    @Test("a drop after resuming still reconnects")
+    func resumeRestoresRecovery() async throws {
+        // The suspend flag is what stops the read loop recovering on its own.
+        // Left set after a resume, the next genuine drop would be read as
+        // deliberate and the app would sit offline forever.
+        let harness = try await Harness(behaviour: Behaviour.cooperative(onReq: { _, _ in }))
+        try await harness.connect()
+        try await harness.session.subscribe([Filter(kinds: [.groupChatMessage])])
+
+        await harness.session.suspend()
+        let resuming = Task { await harness.session.resume() }
+        try await waitUntil("reopened") { await harness.transport.openCount == 2 }
+        await harness.transport.push("[\"AUTH\",\"challenge-2\"]")
+        await resuming.value
+
+        await harness.transport.drop()
+        try await waitUntil("reconnected after drop") {
+            await harness.transport.openCount == 3
+        }
+    }
+
     @Test("survives an unparseable frame")
     func survivesGarbage() async throws {
         // Relays add message types. Treating an unknown one as fatal would take
