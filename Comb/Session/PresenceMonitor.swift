@@ -73,4 +73,13 @@ final class PresenceMonitor {
 
 extension EnvironmentValues {
     @Entry var presenceMonitor: PresenceMonitor?
+
+    /// Opens a channel by id from anywhere, including a sheet.
+    ///
+    /// An environment hook rather than a callback threaded through every
+    /// caller: the profile sheet is presented from four screens, only one of
+    /// which sits in a stack that could push a channel, and none of them should
+    /// have to know how navigation works to offer a button that starts a
+    /// conversation.
+    @Entry var openChannel: ((String) -> Void)?
 }

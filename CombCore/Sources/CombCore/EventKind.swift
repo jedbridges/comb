@@ -22,12 +22,18 @@ public struct EventKind: RawRepresentable, Hashable, Codable, Sendable, Expressi
     /// publishes this rather than inventing a reporting channel of its own.
     public static let report: EventKind = 1984           // NIP-56
     public static let groupChatMessage: EventKind = 9    // NIP-29
-    public static let giftWrap: EventKind = 1059         // NIP-17 encrypted DM
+    /// NIP-17 private direct messages, outermost first. See `NIP17`.
+    public static let directMessage: EventKind = 14      // the rumor, unsigned
+    public static let seal: EventKind = 13               // signed by the sender
+    public static let giftWrap: EventKind = 1059         // signed by a throwaway key
     public static let clientAuth: EventKind = 22242      // NIP-42 auth response
     public static let httpAuth: EventKind = 27235        // NIP-98 HTTP auth
     public static let blossomAuth: EventKind = 24242     // Blossom BUD-01 media auth
     public static let zapRequest: EventKind = 9734       // NIP-57
     public static let zapReceipt: EventKind = 9735       // NIP-57
+    /// NIP-78 arbitrary app data, addressed by its `d` tag. Comb writes one
+    /// slot of it, carrying read markers encrypted to the author's own key.
+    public static let appData: EventKind = 30078
 
     // MARK: - NIP-29 relay-based groups (moderation)
 
@@ -66,13 +72,21 @@ public struct EventKind: RawRepresentable, Hashable, Codable, Sendable, Expressi
     public static let buzzMemberAdded: EventKind = 44100   // relay-signed notification
     public static let buzzMemberRemoved: EventKind = 44101
 
+    /// Opens a direct message conversation: empty content, one `p` tag per
+    /// other participant.
+    ///
+    /// A command rather than a message. The relay executes it, creates a
+    /// NIP-29 group carrying a `hidden` tag, and answers with the new channel
+    /// id in the OK message. Nothing is stored under this kind.
+    public static let buzzOpenDirectMessage: EventKind = 41010
+
     /// Kinds that only a Buzz relay will understand. Comb may render these when
     /// present but must never require them.
     public var isBuzzExtension: Bool {
         switch self {
         case .buzzMemberAdd, .buzzMemberRemove, .buzzRoleChange, .buzzWorkspaceProfile,
              .buzzMembershipList, .buzzPresence, .buzzTyping, .buzzRichContent,
-             .buzzEdit, .buzzMemberAdded, .buzzMemberRemoved:
+             .buzzEdit, .buzzMemberAdded, .buzzMemberRemoved, .buzzOpenDirectMessage:
             true
         default:
             false

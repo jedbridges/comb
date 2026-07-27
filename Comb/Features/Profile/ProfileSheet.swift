@@ -12,8 +12,35 @@ struct ProfileSheet: View {
     let pubkey: String
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.openChannel) private var openChannel
     @State private var profile: ProfileSummary?
     @State private var isZapping = false
+    @State private var isOpeningDirectMessage = false
+    @State private var directMessageFailure: String?
+
+    /// Opens the conversation and goes to it.
+    ///
+    /// The first version created it and dismissed, on the reasoning that the
+    /// conversation reaches the channel list on its own. Tested against a real
+    /// community that was plainly wrong: the sheet closed, the new row landed
+    /// eight places down a list nobody was looking at, and the button read as
+    /// broken. A control called "Send a message" has to end somewhere you can
+    /// send a message.
+    private func openDirectMessage() async {
+        isOpeningDirectMessage = true
+        directMessageFailure = nil
+        defer { isOpeningDirectMessage = false }
+
+        do {
+            let channelID = try await session.openDirectMessage(with: [pubkey])
+            dismiss()
+            openChannel?(channelID)
+        } catch CommunitySession.DirectMessageFailure.noChannelReturned {
+            directMessageFailure = "The conversation may have been created, but this community did not say where. Check your conversations."
+        } catch {
+            directMessageFailure = "This community does not support starting conversations from Comb."
+        }
+    }
 
     var body: some View {
         NavigationStack {
@@ -86,12 +113,41 @@ struct ProfileSheet: View {
             Section {
                 LabeledContent("Messages in this community", value: "\(profile.messageCount)")
 
+                // Not for yourself: a conversation with one participant is
+                // something the relay would refuse anyway, and offering it
+                // reads as a feature rather than as the mistake it is.
+                if pubkey != session.me.hex {
+                    Button {
+                        Task { await openDirectMessage() }
+                    } label: {
+                        if isOpeningDirectMessage {
+                            Label {
+                                Text("Opening…")
+                            } icon: {
+                                ProgressView().controlSize(.small)
+                            }
+                        } else {
+                            Label("Send a message", systemImage: "bubble.left")
+                        }
+                    }
+                    .disabled(isOpeningDirectMessage)
+                }
+
                 if profile.canReceiveZaps {
                     Button {
                         isZapping = true
                     } label: {
                         Label("Send a zap", systemImage: "bolt.fill")
                     }
+                }
+            } footer: {
+                if let directMessageFailure {
+                    // Stated rather than swallowed. Opening a conversation is a
+                    // Buzz command with no NIP-29 equivalent, so a plain relay
+                    // refuses it outright, and a button that quietly did
+                    // nothing would be the worst version of that.
+                    Label(directMessageFailure, systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(Palette.danger)
                 }
             }
             .combRows()

@@ -206,6 +206,21 @@ private struct CommunityRoot: View {
         }
         .environment(\.mediaLoader, loader)
         .environment(\.presenceMonitor, presence)
+        // Routed through the same resolver a notification tap uses. An empty
+        // message id means "this channel, wherever it happens to be": a
+        // conversation that was just created has nothing to scroll to yet.
+        .environment(\.openChannel, { channelID in
+            Task {
+                await model.route(
+                    to: MessageLink.Target(
+                        channelID: channelID,
+                        messageID: "",
+                        threadRootID: nil
+                    ),
+                    host: session.relayURL.host
+                )
+            }
+        })
         .task { await observePresence() }
         .task { await publishPresenceHeartbeats() }
     }

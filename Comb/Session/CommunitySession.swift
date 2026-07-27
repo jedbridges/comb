@@ -71,19 +71,29 @@ actor CommunitySession {
         self.ephemeralBox = box
         let membership = CallbackBox()
         self.membershipBox = membership
+        let readState = EphemeralBox()
+        self.readStateBox = readState
         self.relay = RelaySession(
             url: url,
             signer: signer,
             sink: StoreSink(
                 store: resolvedStore,
                 onEphemeral: { box.emit($0) },
-                onMembershipChange: { membership.fire() }
+                onMembershipChange: { membership.fire() },
+                onReadState: { readState.emit($0) }
             )
         )
         membership.handler = { [weak self] in
             Task { await self?.refreshGroupState() }
         }
+        Task { [weak self] in
+            for await events in readState.stream() {
+                await self?.receiveReadState(events)
+            }
+        }
     }
+
+    private let readStateBox: EphemeralBox
 
     private let ephemeralBox: EphemeralBox
     private let membershipBox: CallbackBox
@@ -102,7 +112,7 @@ actor CommunitySession {
             content: "",
             tags: [["h", channel]]
         ) else { return }
-        try? await relay.publish(event)
+        _ = try? await relay.publish(event)
     }
 
     /// Publishes a presence heartbeat: kind 20001, empty content, no tags.
@@ -113,12 +123,16 @@ actor CommunitySession {
             content: "",
             tags: []
         ) else { return }
-        try? await relay.publish(event)
+        _ = try? await relay.publish(event)
     }
 
     /// A per-community on-disk store, so history reads offline and a second
     /// community can never bleed into this one.
-    private static func openStore(host: String) throws -> EventStore {
+    ///
+    /// Not private: the activity list reads across every community this device
+    /// has joined, and the separation that makes each store safe is the same
+    /// separation that means there is no single place to read them all from.
+    static func openStore(host: String) throws -> EventStore {
         let directory = URL.applicationSupportDirectory
             .appending(path: "Communities/\(host)", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(
@@ -132,6 +146,10 @@ actor CommunitySession {
     // MARK: - Lifecycle
 
     func start() async throws {
+        // Read here rather than at init, so every entry point (launch, join,
+        // pair, community switch) picks it up without each remembering to.
+        syncsReadState = await MainActor.run { SyncSettings.syncsReadState }
+
         Log.session.info("connecting to \(self.relayURL.host ?? "?", privacy: .public)")
         DiagnosticsBuffer.report("session", "connecting to \(relayURL.host ?? "?")")
         try await relay.start()
@@ -157,6 +175,59 @@ actor CommunitySession {
         // marked sending are included: that state means we never heard back, and
         // resending is safe because the relay deduplicates by event id.
         await retryPendingSends()
+
+        // Only now, at the end: `resume` uses this to tell a reconnect it can
+        // replay from a subscription table that exists from one that has to
+        // build it from nothing.
+        hasStarted = true
+    }
+
+    /// Whether a full start has ever completed for this session.
+    private var hasStarted = false
+
+    /// Opens a direct message conversation with the given people, and returns
+    /// the channel it lands in.
+    ///
+    /// Kind 41010 is a command, not a message: the relay creates the group,
+    /// names it, adds everyone, and answers with the channel id in the OK. So
+    /// this publishes and then reads the reply, which is the one place in the
+    /// app where an OK carries something worth keeping.
+    ///
+    /// Idempotent at the relay, which keys on the set of participants: asking
+    /// twice returns the same conversation rather than making a second one.
+    ///
+    /// A Buzz extension with no NIP-29 equivalent, so a plain relay will simply
+    /// reject it. That is why the caller is told the reason rather than shown a
+    /// spinner that never ends.
+    func openDirectMessage(with pubkeys: [String]) async throws -> String {
+        let others = Set(pubkeys).subtracting([me.hex]).sorted()
+        guard !others.isEmpty else { throw DirectMessageFailure.noRecipients }
+
+        let event = try await signer.sign(
+            kind: .buzzOpenDirectMessage,
+            content: "",
+            tags: others.map { ["p", $0] }
+        )
+        let response = try await relay.publish(event)
+
+        guard let channelID = CommandResponse.channelID(in: response) else {
+            // Accepted but unanswered. The conversation may well exist now, but
+            // without the id there is nowhere to send the reader, and guessing
+            // would drop them into the wrong room.
+            DiagnosticsBuffer.report("session", "dm open returned no channel id: \(response)")
+            throw DirectMessageFailure.noChannelReturned
+        }
+
+        // The group's metadata is relay-signed and channel-scoped, so it never
+        // arrives on the live subscription. Without this the conversation
+        // exists but has no name, no roster, and no row in the list.
+        await refreshGroupState()
+        return channelID
+    }
+
+    enum DirectMessageFailure: Error, Equatable {
+        case noRecipients
+        case noChannelReturned
     }
 
     /// Re-reads the channels this account can see.
@@ -223,6 +294,41 @@ actor CommunitySession {
 
     private var connectTask: Task<Void, Never>?
 
+    /// Puts the connection down while the app is in the background.
+    ///
+    /// The retry loop is cancelled too: a session that went to the background
+    /// mid-reconnect would otherwise keep waking to dial a relay nobody is
+    /// listening to, which is the shape of a background battery drain.
+    func suspend() async {
+        connectTask?.cancel()
+        connectTask = nil
+        await relay.suspend()
+    }
+
+    /// Brings it back when the app returns to the foreground.
+    ///
+    /// No bootstrap and no second `subscribeLive`: the relay replays every
+    /// subscription from just before the last event it saw, so whatever landed
+    /// during the background arrives through the subscription that was already
+    /// open. Bootstrap's wide `limit` backfill earns its cost on a cold start
+    /// with nothing to resume from, not here.
+    ///
+    /// Queued sends go out once the socket is actually back, which is what
+    /// waiting on `resume` buys: anything written offline is still in the
+    /// outbox, and this is the first moment it can leave.
+    func resume() async {
+        // Backgrounded before the first connection ever finished, so there is
+        // no subscription table to replay and nothing was ever bootstrapped.
+        // That needs the full start, not a reconnect.
+        guard hasStarted else {
+            startResilient()
+            return
+        }
+
+        await relay.resume()
+        await retryPendingSends()
+    }
+
     func stop() async {
         connectTask?.cancel()
         connectTask = nil
@@ -249,10 +355,114 @@ actor CommunitySession {
         // membership changes.
         let membership = Filter(kinds: Self.membershipKinds).taggingPubkey(me.hex)
 
-        liveSubscription = try await relay.subscribe(
-            [filter, ephemeral, membership], label: "live"
-        )
+        var filters = [filter, ephemeral, membership]
+
+        // Only this identity's own app data, and only when the feature is on:
+        // a subscription is a statement to the relay about what interests you,
+        // and there is no reason to make it while the answer is unused.
+        if syncsReadState {
+            filters.append(Filter(authors: [me.hex], kinds: [.appData]))
+        }
+
+        liveSubscription = try await relay.subscribe(filters, label: "live")
     }
+
+    // MARK: - Read state sync
+
+    /// Publishes this device's read markers for its other devices, coalesced.
+    ///
+    /// Called from every `markRead`, which fires on every scroll to the bottom
+    /// of a channel, so it cannot publish eagerly: the debounce turns a burst of
+    /// reading into one event. The relay keeps only the newest kind 30078 for a
+    /// given `d` tag anyway, so the intermediate ones would be written and
+    /// immediately discarded.
+    func publishReadState() {
+        guard syncsReadState else { return }
+
+        readStatePublish?.cancel()
+        readStatePublish = Task { [weak self] in
+            try? await Task.sleep(for: Self.readStateDebounce)
+            guard !Task.isCancelled else { return }
+            await self?.sendReadState()
+        }
+    }
+
+    private func sendReadState() async {
+        guard let markers = try? store.readMarkers(), !markers.isEmpty else { return }
+
+        do {
+            let payload = ReadStatePayload(markers: markers)
+            let json = String(decoding: try JSONEncoder().encode(payload), as: UTF8.self)
+            let event = try await signer.sign(
+                kind: .appData,
+                content: try await signer.encryptToSelf(json),
+                tags: [["d", ReadStateSync.dTag]]
+            )
+            try await relay.publish(event)
+        } catch {
+            // Fire and forget, like the other unqueued publishes: a read marker
+            // that did not land is re-sent by the next thing you read, and an
+            // alert about it would be about nothing the reader can act on.
+            DiagnosticsBuffer.report("session", "read state publish failed: \(error)")
+        }
+    }
+
+    /// Folds markers from another device into this one's read state.
+    ///
+    /// Events not authored by this identity are ignored outright. The
+    /// subscription already scopes by author, but a relay is not a thing to be
+    /// trusted about whose state this is: read state decides what you are shown
+    /// as having already seen, and accepting a stranger's would let them hide
+    /// messages from you.
+    private func receiveReadState(_ events: [NostrEvent]) async {
+        guard syncsReadState else { return }
+
+        for event in events where event.pubkey == me.hex {
+            guard event.tags.contains(where: { $0.count >= 2 && $0[0] == "d" && $0[1] == ReadStateSync.dTag })
+            else { continue }
+
+            guard let json = try? await signer.decryptFromSelf(event.content),
+                  let payload = try? JSONDecoder().decode(
+                      ReadStatePayload.self, from: Data(json.utf8)
+                  ),
+                  payload.version == ReadStatePayload.currentVersion
+            else { continue }
+
+            // Nothing republished on a merge that changed something: the device
+            // that sent this already holds the newer markers, and answering
+            // every sync with a sync is how two clients talk forever.
+            _ = try? await store.mergeReadMarkers(payload.markers)
+        }
+    }
+
+    /// Mirrored here rather than read per call, because the setting lives in
+    /// UserDefaults on the main actor and this is not it.
+    private var syncsReadState = false
+
+    /// Applies a change to the setting without waiting for a relaunch.
+    ///
+    /// Turning it on re-opens the live subscription, because the filter for
+    /// this identity's own app data is only sent while the feature is on, and a
+    /// subscription that was never made cannot start delivering.
+    func setSyncsReadState(_ enabled: Bool) async {
+        guard enabled != syncsReadState else { return }
+        syncsReadState = enabled
+
+        if let liveSubscription {
+            await relay.unsubscribe(liveSubscription)
+            self.liveSubscription = nil
+        }
+        try? await subscribeLive()
+
+        // Whatever this device already knows goes out immediately, rather than
+        // waiting for the next thing the user happens to read.
+        if enabled { await sendReadState() }
+    }
+
+    private var readStatePublish: Task<Void, Never>?
+    /// Long enough to swallow a scroll through several channels, short enough
+    /// that putting the phone down syncs before the other device is picked up.
+    private static let readStateDebounce: Duration = .seconds(3)
 
     /// Live connection state, for the UI's status indicator.
     func connectionStates() async -> AsyncStream<ConnectionState> {
@@ -685,10 +895,18 @@ private struct StoreSink: EventSink {
     let store: EventStore
     let onEphemeral: @Sendable ([NostrEvent]) -> Void
     let onMembershipChange: @Sendable () -> Void
+    let onReadState: @Sendable ([NostrEvent]) -> Void
 
     func ingest(_ events: [NostrEvent], subscription: String) async {
         guard let result = try? await store.ingest(events) else { return }
         if !result.ephemeral.isEmpty { onEphemeral(result.ephemeral) }
+
+        // Handed over whether or not the store considered them new: a kind
+        // 30078 is addressable, so a replay after a reconnect carries the same
+        // event id the log already holds, and the markers inside it are still
+        // the newest another device published.
+        let readState = events.filter { $0.kind == .appData }
+        if !readState.isEmpty { onReadState(readState) }
 
         // Keyed on what was newly stored rather than on what arrived, so a
         // relay replaying an old notice after a reconnect does not trigger a
