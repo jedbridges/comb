@@ -97,21 +97,52 @@ enum BackgroundRefresh {
         return status == .authorized || status == .provisional
     }
 
+    /// Our own deadline, well inside the roughly thirty seconds iOS grants a
+    /// refresh task.
+    ///
+    /// The expiration handler is not a reliable rescue. Cancelling the work
+    /// cannot interrupt a continuation that is not cancellation-aware, and the
+    /// relay's authentication wait is exactly that: it resolves on a watchdog
+    /// of its own, thirty seconds out, with a twenty-five second bootstrap
+    /// query behind it. One slow community can therefore occupy the wake for
+    /// nearly a minute, and the app that overruns its budget is killed.
+    ///
+    /// So this does not try to make the work finish in time. It makes the
+    /// *task* finish in time, and lets whatever is still in flight be frozen
+    /// when iOS suspends us a moment later.
+    private static let budget: Duration = .seconds(20)
+
     private static func handle(_ task: BGAppRefreshTask) {
         // Always line up the next wake first: a crash or timeout below must not
         // end the chain of refreshes.
         schedule()
 
+        let completion = TaskCompletion(task)
+
         let work = Task {
             await run()
-            task.setTaskCompleted(success: true)
+            completion.finish(success: true)
         }
 
-        // iOS grants only a few seconds. If it runs out, cancel the work and
-        // report incomplete so the system learns our real cost.
+        let deadline = Task {
+            try? await Task.sleep(for: budget)
+            guard !Task.isCancelled else { return }
+            work.cancel()
+            completion.finish(success: false)
+        }
+
+        // Stands the deadline down once the work is genuinely done, so a
+        // finished wake does not leave a timer running against a task that has
+        // already been reported complete.
+        Task {
+            await work.value
+            deadline.cancel()
+        }
+
         task.expirationHandler = {
             work.cancel()
-            task.setTaskCompleted(success: false)
+            deadline.cancel()
+            completion.finish(success: false)
         }
     }
 
@@ -138,19 +169,33 @@ enum BackgroundRefresh {
     /// Returns its unread count, for the badge.
     private static func check(_ community: JoinedCommunity) async -> Int {
         guard let key = try? KeychainStore.load(host: community.host) else { return 0 }
+        guard let session = try? CommunitySession(url: community.relay, key: key) else { return 0 }
 
-        let session: CommunitySession
         do {
-            session = try CommunitySession(url: community.relay, key: key)
             // start() runs the bootstrap query and ingests it, which is exactly
             // the sync a wake needs: after it returns, the store holds whatever
             // arrived while the app was closed.
             try await session.start()
         } catch {
+            await session.stop()
             return 0
         }
-        defer { Task { await session.stop() } }
 
+        let unread = await gather(session, community)
+        // Awaited rather than left to a detached task in a `defer`. An
+        // unstructured close spawned on the way out of a background wake is a
+        // socket nobody is waiting on, running against a deadline that has
+        // already passed.
+        await session.stop()
+        return unread
+    }
+
+    /// Reads one already-started session: its unread count, and any mentions
+    /// worth a notification.
+    private static func gather(
+        _ session: CommunitySession,
+        _ community: JoinedCommunity
+    ) async -> Int {
         let me = session.me.hex
         let unread = (try? session.store.totalUnread(me: me)) ?? 0
 
@@ -217,5 +262,36 @@ enum BackgroundRefresh {
     /// watermark's units cannot drift.
     private static func nowSeconds() -> Int64 {
         Int64(Date().timeIntervalSince1970)
+    }
+}
+
+/// Calls `setTaskCompleted` exactly once, whoever gets there first.
+///
+/// BGTaskScheduler treats a second call as a programmer error and terminates
+/// the app. There are three callers racing here: the work finishing, our own
+/// deadline firing, and iOS's expiration handler, and the first two can
+/// genuinely overlap because cancelling the work does not stop it promptly. A
+/// wake that completed normally a moment after the deadline fired would take
+/// the whole app down.
+///
+/// Not on the main actor: the expiration handler is called on a queue of the
+/// system's choosing, so the lock is doing real work rather than decorating.
+private final class TaskCompletion: @unchecked Sendable {
+    private let lock = NSLock()
+    private var isDone = false
+    private let task: BGTask
+
+    init(_ task: BGTask) {
+        self.task = task
+    }
+
+    func finish(success: Bool) {
+        lock.lock()
+        let wasDone = isDone
+        isDone = true
+        lock.unlock()
+
+        guard !wasDone else { return }
+        task.setTaskCompleted(success: success)
     }
 }
