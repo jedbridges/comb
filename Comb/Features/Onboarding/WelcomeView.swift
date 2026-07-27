@@ -33,6 +33,18 @@ struct WelcomeView: View {
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
+    /// Pushes a screen unless it is already the one showing.
+    ///
+    /// Every door on this screen is a button that appends to the path, and two
+    /// taps landing inside the same push transition appended twice: the screen
+    /// arrives on top of itself, which lurches sideways on the way in and then
+    /// takes two taps of Back to leave. Easy to hit by double-tapping, and the
+    /// first thing an impatient thumb does on a screen that is still animating.
+    private func go(to destination: Destination) {
+        guard path.last != destination else { return }
+        path.append(destination)
+    }
+
     enum Destination: Hashable {
         case enterInvite
         case browse
@@ -113,7 +125,7 @@ struct WelcomeView: View {
                         // "Find" rather than "Browse": the affirmative verb
                         // frames a beginning, not a catalogue.
                         PrimaryButton(title: "Find a community") {
-                            path.append(.browse)
+                            go(to: .browse)
                         }
 
                         // The invite door, and one door only. When the
@@ -133,7 +145,7 @@ struct WelcomeView: View {
                                 else {
                                     // The clipboard changed since detection;
                                     // fall back to the plain join screen.
-                                    path.append(.enterInvite)
+                                    go(to: .enterInvite)
                                     return
                                 }
                                 // Same route a deep link takes: join screen,
@@ -143,7 +155,7 @@ struct WelcomeView: View {
                             }
                         } else {
                             SecondaryButton(title: "I have an invite link") {
-                                path.append(.enterInvite)
+                                go(to: .enterInvite)
                             }
                         }
 
@@ -157,12 +169,23 @@ struct WelcomeView: View {
                         // exactly this act. "Key" is accurate and colder, and
                         // it lives one screen deeper for whoever needs it.
                         Button {
-                            path.append(.signIn)
+                            go(to: .signIn)
                         } label: {
                             // Interpolated rather than `Text + Text`, which is
                             // deprecated on iOS 26.
                             Text("Already on Buzz? \(Text("Pair this phone").foregroundStyle(Palette.chartreuse))")
                                 .foregroundStyle(Palette.text)
+                                .multilineTextAlignment(.center)
+                                // Pinned to the full width, like the two
+                                // buttons above it. Left at its intrinsic
+                                // width this was the one element on the screen
+                                // with a horizontal degree of freedom: the
+                                // VStack centred it, so any change in the
+                                // measured width of the string reflowed it
+                                // sideways, and the arrival animation wrapping
+                                // this subtree animated that reflow into a
+                                // visible slide on every load.
+                                .frame(maxWidth: .infinity)
                         }
                         .font(Typography.actionSecondary)
                         .padding(.top, Space.sm)

@@ -278,7 +278,12 @@ struct JoinView: View {
         .combForm()
         .scrollDismissesKeyboard(.interactively)
         .safeAreaInset(edge: .bottom) {
-            VStack(spacing: Space.xs) {
+            // Fine print and the action are two different things, so they take
+            // the between-groups step rather than the within-group one. Tighter
+            // than this the caption sat close enough to the chartreuse fill to
+            // read as a label on the control instead of a statement about what
+            // the control will do.
+            VStack(spacing: Space.md) {
                 // Fine print, and deliberately shaped like it. Joining mints an
                 // account that exists nowhere else, and a reader who learns
                 // that afterwards has already been given something they did not

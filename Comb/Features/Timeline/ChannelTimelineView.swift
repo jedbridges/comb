@@ -63,6 +63,16 @@ struct ChannelTimelineView: View {
                 // design brief asks for comfortable over compact, and rows
                 // separated by 2pt read as one wall of text.
                 LazyVStack(alignment: .leading, spacing: Space.xs) {
+                    // Above the backfill control, so it is the top of the
+                    // conversation rather than the top of what happens to be
+                    // loaded. Deliberately not gated on history being fully
+                    // paged: that made a privacy disclosure depend on
+                    // pagination, so a long conversation, or a backfill that
+                    // stalled, would simply never show it.
+                    if channel.isDirectMessage {
+                        DirectMessageDisclosure()
+                    }
+
                     // Hidden when the channel is empty: a backfill button over
                     // a void promises history that does not exist.
                     if model.canLoadOlder, !model.displayRows.isEmpty {
@@ -493,23 +503,45 @@ struct ChannelTimelineView: View {
     }
 
     private var loadOlderControl: some View {
-        HStack {
-            Spacer()
-            Button {
-                Task { await model.loadOlder() }
-            } label: {
-                if model.isLoadingOlder {
-                    ProgressView().controlSize(.small)
-                } else {
-                    Text("Earlier messages")
-                        .font(Typography.label)
+        VStack(spacing: Space.xxs) {
+            HStack {
+                Spacer()
+                Button {
+                    Task { await model.loadOlder() }
+                } label: {
+                    if model.isLoadingOlder {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        // Names the retry after the failure, so a second tap
+                        // is a decision rather than a repeat of one that
+                        // already did not work.
+                        Text(model.olderFailed ? "Try again" : "Earlier messages")
+                            .font(Typography.label)
+                    }
                 }
+                .buttonStyle(.glass)
+                .disabled(model.isLoadingOlder)
+                Spacer()
             }
-            .buttonStyle(.glass)
-            .disabled(model.isLoadingOlder)
-            Spacer()
+
+            if model.olderFailed, !model.isLoadingOlder {
+                // Offline, the fetch spends most of a minute waiting out an
+                // auth watchdog and a query deadline before it gives up. That
+                // is a long time to watch a spinner and then be handed back the
+                // same button with nothing said.
+                //
+                // Quieter than the button and tight against it, so it reads as
+                // that control's own state rather than as a third thing
+                // stacked in the same column.
+                Text("Could not reach this community")
+                    .font(Typography.caption)
+                    .foregroundStyle(Palette.subtext.opacity(0.8))
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, Space.md)
+            }
         }
         .padding(.vertical, Space.xs)
+        .animation(Motion.fast, value: model.olderFailed)
     }
 }
 
@@ -719,17 +751,16 @@ struct MessageRow: View {
         } else {
             let text = entry.row.displayContent
             if !text.isEmpty {
-                // Linkified: a designers community trades in links, and dead
-                // URLs were the first papercut in every share. Tapping opens
-                // Safari through the standard openURL path.
-                Text("\(Text(MessageLinks.attributed(entry.row.content, mentionNames: mentionNames)))\(editedMarker)")
-                    .font(Typography.body)
-                    .foregroundStyle(Palette.text)
-                    // Light text on a dark ground reads thinner than it is and
-                    // wants more leading, which is also the design brief's
-                    // stated rule for this exact case.
-                    .lineSpacing(2)
-                    .textSelection(.enabled)
+                // Linkified inside, and any NIP-30 shortcodes drawn as the
+                // images their own message defines. Dead URLs were the first
+                // papercut in every share; tapping opens Safari through the
+                // standard openURL path.
+                EmojiText(
+                    content: entry.row.content,
+                    entries: entry.row.customEmoji,
+                    mentionNames: mentionNames,
+                    trailing: editedMarker
+                )
             }
         }
 
@@ -845,6 +876,46 @@ struct MessageRow: View {
 /// moment they decide whether to tap.
 /// A date pill between calendar days, so scrolled history stays anchored in
 /// time. "Today" and "Yesterday" by name; further back, the day and date.
+/// What a direct message here is, and what it is not.
+///
+/// A DM in a Buzz community is a NIP-29 group wearing a `hidden` tag. The tag
+/// keeps the conversation out of the public channel list and nothing more:
+/// Buzz's own relay source calls it "not a security boundary", and the messages
+/// inside are ordinary kind 9 events the relay stores in cleartext. The
+/// operator can read them.
+///
+/// Said because the ethos asks for every limitation to be stated, and because
+/// "Direct message" is a name that implies otherwise. A reader deciding what to
+/// type into a private-looking box is exactly who needs to know, and the top of
+/// the conversation is the one place they will meet it before typing.
+///
+/// Deliberately not alarming: this is how the whole platform works, not a fault
+/// in it, and a red warning over an ordinary conversation would be its own kind
+/// of dishonesty.
+struct DirectMessageDisclosure: View {
+    var body: some View {
+        Label {
+            Text("Private to the people here, but stored on the community's server, which can read it.")
+        } icon: {
+            Image(systemName: "lock.open")
+        }
+        .labelStyle(.compact)
+        .font(Typography.caption)
+        // Quieter than the date pills it sits above. This is standing context
+        // about the room, not a marker in the conversation, and at full subtext
+        // weight it read as the loudest thing on an otherwise empty screen.
+        .foregroundStyle(Palette.subtext.opacity(0.8))
+        .multilineTextAlignment(.leading)
+        // No chip. As a pill it was a paragraph wearing the same shape as the
+        // date marker and the backfill button, so three unrelated things all
+        // read as one row of controls. Prose should look like prose.
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, Space.md)
+        .padding(.top, Space.sm)
+        .padding(.bottom, Space.xs)
+    }
+}
+
 struct DayBreak: View {
     let date: Date
 
@@ -1009,13 +1080,20 @@ private struct ReactionChip: View {
 
     private var chip: some View {
         HStack(spacing: Space.xxs) {
-            // Clamped: reaction content arrives from anyone, and rendering a
-            // paragraph-long "emoji" would hand every member a banner ad slot.
-            // Two grapheme clusters cover every real emoji including flags and
-            // family sequences.
-            Text(String(reaction.emoji.prefix(2)))
-                .font(Typography.emoji)
-                .lineLimit(1)
+            if let url = reaction.emojiURL {
+                // A NIP-30 reaction: the content is `:shortcode:`, which the
+                // clamp below would have shown as ":p". The image is the whole
+                // point of the reaction, and it is the community's own.
+                CustomEmojiImage(url: url)
+            } else {
+                // Clamped: reaction content arrives from anyone, and rendering a
+                // paragraph-long "emoji" would hand every member a banner ad slot.
+                // Two grapheme clusters cover every real emoji including flags and
+                // family sequences.
+                Text(String(reaction.emoji.prefix(2)))
+                    .font(Typography.emoji)
+                    .lineLimit(1)
+            }
             Text("\(reaction.count)")
                 .font(Typography.count)
                 // The number rolls rather than swaps when someone joins or
@@ -1404,6 +1482,9 @@ final class ChannelTimeline {
     private(set) var snapshot = TimelineSnapshot.empty
     private(set) var isLoadingOlder = false
     private(set) var canLoadOlder = true
+    /// Whether the last backfill never reached the relay, as opposed to
+    /// reaching it and finding nothing.
+    private(set) var olderFailed = false
 
     private let session: CommunitySession
     private let channel: String
@@ -1482,6 +1563,9 @@ final class ChannelTimeline {
     func markRead() async {
         guard !suppressMarkRead else { return }
         try? await session.store.markRead(channel: channel)
+        // Coalesced inside the session, so firing this on every timeline update
+        // costs one timer reset rather than one event.
+        await session.publishReadState()
     }
 
     /// Leaves this channel unread from the given message down. The caller pops
@@ -1489,6 +1573,10 @@ final class ChannelTimeline {
     func markUnread(from createdAt: Int64) async {
         suppressMarkRead = true
         try? await session.store.markUnread(channel: channel, from: createdAt)
+        // Published like a read is: deciding to come back to something is a
+        // decision your other devices want, and it is the case a marker-only
+        // sync would silently lose.
+        await session.publishReadState()
     }
 
     func send(_ text: String, attachments: [Blossom.Descriptor] = []) async {
@@ -1533,16 +1621,25 @@ final class ChannelTimeline {
 
         let oldest = snapshot.rows.last?.createdAt ?? Int64(Date().timeIntervalSince1970)
         visibleLimit += 80
+        olderFailed = false
         // Restart observation at the wider window first, so anything already
         // local appears instantly; the relay fetch fills in behind it.
         observe()
 
-        if let fetched = try? await session.loadOlder(channel: channel, before: oldest) {
+        do {
+            let fetched = try await session.loadOlder(channel: channel, before: oldest)
             // Nothing new from the relay and nothing more locally means the
             // channel's history is exhausted.
             if fetched == 0, snapshot.rows.count < visibleLimit {
                 canLoadOlder = false
             }
+        } catch {
+            // Said rather than swallowed. Offline, this waits out an auth
+            // watchdog and then a query deadline before failing, and a `try?`
+            // put the same button back with no way to tell a fetch that found
+            // nothing from one that never reached the relay. The reader taps
+            // again and waits all over again.
+            olderFailed = true
         }
     }
 
