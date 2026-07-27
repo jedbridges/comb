@@ -156,6 +156,23 @@ enum Schema {
             try db.execute(sql: "ALTER TABLE outbox ADD COLUMN tags TEXT NOT NULL DEFAULT '[]'")
         }
 
+        // When a marker was last written, which is not the same question as
+        // what it points at. Two devices reconciling read state cannot use the
+        // marker itself to decide who is newer: "mark unread" moves it
+        // backwards on purpose, so the larger value is sometimes the staler
+        // one. This column is what makes last-writer-wins possible.
+        //
+        // Existing rows are backdated to their own marker, which is the closest
+        // thing to the truth available: the marker was set at some point at or
+        // after the message it points at, and anything a remote device says
+        // about them afterwards should win.
+        migrator.registerMigration("v4.read_state.updated") { db in
+            try db.execute(sql: """
+                ALTER TABLE read_state ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0
+                """)
+            try db.execute(sql: "UPDATE read_state SET updated_at = last_read_at")
+        }
+
         return migrator
     }
 

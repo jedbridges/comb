@@ -16,6 +16,16 @@ public protocol EventSigner: Sendable {
         tags: [[String]],
         createdAt: Date
     ) async throws -> NostrEvent
+
+    /// NIP-44 encrypts to this identity's own key, for state a device publishes
+    /// for its other devices to read.
+    ///
+    /// On the signer rather than reached through an exposed `PrivateKey`, for
+    /// the same reason signing is: the secret never has to travel to the place
+    /// that needs the result. Encrypting to yourself is an ordinary NIP-44
+    /// conversation where both parties are the same key.
+    func encryptToSelf(_ plaintext: String) async throws -> String
+    func decryptFromSelf(_ payload: String) async throws -> String
 }
 
 public extension EventSigner {
@@ -66,6 +76,18 @@ public struct InMemorySigner: EventSigner {
             createdAt: createdAt,
             with: key
         )
+    }
+
+    public func encryptToSelf(_ plaintext: String) async throws -> String {
+        try NIP44.encrypt(plaintext, conversationKey: selfConversationKey())
+    }
+
+    public func decryptFromSelf(_ payload: String) async throws -> String {
+        try NIP44.decrypt(payload, conversationKey: selfConversationKey())
+    }
+
+    private func selfConversationKey() throws -> Data {
+        try NIP44.conversationKey(privateKey: key, peer: key.publicKey)
     }
 }
 

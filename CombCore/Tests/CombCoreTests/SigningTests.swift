@@ -13,6 +13,29 @@ struct EventSignerTests {
         #expect(try await event.pubkey == signer.publicKey().hex)
     }
 
+    @Test("encrypts to itself and back")
+    func selfEncryptionRoundTrips() async throws {
+        let signer = try InMemorySigner()
+        let secret = #"{"v":1,"m":[{"c":"room-1","r":1000,"u":2000}]}"#
+
+        let sealed = try await signer.encryptToSelf(secret)
+        #expect(sealed != secret)
+        #expect(try await signer.decryptFromSelf(sealed) == secret)
+    }
+
+    @Test("another identity cannot read it")
+    func selfEncryptionIsPrivate() async throws {
+        // The whole basis for putting read state on a relay: it is addressed to
+        // one key, and that key is the only one it opens for.
+        let mine = try InMemorySigner()
+        let theirs = try InMemorySigner()
+
+        let sealed = try await mine.encryptToSelf("what I have read")
+        await #expect(throws: (any Error).self) {
+            try await theirs.decryptFromSelf(sealed)
+        }
+    }
+
     @Test("refuses to sign relay-signed kinds")
     func refusesRelaySignedKinds() async throws {
         // The relay authors 39000 itself and rejects a client-authored one. Failing

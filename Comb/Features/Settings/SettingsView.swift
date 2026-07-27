@@ -36,6 +36,7 @@ struct SettingsView: View {
     @State private var isReportingProblem = false
     @State private var displayName = ""
     @State private var notifyMentions = NotificationSettings.isEnabled
+    @State private var syncsReadState = SyncSettings.syncsReadState
     @State private var systemDenied = false
     /// Set when a name change could not be published, so the footer can say so
     /// instead of the field quietly looking saved.
@@ -189,6 +190,24 @@ struct SettingsView: View {
                         // promising more than that would be dishonest.
                         Text("Comb has no notification server, so it checks in the background every so often. A mention can arrive a while after it was sent.")
                     }
+                }
+                .combRows()
+
+                Section {
+                    Toggle("Sync what I have read", isOn: $syncsReadState)
+                        .tint(Palette.chartreuse)
+                        .onChange(of: syncsReadState) { _, enabled in
+                            SyncSettings.syncsReadState = enabled
+                            Task { await session.setSyncsReadState(enabled) }
+                        }
+                } header: {
+                    Text("Other devices")
+                } footer: {
+                    // What it costs, in the same breath as what it does. The
+                    // markers are encrypted to this account's own key, so the
+                    // relay cannot read which rooms were read; the thing it
+                    // does learn is that something was read, and roughly when.
+                    Text("Keeps unread badges in step across your devices. Your read markers are encrypted to your own key, so the relay cannot read them, but it can see when they are sent. Off by default: this is the one thing Comb can keep entirely on this iPhone.")
                 }
                 .combRows()
 
