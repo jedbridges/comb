@@ -12,3 +12,9 @@ xcuserdata/
 Comb.app/
 *.ipa
 *.dSYM.zip
+
+# Build and test logs from scripts/quiet.sh.
+.logs/
+
+# Machine-local Claude Code settings.
+.claude/settings.local.json

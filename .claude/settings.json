@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(make test)",
+      "Bash(make test-core)",
+      "Bash(make test-store)",
+      "Bash(make test-net)",
+      "Bash(make build-app)",
+      "Bash(make project)",
+      "Bash(make help)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git show:*)",
+      "Bash(swift build --package-path:*)"
+    ]
+  }
+}

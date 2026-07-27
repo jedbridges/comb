@@ -17,27 +17,31 @@ help:
 	@echo "make export     export the archive to a .ipa for upload (needs DEVELOPMENT_TEAM)"
 	@echo "make clean      remove build artifacts and the generated project"
 
+# Build and test output is filtered to diagnostics, failures, and the result
+# line. The full log lands in .logs/. Set V=1 for the raw firehose.
+Q = scripts/quiet.sh
+
 project:
-	xcodegen generate
+	@$(Q) project xcodegen generate
 
 # The fast loop. Everything protocol-level is verifiable here with no simulator.
 test: test-core test-store test-net
 
 test-core:
-	swift test --package-path CombCore
+	@$(Q) test-core swift test --package-path CombCore
 
 test-store:
-	swift test --package-path CombStore
+	@$(Q) test-store swift test --package-path CombStore
 
 test-net:
-	swift test --package-path CombNet
+	@$(Q) test-net swift test --package-path CombNet
 
 # swift-secp256k1 ships a build plugin, which Xcode refuses to run unless trust
 # is granted interactively. The skip flags are what make a headless build work.
 XCFLAGS = -skipPackagePluginValidation -skipMacroValidation
 
 build-app: project
-	xcodebuild build \
+	@$(Q) build-app xcodebuild build \
 		-project Comb.xcodeproj \
 		-scheme Comb \
 		-destination '$(SIMULATOR)' \
@@ -45,7 +49,7 @@ build-app: project
 		$(XCFLAGS)
 
 test-app: project
-	xcodebuild test \
+	@$(Q) test-app xcodebuild test \
 		-project Comb.xcodeproj \
 		-scheme Comb \
 		-destination '$(SIMULATOR)' \
@@ -93,4 +97,4 @@ upload: archive
 	@echo "Uploaded. Processing takes 5-30 minutes; watch the TestFlight tab."
 
 clean:
-	rm -rf CombCore/.build Comb.xcodeproj build DerivedData
+	rm -rf CombCore/.build Comb.xcodeproj build DerivedData .logs
