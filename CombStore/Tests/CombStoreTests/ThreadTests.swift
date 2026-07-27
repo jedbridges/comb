@@ -367,6 +367,67 @@ struct MessageTextTests {
         #expect(MessageText.expandingInlineLinks(body).text == body)
     }
 
+    @Test("each inline marker styles its contents and disappears")
+    func inlineStyles() {
+        let cases: [(String, String, MessageText.InlineStyle.Kind)] = [
+            ("say **loud** now", "say loud now", .bold),
+            ("say *soft* now", "say soft now", .italic),
+            ("say _soft_ now", "say soft now", .italic),
+            ("say ~~gone~~ now", "say gone now", .strikethrough),
+            ("say `code` now", "say code now", .code),
+        ]
+
+        for (body, expected, kind) in cases {
+            let (text, styles, _) = MessageText.extractingInlineStyles(body)
+            #expect(text == expected)
+            #expect(styles.count == 1)
+            #expect(styles.first?.kind == kind)
+            #expect((text as NSString).substring(with: styles[0].range) == expected.split(separator: " ")[1])
+        }
+    }
+
+    @Test("bold wins over italic on a doubled marker")
+    func boldBeatsItalic() {
+        // `**a**` read as an italic wrapping `*a*` would leave stray asterisks
+        // and style the wrong run, which is what marker ordering prevents.
+        let (text, styles, _) = MessageText.extractingInlineStyles("**a**")
+        #expect(text == "a")
+        #expect(styles.map(\.kind) == [.bold])
+    }
+
+    @Test("code contents are never re-read as markup")
+    func codeIsOpaque() {
+        let (text, styles, _) = MessageText.extractingInlineStyles("`a * b * c`")
+        #expect(text == "a * b * c")
+        #expect(styles.map(\.kind) == [.code])
+    }
+
+    @Test("punctuation that is not emphasis is left as typed")
+    func leavesLoneMarkers() {
+        // Arithmetic: the markers do not hug their text, so nothing is emphasis.
+        #expect(MessageText.display("2 * 3 * 4") == "2 * 3 * 4")
+        #expect(MessageText.display("2 *\n3") == "2 *\n3")
+        #expect(MessageText.display("**unclosed") == "**unclosed")
+        // Identifiers keep their underscores, which is the common case in a
+        // room where people paste code.
+        #expect(MessageText.display("some_var_name") == "some_var_name")
+        #expect(MessageText.display("call some_var_name here") == "call some_var_name here")
+    }
+
+    @Test("a link inside emphasis keeps pointing at its label")
+    func linkSurvivesStyleMarkers() {
+        let body = "see **[the docs](https://example.com)** first"
+        let (linked, rawLinks) = MessageText.expandingInlineLinks(body)
+        let (text, styles, deletions) = MessageText.extractingInlineStyles(linked)
+
+        #expect(text == "see the docs first")
+        #expect(styles.map(\.kind) == [.bold])
+
+        let moved = MessageText.remap(rawLinks[0].range, removing: deletions)
+        #expect(moved != nil)
+        #expect((text as NSString).substring(with: moved!) == "the docs")
+    }
+
     @Test("ordinary brackets and parentheses survive")
     func leavesOrdinaryBrackets() {
         #expect(MessageText.display("see [1] (page 4)") == "see [1] (page 4)")

@@ -165,12 +165,14 @@ private struct CommunityRoot: View {
     @Binding var pendingInvite: String?
 
     @State private var loader: MediaLoader
+    @State private var presence: PresenceMonitor
 
     init(session: CommunitySession, model: AppModel, pendingInvite: Binding<String?>) {
         self.session = session
         self.model = model
         _pendingInvite = pendingInvite
         _loader = State(initialValue: MediaLoader(session: session))
+        _presence = State(initialValue: PresenceMonitor(me: session.me.hex))
     }
 
     var body: some View {
@@ -193,6 +195,23 @@ private struct CommunityRoot: View {
             )
         }
         .environment(\.mediaLoader, loader)
+        .environment(\.presenceMonitor, presence)
+        .task { await observePresence() }
+        .task { await publishPresenceHeartbeats() }
+    }
+
+    private func observePresence() async {
+        for await events in session.ephemeralEvents() {
+            guard !Task.isCancelled else { return }
+            for event in events { presence.received(event) }
+        }
+    }
+
+    private func publishPresenceHeartbeats() async {
+        while !Task.isCancelled {
+            await session.sendPresence()
+            try? await Task.sleep(for: .seconds(PresenceMonitor.heartbeatInterval))
+        }
     }
 }
 

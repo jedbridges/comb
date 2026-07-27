@@ -22,6 +22,7 @@ enum Typography {
     /// Chat messages and primary reading text. 16pt at default, Buzz's base.
     static let body = Font.system(.callout)
     static let bodyEmphasis = Font.system(.callout, weight: .semibold)
+    static let bodyItalic = Font.system(.callout).italic()
 
     /// Supporting copy: previews, explanations, empty states. 15pt at default.
     static let secondary = Font.system(.subheadline)

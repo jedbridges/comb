@@ -46,16 +46,17 @@ enum DemoSeed {
         events.append(contentsOf: try [ada, mies, ray].map { try $0.profile(at: now - 86_000) })
 
         // A conversation with the shapes the timeline has to handle: runs by
-        // one author, replies, an edit, a reaction pile, a deletion.
+        // one author, replies, an edit, a reaction pile, a deletion, and the
+        // inline emphasis a Buzz composer writes as Markdown.
         let script: [(Persona, String, Int64)] = [
             (ada, "Morning all. I pushed the new grid to the shared canvas.", 7200),
             (ada, "It is eight columns now. Fight me.", 7150),
-            (mies, "Eight is defensible. Twelve was noise.", 6900),
-            (ray, "As long as the gutters breathe, I am happy.", 6600),
-            (mies, "Gutters at 20 then. The tokens already agree.", 6300),
+            (mies, "Eight is defensible. *Twelve* was noise.", 6900),
+            (ray, "As long as the **gutters** breathe, I am happy.", 6600),
+            (mies, "Gutters at `20` then. The tokens already agree.", 6300),
             (ada, "Done. Also renamed the spacing scale, sorry in advance.", 4800),
             (ray, "You renamed it AGAIN?", 4700),
-            (ada, "Last time. Probably.", 4650),
+            (ada, "~~Last time~~. Probably.", 4650),
             (mies, "Shipping the type ramp tonight. Reviews welcome tomorrow.", 1800),
             (ray, "I will bring opinions and pastries.", 900),
         ]

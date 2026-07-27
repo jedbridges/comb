@@ -38,7 +38,7 @@ actor CommunitySession {
     /// stored kinds for that reason, and because forgetting to list a kind here
     /// is invisible: the pipeline still runs, it just never receives anything.
     private static let ephemeralKinds: [EventKind] = [
-        .buzzTyping,
+        .buzzTyping, .buzzPresence,
     ]
     /// Relay-signed notices that this account's membership changed.
     ///
@@ -101,6 +101,17 @@ actor CommunitySession {
             kind: .buzzTyping,
             content: "",
             tags: [["h", channel]]
+        ) else { return }
+        try? await relay.publish(event)
+    }
+
+    /// Publishes a presence heartbeat: kind 20001, empty content, no tags.
+    /// Fire and forget, like typing.
+    func sendPresence() async {
+        guard let event = try? await signer.sign(
+            kind: .buzzPresence,
+            content: "",
+            tags: []
         ) else { return }
         try? await relay.publish(event)
     }

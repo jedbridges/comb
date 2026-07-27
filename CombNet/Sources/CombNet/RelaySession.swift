@@ -97,6 +97,25 @@ public actor RelaySession {
     /// Publishes waiting on their OK, keyed by event id.
     private var pendingPublishes: [String: CheckedContinuation<Void, Error>] = [:]
 
+    // MARK: - Stall detection
+
+    /// How long a live subscription can go without an EVENT or EOSE before
+    /// being re-sent. A relay that holds the socket open but stops delivering
+    /// makes the app look healthy while nothing arrives.
+    private static let stallTimeout: Duration = .seconds(60)
+    private static let stallCheckInterval: Duration = .seconds(30)
+
+    private var stallDetectorTask: Task<Void, Never>?
+
+    // MARK: - Live event batching
+
+    /// Incoming live events buffered for a short flush cycle. One transaction
+    /// per event is the bottleneck under burst; batching amortises it.
+    private var liveBatch: [(event: NostrEvent, subscription: String)] = []
+    private var flushTask: Task<Void, Never>?
+    private static let flushInterval: Duration = .milliseconds(16)
+    private static let flushThreshold = 50
+
     private struct Subscription {
         let id: String
         let label: String
@@ -109,6 +128,14 @@ public actor RelaySession {
         /// Guards the re-auth retry so a genuinely forbidden subscription cannot
         /// loop forever.
         var retriedAfterAuth = false
+        /// When this subscription last received an EVENT or EOSE. `nil` until
+        /// the first frame arrives; stall detection ignores subscriptions that
+        /// have not yet heard back.
+        var lastActivityAt: ContinuousClock.Instant?
+        /// Consecutive stalls survived. Re-sending the REQ fixes a subscription
+        /// the relay dropped; it cannot fix a socket that is no longer carrying
+        /// anything, so a second strike escalates to a reconnect.
+        var stallStrikes = 0
     }
 
     // MARK: - Lifecycle
@@ -159,6 +186,10 @@ public actor RelaySession {
         isStopping = true
         readTask?.cancel()
         readTask = nil
+        stopStallDetector()
+        flushTask?.cancel()
+        flushTask = nil
+        liveBatch.removeAll()
         await transport.close()
 
         // Anything waiting, or about to wait, will never be answered now.
@@ -309,6 +340,7 @@ public actor RelaySession {
             isOneShot: false
         )
         try await send(.req(subscriptionID: id, filters: filters))
+        startStallDetector()
         return id
     }
 
@@ -406,29 +438,41 @@ public actor RelaySession {
     // MARK: - Message handling
 
     private func receive(_ event: NostrEvent, for subscriptionID: String) async {
-        // A stale frame for a subscription closed during reconnect. Dropping it
-        // is correct; there is nobody left to deliver it to.
         guard var subscription = subscriptions[subscriptionID] else { return }
 
         subscription.lastSeen = max(subscription.lastSeen ?? 0, event.createdAt)
+        subscription.lastActivityAt = .now
+        subscription.stallStrikes = 0
 
         if subscription.isOneShot {
             subscription.collected.append(event)
             subscriptions[subscriptionID] = subscription
         } else {
             subscriptions[subscriptionID] = subscription
-            await sink.ingest([event], subscription: subscriptionID)
+            liveBatch.append((event, subscriptionID))
+            if liveBatch.count >= Self.flushThreshold {
+                await flushLiveBatch()
+            } else {
+                scheduleFlush()
+            }
         }
     }
 
     private func handleEndOfStoredEvents(_ subscriptionID: String) async {
-        guard let subscription = subscriptions[subscriptionID] else { return }
+        guard var subscription = subscriptions[subscriptionID] else { return }
+
+        subscription.lastActivityAt = .now
+        subscription.stallStrikes = 0
+        subscriptions[subscriptionID] = subscription
 
         if subscription.isOneShot {
             subscriptions.removeValue(forKey: subscriptionID)
             subscription.continuation?.resume(returning: subscription.collected)
             try? await send(.close(subscriptionID: subscriptionID))
         } else {
+            // Flush any buffered events before the EOSE marker so the sink
+            // sees them in order.
+            if !liveBatch.isEmpty { await flushLiveBatch() }
             await sink.endOfStoredEvents(subscription: subscriptionID)
         }
     }
@@ -503,6 +547,11 @@ public actor RelaySession {
     private func scheduleReconnect() async {
         guard !isStopping else { return }
 
+        stopStallDetector()
+        flushTask?.cancel()
+        flushTask = nil
+        liveBatch.removeAll()
+
         // In-flight publishes cannot be answered across a reconnect, because the
         // relay never sends an OK for a socket that no longer exists. The outbox
         // is what makes the retry safe.
@@ -523,6 +572,7 @@ public actor RelaySession {
 
                 try await waitForAuthentication()
                 await resubscribeAll()
+                startStallDetector()
                 return
             } catch {
                 continue
@@ -553,6 +603,85 @@ public actor RelaySession {
         for (id, subscription) in subscriptions where subscription.isOneShot {
             subscriptions.removeValue(forKey: id)
             subscription.continuation?.resume(throwing: RelayError.notConnected)
+        }
+    }
+
+    // MARK: - Live event batching
+
+    private func scheduleFlush() {
+        guard flushTask == nil else { return }
+        flushTask = Task { [weak self] in
+            try? await Task.sleep(for: Self.flushInterval)
+            await self?.flushLiveBatch()
+        }
+    }
+
+    private func flushLiveBatch() async {
+        flushTask?.cancel()
+        flushTask = nil
+        guard !liveBatch.isEmpty else { return }
+
+        let batch = liveBatch
+        liveBatch = []
+
+        // Group by subscription so each sink call carries its subscription id.
+        var grouped: [String: [NostrEvent]] = [:]
+        for (event, sub) in batch {
+            grouped[sub, default: []].append(event)
+        }
+        for (sub, events) in grouped {
+            await sink.ingest(events, subscription: sub)
+        }
+    }
+
+    // MARK: - Stall detection
+
+    private func startStallDetector() {
+        guard stallDetectorTask == nil else { return }
+        stallDetectorTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: Self.stallCheckInterval)
+                guard let self, !Task.isCancelled else { return }
+                await self.checkForStalledSubscriptions()
+            }
+        }
+    }
+
+    private func stopStallDetector() {
+        stallDetectorTask?.cancel()
+        stallDetectorTask = nil
+    }
+
+    private func checkForStalledSubscriptions() async {
+        let now = ContinuousClock.Instant.now
+        for (id, subscription) in subscriptions where !subscription.isOneShot {
+            guard let lastActivity = subscription.lastActivityAt else { continue }
+            guard now - lastActivity > Self.stallTimeout else { continue }
+
+            // A re-sent REQ already failed to revive this one, so the socket
+            // itself is the thing that is dead. Closing the transport throws
+            // the read loop, which is the existing path to a backed-off
+            // reconnect and a full replay of every subscription.
+            guard subscription.stallStrikes < 1 else {
+                await transport.close()
+                return
+            }
+
+            // Re-subscribe: CLOSE then REQ with the same filters, so the relay
+            // starts a fresh delivery stream.
+            var filters = subscription.filters
+            if let lastSeen = subscription.lastSeen {
+                for index in filters.indices {
+                    filters[index].since = lastSeen - Self.replaySkew
+                }
+            }
+            try? await send(.close(subscriptionID: id))
+            try? await send(.req(subscriptionID: id, filters: filters))
+
+            var updated = subscription
+            updated.lastActivityAt = .now
+            updated.stallStrikes += 1
+            subscriptions[id] = updated
         }
     }
 

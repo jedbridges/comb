@@ -170,8 +170,11 @@ extension ToggleStyle where Self == CheckboxToggleStyle {
 struct AvatarView: View {
     let name: String
     var picture: String?
+    var pubkey: String?
+    var isOnline = false
 
     @ScaledMetric(relativeTo: .subheadline) private var size: CGFloat = Sizing.avatar
+    @Environment(\.presenceMonitor) private var presenceMonitor: PresenceMonitor?
 
     /// Loaded through the community's loader rather than `AsyncImage`.
     ///
@@ -205,8 +208,20 @@ struct AvatarView: View {
             }
         }
         .animation(Motion.fast, value: image == nil)
-        // A face is not information: the row's label already says who spoke.
-        .accessibilityHidden(true)
+        .overlay(alignment: .bottomTrailing) {
+            if showOnline {
+                Circle()
+                    .fill(Palette.chartreuse)
+                    .frame(width: size * 0.27, height: size * 0.27)
+                    .overlay(
+                        Circle().strokeBorder(Palette.ink, lineWidth: Stroke.hairline * 2)
+                    )
+                    .transition(.scale.combined(with: .opacity))
+                    .accessibilityLabel("Online")
+            }
+        }
+        .animation(Motion.fast, value: showOnline)
+        .accessibilityHidden(!showOnline)
         .task(id: picture) { await load() }
     }
 
@@ -232,6 +247,10 @@ struct AvatarView: View {
                 .foregroundStyle(Palette.glyphMark)
                 .minimumScaleFactor(0.7)
         }
+    }
+
+    private var showOnline: Bool {
+        isOnline || (pubkey.flatMap { presenceMonitor?.isOnline($0) } ?? false)
     }
 
     /// https, or an inlined `data:` picture. Never http: a profile can name

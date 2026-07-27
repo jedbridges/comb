@@ -22,12 +22,44 @@ enum MessageLinks {
         _ rawContent: String,
         mentionNames: [String] = []
     ) -> AttributedString {
+        // Takes the stored body, not `displayContent`. This runs the same
+        // pipeline `MessageText.display` does, because the markup it needs to
+        // find is exactly what that strips: handed the already-displayed text,
+        // every match below finds nothing and the result is inert.
+        let cleaned = MessageText.unwrappingAutolinks(
+            MessageText.withoutMediaMarkdown(rawContent)
+        )
+
         // `[label](url)` collapses to the label first, so everything below
         // works on the text a reader actually sees. Doing it here rather than
         // in `display` keeps the URLs, which a plain String cannot carry.
-        let (content, inlineLinks) = MessageText.expandingInlineLinks(rawContent)
+        let (linked, rawLinks) = MessageText.expandingInlineLinks(cleaned)
+
+        // Emphasis markers go next, and the link ranges shift onto the text
+        // that survives them. A label the markers consumed entirely is dropped
+        // rather than left pointing at the wrong characters.
+        let (content, styles, deletions) = MessageText.extractingInlineStyles(linked)
+        let inlineLinks = rawLinks.compactMap { link in
+            MessageText.remap(link.range, removing: deletions)
+                .map { MessageText.InlineLink(range: $0, url: link.url) }
+        }
 
         var attributed = linkified(content)
+
+        // Before links and mentions, so those win the font on any overlap: a
+        // tappable destination matters more to a reader than its emphasis.
+        for style in styles {
+            guard let swiftRange = Range(style.range, in: content),
+                  let range = Range(swiftRange, in: attributed)
+            else { continue }
+
+            switch style.kind {
+            case .bold: attributed[range].font = Typography.bodyEmphasis
+            case .italic: attributed[range].font = Typography.bodyItalic
+            case .code: attributed[range].font = Typography.mono
+            case .strikethrough: attributed[range].strikethroughStyle = .single
+            }
+        }
 
         for link in inlineLinks {
             guard let swiftRange = Range(link.range, in: content),

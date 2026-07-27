@@ -580,7 +580,7 @@ struct MessageRow: View {
         HStack(alignment: .top, spacing: Space.xs) {
             if entry.showsHeader {
                 Button(action: onOpenAuthor) {
-                    AvatarView(name: entry.row.displayName, picture: entry.row.authorPicture)
+                    AvatarView(name: entry.row.displayName, picture: entry.row.authorPicture, pubkey: entry.row.pubkey)
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("\(entry.row.displayName)'s profile")
@@ -717,15 +717,12 @@ struct MessageRow: View {
                 .font(Typography.secondary.italic())
                 .foregroundStyle(Palette.subtext.opacity(0.7))
         } else {
-            // Rich content (Buzz kind 40002) renders as its plain fallback for
-            // now; a real renderer is later polish. The fallback rule is what
-            // keeps the app whole on relays that never send it.
             let text = entry.row.displayContent
             if !text.isEmpty {
                 // Linkified: a designers community trades in links, and dead
                 // URLs were the first papercut in every share. Tapping opens
                 // Safari through the standard openURL path.
-                Text("\(Text(MessageLinks.attributed(text, mentionNames: mentionNames)))\(editedMarker)")
+                Text("\(Text(MessageLinks.attributed(entry.row.content, mentionNames: mentionNames)))\(editedMarker)")
                     .font(Typography.body)
                     .foregroundStyle(Palette.text)
                     // Light text on a dark ground reads thinner than it is and
