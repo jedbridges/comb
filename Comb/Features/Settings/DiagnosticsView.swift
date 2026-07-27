@@ -24,6 +24,7 @@ struct DiagnosticsView: View {
                         .font(Typography.secondary)
                         .foregroundStyle(Palette.subtext)
                 }
+                .combRows()
             } else {
                 Section("Recent activity") {
                     ForEach(buffer.entries.reversed()) { entry in
@@ -44,10 +45,10 @@ struct DiagnosticsView: View {
                         .padding(.vertical, Space.hairline)
                     }
                 }
+                .combRows()
             }
         }
-        .scrollContentBackground(.hidden)
-        .background(Palette.backgroundGradient.ignoresSafeArea())
+        .combForm()
         .navigationTitle("Diagnostics")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {

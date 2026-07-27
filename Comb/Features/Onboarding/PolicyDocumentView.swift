@@ -58,7 +58,10 @@ struct PolicyDocumentView: View {
                     .padding(.top, Space.sm)
             case .bullet(let text):
                 HStack(alignment: .firstTextBaseline, spacing: Space.sm) {
-                    Text("•").foregroundStyle(.secondary)
+                    // Not `.secondary`, which resolves to a system grey and
+                    // fights the gradient behind it. Every other run in this
+                    // view takes its colour from the palette.
+                    Text("•").foregroundStyle(Palette.subtext)
                     Text(PolicyDocumentView.inline(text))
                 }
                 .font(Typography.body)

@@ -2,6 +2,24 @@ import CombCore
 import SwiftUI
 import UniformTypeIdentifiers
 
+/// Whether a copy of an account has ever left this device, per community.
+///
+/// Not a security control and not a promise: it records that the key was put
+/// on the clipboard, which is the last moment Comb can see. Whether it reached
+/// a password manager is the reader's business and unknowable from here, so
+/// nothing in the UI claims more than "you have copied this".
+enum AccountBackup {
+    private static func key(host: String) -> String { "accountCopied.\(host)" }
+
+    static func hasCopied(host: String) -> Bool {
+        UserDefaults.standard.bool(forKey: key(host: host))
+    }
+
+    static func recordCopy(host: String) {
+        UserDefaults.standard.set(true, forKey: key(host: host))
+    }
+}
+
 /// The account and community screen, and the one place in the primary UI where
 /// the technical vocabulary is allowed to surface, behind a disclosure.
 ///
@@ -22,6 +40,10 @@ struct SettingsView: View {
     /// Set when a name change could not be published, so the footer can say so
     /// instead of the field quietly looking saved.
     @State private var nameUndelivered = false
+    /// Whether a copy of this account has ever been taken off the device.
+    /// Seeded on appear and flipped the moment it happens, so the prompt below
+    /// the name field disappears without needing the screen reopened.
+    @State private var hasCopiedAccount = true
 
     private var host: String { session.relayURL.host ?? "" }
     /// The subdomain reads as the community; the full host is the address.
@@ -44,9 +66,20 @@ struct SettingsView: View {
                         .onChange(of: displayName) { _, _ in nameUndelivered = false }
 
                     NavigationLink {
-                        RecoveryCodeView(host: host)
+                        RecoveryCodeView(host: host, onCopied: { hasCopiedAccount = true })
                     } label: {
-                        Label("Private key", systemImage: "key.horizontal")
+                        // Named for the job, not for the object. Someone who
+                        // was told at join that the account lives only on this
+                        // iPhone comes looking for a way to keep it, and
+                        // "Private key" is the wrong end of that sentence for
+                        // a reader who never asked to learn the word. The
+                        // vocabulary is still there, inside, where whoever
+                        // wants it will find it.
+                        //
+                        // Two words, like "Blocked" and "Diagnostics". The
+                        // section header already says whose account it is, so
+                        // repeating it here only made this row the odd long one.
+                        Label("Save a copy", systemImage: "key.horizontal")
                     }
                 } header: {
                     Text("Your account")
@@ -58,6 +91,16 @@ struct SettingsView: View {
                     // machine they copied it from.
                     VStack(alignment: .leading, spacing: Space.xs) {
                         Text("Your name is what people see in channels. Comb keeps this account on this iPhone: it is never copied to iCloud or included in a backup.")
+
+                        // Stated once, plainly, and never again once it is
+                        // done. The join screen says what happens if the phone
+                        // is lost; this is the one place that can do anything
+                        // about it, so it is the one place that mentions it.
+                        // Not a badge and not a nag: a sentence that stops
+                        // being true and then stops being shown.
+                        if !hasCopiedAccount {
+                            Text("You have not saved a copy of this account yet.")
+                        }
 
                         // Added below rather than swapped in. The privacy
                         // sentence is most worth reading at exactly the moment
@@ -183,13 +226,13 @@ struct SettingsView: View {
                 }
                 .combRows()
             }
-            .scrollContentBackground(.hidden)
-            .background(Palette.backgroundGradient.ignoresSafeArea())
+            .combForm()
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
             .task {
                 let profile = try? session.store.profile(pubkey: session.me.hex)
                 displayName = profile?.displayName ?? ""
+                hasCopiedAccount = AccountBackup.hasCopied(host: host)
             }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -218,6 +261,10 @@ struct SettingsView: View {
 /// The identity, in exportable form, shown only on explicit request.
 struct RecoveryCodeView: View {
     let host: String
+    /// Fired when the key reaches the clipboard, which is the last moment this
+    /// app can observe. Revealing is not enough: looking at something is not
+    /// keeping it.
+    var onCopied: () -> Void = {}
 
     @State private var isRevealed = false
     @State private var didCopy = false
@@ -253,6 +300,8 @@ struct RecoveryCodeView: View {
                             [[UTType.plainText.identifier: key.nsec]],
                             options: [.expirationDate: Date().addingTimeInterval(60)]
                         )
+                        AccountBackup.recordCopy(host: host)
+                        onCopied()
                         withAnimation(Motion.instant) { didCopy = true }
                         Task {
                             try? await Task.sleep(for: .seconds(2))
@@ -285,7 +334,11 @@ struct RecoveryCodeView: View {
             }
         }
         .combForm()
-        .navigationTitle("Private key")
+        // Matches the row that opens it. Tapping "Save a copy" and landing on
+        // a screen called "Private key" made the reader wonder whether they
+        // had arrived somewhere else. The section headers below still name the
+        // thing exactly, which is where that vocabulary belongs.
+        .navigationTitle("Save a copy")
         .navigationBarTitleDisplayMode(.inline)
     }
 }

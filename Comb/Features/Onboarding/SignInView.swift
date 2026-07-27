@@ -19,6 +19,9 @@ struct SignInView: View {
     /// memory is the fallback, so it lives behind a disclosure rather than
     /// facing every returning user with two intimidating fields.
     @State private var showsManual = false
+    /// Grows with Dynamic Type, so the pairing badge stays proportional to the
+    /// row it introduces.
+    @ScaledMetric(relativeTo: .subheadline) private var qrBadgeSize: CGFloat = Sizing.avatar * 1.2
 
     private enum Field { case url, key }
 
@@ -33,9 +36,12 @@ struct SignInView: View {
                 } label: {
                     HStack(spacing: Space.md) {
                         Image(systemName: "qrcode")
-                            .font(.system(size: Sizing.avatar * 0.7))
+                            // Fraction of its own frame, and the frame scales,
+                            // so the glyph keeps pace with the two lines of
+                            // text beside it instead of shrinking against them.
+                            .font(.system(size: qrBadgeSize * 0.583))
                             .foregroundStyle(Palette.chartreuse)
-                            .frame(width: Sizing.avatar * 1.2, height: Sizing.avatar * 1.2)
+                            .frame(width: qrBadgeSize, height: qrBadgeSize)
 
                         VStack(alignment: .leading, spacing: Space.xxs) {
                             Text("Scan the code from Buzz")
@@ -102,10 +108,10 @@ struct SignInView: View {
                 }
                 .foregroundStyle(Palette.subtext)
             }
+            .combRows()
             #endif
         }
-        .scrollContentBackground(.hidden)
-        .background(Palette.backgroundGradient.ignoresSafeArea())
+        .combForm()
         .scrollDismissesKeyboard(.interactively)
         .safeAreaInset(edge: .bottom) {
             // Only present once the manual path is open. Scanning has its own

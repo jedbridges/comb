@@ -2,8 +2,8 @@ import Foundation
 
 /// Turns a direct message channel into something a person can recognise.
 ///
-/// Buzz names DM channels on the server with a placeholder — `dm`,
-/// `Direct Message`, or `Group DM (3)` — and expects every client to relabel
+/// Buzz names DM channels on the server with a placeholder (`dm`,
+/// `Direct Message`, or `Group DM (3)`) and expects every client to relabel
 /// them from the roster. Without this a DM shows up in the channel list as a
 /// row literally called "dm", which is how Comb rendered them before.
 ///

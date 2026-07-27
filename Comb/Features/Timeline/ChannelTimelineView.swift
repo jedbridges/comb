@@ -659,6 +659,7 @@ struct MessageRow: View {
 
             Spacer(minLength: 0)
         }
+        .contentShape(.rect)
         // On the whole row, not on the text alone. UIKit lifts the subtree the
         // menu is attached to into a preview positioned by its own bounds: from
         // inside this HStack it lost the avatar column's leading offset and the

@@ -497,4 +497,48 @@ struct ReactionWithdrawalTests {
             target: message.id, emoji: "🐝", pubkey: mine.pubkey
         ) == nil)
     }
+
+    // MARK: - Search
+
+    @Test("search ignores a deletion published by someone else")
+    func searchIgnoresForeignDeletion() async throws {
+        // Deletion is authorised at read time, where the original author is
+        // known: a kind 5 only counts from the author, and a moderator removal
+        // arrives as kind 9005. Search used to test only that *a* deletion
+        // existed, which let any relay-carried kind 5 suppress a stranger's
+        // message from search while it stayed visible everywhere else.
+        let store = try EventStore()
+        let author = try Fixture(name: "Author")
+        let stranger = try Fixture(name: "Stranger")
+        let message = try author.message("findable needle", at: 1000)
+
+        _ = try await store.ingest([
+            message,
+            try stranger.event(.deletion, "", tags: [["e", message.id]], at: 1001),
+        ])
+
+        #expect(try store.search("needle").map(\.id) == [message.id])
+    }
+
+    @Test("search honours a deletion from the author and a moderator")
+    func searchHonoursRealDeletions() async throws {
+        let author = try Fixture(name: "Author")
+        let moderator = try Fixture(name: "Moderator")
+
+        let own = try EventStore()
+        let mine = try author.message("own needle", at: 1000)
+        _ = try await own.ingest([
+            mine,
+            try author.event(.deletion, "", tags: [["e", mine.id]], at: 1001),
+        ])
+        #expect(try own.search("needle").isEmpty)
+
+        let moderated = try EventStore()
+        let theirs = try author.message("moderated needle", at: 1000)
+        _ = try await moderated.ingest([
+            theirs,
+            try moderator.event(.groupDeleteEvent, "", tags: [["h", "room-1"], ["e", theirs.id]], at: 1001),
+        ])
+        #expect(try moderated.search("needle").isEmpty)
+    }
 }

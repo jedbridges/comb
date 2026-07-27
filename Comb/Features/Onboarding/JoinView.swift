@@ -121,8 +121,8 @@ struct JoinView: View {
                 HStack(spacing: Space.sm) {
                     // Once it parses, the token stops being a field and becomes
                     // one settled line. Left as three lines of a scrolled text
-                    // view, a perfectly good invite showed its own tail —
-                    // `…UF-BIn0.9bU4Gscg…` — which reads as a link that arrived
+                    // view, a perfectly good invite showed its own tail
+                    // (`…UF-BIn0.9bU4Gscg…`), which reads as a link that arrived
                     // broken. Two people reported exactly that about links that
                     // were fine. Elided from the middle, the same way the
                     // timeline shortens a long URL, it reads as deliberate.
@@ -142,7 +142,13 @@ struct JoinView: View {
                         }
                         .font(Typography.actionSecondary)
                         .buttonStyle(.plain)
-                        .foregroundStyle(Palette.chartreuse)
+                        // Not chartreuse: once an invite is in, the accent
+                        // belongs to Join, and wearing it here put the same
+                        // emphasis on undoing the paste as on completing it.
+                        // Not subtext either, which is the colour of the
+                        // elided invite sitting next to it: matching that made
+                        // the only control in the row read as another label.
+                        .foregroundStyle(Palette.text)
                     } else {
                         TextField("Paste your invite", text: $model.inviteText, axis: .vertical)
                             .lineLimit(1...3)
@@ -181,7 +187,14 @@ struct JoinView: View {
                         text: "This invite expired on \(expiredOn.formatted(date: .abbreviated, time: .omitted)). Ask for a fresh one."
                     )
                 } else if let host = model.parsedHost {
-                    InlineNotice(kind: .success, text: host)
+                    // Sealed only once the host has actually answered. The
+                    // same glyph on the card above means "this is a real
+                    // relay, and it is reachable"; showing it the instant a
+                    // string parses vouched for hosts nobody had contacted,
+                    // and could sit on screen while the card still said
+                    // "Checking…". Until then this is a plain statement of
+                    // where the invite points.
+                    InlineNotice(kind: model.isVerified ? .success : .info, text: host)
                 } else if !model.inviteText.isEmpty {
                     Text("Paste the whole link, including the https:// part.")
                 } else if let communityName {
@@ -262,25 +275,63 @@ struct JoinView: View {
         // wants to sit near the title that asks it, not float in the middle of
         // an empty field.
         .contentMargins(.top, Space.xxs, for: .scrollContent)
-        .scrollContentBackground(.hidden)
-        .background(Palette.backgroundGradient.ignoresSafeArea())
+        .combForm()
         .scrollDismissesKeyboard(.interactively)
         .safeAreaInset(edge: .bottom) {
-            PrimaryButton(
-                title: model.isJoining ? "Joining…" : model.joinLabel,
-                isBusy: model.isJoining,
-                isDisabled: !model.canJoin
-            ) {
-                focus = nil
-                Task {
-                    if let session = await model.join() {
-                        joined += 1
-                        onJoined(session)
+            VStack(spacing: Space.xs) {
+                // Fine print, and deliberately shaped like it. Joining mints an
+                // account that exists nowhere else, and a reader who learns
+                // that afterwards has already been given something they did not
+                // know they were taking on. So it is said before the tap, and
+                // only when one is actually about to be made: a rejoin reuses
+                // the account already here.
+                //
+                // Pinned to the button rather than placed in the form, where it
+                // was tried both as a footer and as its own titled section. In
+                // the scroll content it either drifted between two headers with
+                // nothing to belong to, or, once given a header and a card, it
+                // took on the weight of a step to complete. Neither is what a
+                // disclosure is. Here it cannot be scrolled away from and it
+                // reads as the small print above the button it qualifies, which
+                // is the thing it actually modifies.
+                //
+                // Subtext and caption, no glyph, no fill. The ethos asks for
+                // the limitation to be stated, not for it to be alarming: a
+                // warning badge on a screen whose whole purpose is to say yes
+                // argues with the reader instead of informing them.
+                //
+                // The loss is stated without being called certain. The key can
+                // be exported and pasted into any Nostr client, so a flat "you
+                // lose the account" would overstate a limitation the app ships
+                // a remedy for, which is its own kind of dishonesty.
+                if model.createsNewAccount {
+                    Text("Joining creates an account that lives only on this iPhone. Save a copy from Settings, or losing the iPhone loses the account.")
+                        .font(Typography.caption)
+                        .foregroundStyle(Palette.subtext)
+                        .multilineTextAlignment(.center)
+                        .transition(.opacity)
+                }
+
+                PrimaryButton(
+                    title: model.isJoining ? "Joining…" : model.joinLabel,
+                    isBusy: model.isJoining,
+                    isDisabled: !model.canJoin
+                ) {
+                    focus = nil
+                    Task {
+                        if let session = await model.join() {
+                            joined += 1
+                            onJoined(session)
+                        }
                     }
                 }
             }
             .padding(.horizontal, Space.lg)
             .padding(.bottom, Space.xs)
+            // Its own, because the Form's animation for the same value no
+            // longer reaches this: the disclosure sits in the inset now, which
+            // is a sibling of the Form rather than a row inside it.
+            .animation(Motion.standard, value: model.createsNewAccount)
         }
         .sensoryFeedback(Haptics.milestone, trigger: joined)
         // Paired with the message on screen, never alone. An invite that did
@@ -336,11 +387,21 @@ private struct CommunityCard: View {
     let isVerifying: Bool
     let isVerified: Bool
 
+    /// Scaled, so the badge grows with the name beside it. Sized from a token
+    /// and grown by Dynamic Type, the same way `AvatarView` does it: a fixed
+    /// square next to text at the largest accessibility sizes reads as a
+    /// rendering fault rather than as a mark.
+    @ScaledMetric(relativeTo: .subheadline) private var iconSize: CGFloat = Sizing.avatar * 1.6
+
     var body: some View {
         HStack(spacing: Space.md) {
             iconView
-                .frame(width: Sizing.avatar * 1.6, height: Sizing.avatar * 1.6)
+                .frame(width: iconSize, height: iconSize)
                 .clipShape(.rect(cornerRadius: Radii.card))
+                // Decorative. The community's name sits beside it and says the
+                // same thing, so announcing an unlabelled image here would
+                // only make VoiceOver read the card twice.
+                .accessibilityHidden(true)
                 .overlay(
                     RoundedRectangle(cornerRadius: Radii.card)
                         .strokeBorder(Palette.glyphHairline, lineWidth: Stroke.hairline)
@@ -406,7 +467,9 @@ private struct CommunityCard: View {
         ZStack {
             Palette.glyphLift
             Image(systemName: "person.3.fill")
-                .font(.system(size: Sizing.avatar * 0.6))
+                // Kept as a fraction of the badge it sits in, so the mark and
+                // its container grow together.
+                .font(.system(size: iconSize * 0.375))
                 .foregroundStyle(Palette.glyphMark)
         }
     }
@@ -430,6 +493,11 @@ final class JoinModel {
     /// True while the host is being reached for the first time after a paste,
     /// so the card can show it is confirming rather than looking empty.
     private(set) var isVerifying = false
+    /// Whether joining will mint a new account rather than reuse the one this
+    /// device already holds for the host. Creating a key that only exists here
+    /// is the single most consequential thing this screen does, and it used to
+    /// happen without saying so.
+    private(set) var createsNewAccount = false
     /// Whether the host answered as a real relay. A verified badge is only
     /// honest once this is true.
     private(set) var isVerified = false
@@ -494,8 +562,10 @@ final class JoinModel {
 
         guard let invite else {
             isVerifying = false
+            createsNewAccount = false
             return
         }
+        createsNewAccount = !KeychainStore.exists(host: invite.host)
         verify(invite)
     }
 

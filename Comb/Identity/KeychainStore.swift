@@ -56,6 +56,19 @@ enum KeychainStore {
         }
     }
 
+    /// Whether this device already holds a key for a community, without
+    /// reading it back. Asked before a join, to know whether the flow is about
+    /// to mint an account or reuse the one already here.
+    static func exists(host: String) -> Bool {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: host,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+        ]
+        return SecItemCopyMatching(query as CFDictionary, nil) == errSecSuccess
+    }
+
     static func delete(host: String) throws {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,

@@ -361,7 +361,9 @@ public extension EventStore {
                 LEFT JOIN profile p ON p.pubkey = e.pubkey
                 WHERE e.kind = :kind
                   AND e.content LIKE :needle ESCAPE '\\'
-                  AND NOT EXISTS (SELECT 1 FROM deletion d WHERE d.target_id = e.id)
+                  AND NOT EXISTS (SELECT 1 FROM deletion d
+                                  WHERE d.target_id = e.id
+                                    AND (d.kind = 9005 OR d.deleted_by = e.pubkey))
                   AND NOT EXISTS (SELECT 1 FROM blocked b WHERE b.pubkey = e.pubkey)
                 ORDER BY e.created_at DESC
                 LIMIT :limit

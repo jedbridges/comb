@@ -10,7 +10,7 @@ import Foundation
 /// The voice rule these follow, from the design brief: name what happened and
 /// what it means for the reader, in the words they would use. Never apologise,
 /// never exclaim. In particular, never say a thing "did not reach the
-/// community" — a community is people, not an address, and inventing a soft
+/// community": a community is people, not an address, and inventing a soft
 /// noun for the server is the protocol leaking under a friendlier name. Say
 /// what the reader can observe: nobody else has it, the message is unchanged,
 /// it is still there.

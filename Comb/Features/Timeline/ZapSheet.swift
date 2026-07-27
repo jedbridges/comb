@@ -56,10 +56,10 @@ struct ZapSheet: View {
                         Label(message, systemImage: "exclamationmark.triangle.fill")
                             .foregroundStyle(Palette.danger)
                     }
+                    .combRows()
                 }
             }
-            .scrollContentBackground(.hidden)
-            .background(Palette.backgroundGradient.ignoresSafeArea())
+            .combForm()
             .navigationTitle("Zap")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
