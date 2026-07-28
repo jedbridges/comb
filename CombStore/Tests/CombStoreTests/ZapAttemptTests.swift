@@ -381,3 +381,70 @@ struct RelayProvenanceTests {
         #expect(result.rejected.first?.reason == .notFromRelay)
     }
 }
+
+/// Membership has to reach the screen through the observation, not through the
+/// value the screen was pushed with.
+@Suite("Observed membership")
+struct ObservedMembershipTests {
+    @Test("the timeline snapshot answers whether this account is a member")
+    func snapshotCarriesMembership() async throws {
+        let store = try EventStore()
+        let relay = try Fixture(name: "relay")
+        let me = try Fixture(name: "me")
+        let other = try Fixture(name: "Ada")
+
+        _ = try await store.ingest([
+            try relay.event(
+                .groupMetadata, #"{"name":"General"}"#, tags: [["d", "room-1"]], at: 900
+            ),
+            try other.message("hello", at: 1_000),
+            // A roster this account is not on.
+            try relay.event(
+                .groupMembers, "",
+                tags: [["d", "room-1"], ["p", other.pubkey, "", "owner"]],
+                at: 1_100
+            ),
+        ])
+
+        var snapshot = try await firstSnapshot(store, me: me.pubkey)
+        #expect(snapshot.isMember == false)
+
+        // Joining is the relay adding you to the roster it publishes.
+        _ = try await store.ingest([
+            try relay.event(
+                .groupMembers, "",
+                tags: [
+                    ["d", "room-1"],
+                    ["p", other.pubkey, "", "owner"],
+                    ["p", me.pubkey, "", "member"],
+                ],
+                at: 1_200
+            ),
+        ])
+
+        snapshot = try await firstSnapshot(store, me: me.pubkey)
+        #expect(snapshot.isMember == true)
+    }
+
+    /// A thread is only reachable from inside its channel, so the screen above
+    /// it already answered. Nil rather than a defaulted true.
+    @Test("a thread snapshot does not claim to know")
+    func threadDoesNotAnswer() async throws {
+        let store = try EventStore()
+        let author = try Fixture(name: "Ada")
+        let root = try author.message("opener", at: 1_000)
+        _ = try await store.ingest([root])
+
+        for try await value in store.observeThread(root: root.id, me: author.pubkey) {
+            #expect(value.isMember == nil)
+            break
+        }
+    }
+
+    private func firstSnapshot(_ store: EventStore, me: String) async throws -> TimelineSnapshot {
+        for try await value in store.observeTimeline(channel: "room-1", limit: 50, me: me) {
+            return value
+        }
+        throw CancellationError()
+    }
+}

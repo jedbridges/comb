@@ -24,6 +24,15 @@ struct ChannelTimelineView: View {
     @State private var zappersOf: ZappersTarget?
     @State private var isLeaving = false
     @State private var isJoining = false
+    /// Bumped when membership turns true, so joining is felt as well as seen.
+    @State private var joins = 0
+
+    /// Live where the observation has answered, and the pushed value until it
+    /// has. The pushed `channel` is frozen at the moment the row was tapped, so
+    /// reading it alone meant a successful join changed nothing on screen.
+    private var isMember: Bool {
+        model.snapshot.isMember ?? channel.isMember
+    }
     @FocusState private var isComposing: Bool
     @State private var isAwayFromBottom = false
     @State private var arrivalsWhileAway = 0
@@ -175,12 +184,16 @@ struct ChannelTimelineView: View {
         // put the tap seconds after the gesture that earned it, and a failed
         // send has its own reporting.
         .sensoryFeedback(Haptics.send, trigger: sends)
+        .sensoryFeedback(Haptics.milestone, trigger: joins)
+        .onChange(of: isMember) { was, now in
+            if !was, now { joins += 1 }
+        }
         .safeAreaInset(edge: .bottom) {
             // A channel this account is not on the roster of. The relay sends
             // metadata for open channels to people who are not in them, so the
             // list has always been able to reach rooms like this; until now it
             // offered a compose bar whose send the relay would refuse.
-            if !channel.isMember {
+            if !isMember {
                 joinBar
             } else {
             ComposeBar(
@@ -282,8 +295,13 @@ struct ChannelTimelineView: View {
             }
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
-                    Button("Leave channel", systemImage: "rectangle.portrait.and.arrow.right", role: .destructive) {
-                        isLeaving = true
+                    // Only where there is something to leave. It used to be
+                    // offered on a channel you were reading as a non-member,
+                    // directly above a button asking you to join it.
+                    if isMember {
+                        Button("Leave channel", systemImage: "rectangle.portrait.and.arrow.right", role: .destructive) {
+                            isLeaving = true
+                        }
                     }
                 } label: {
                     Image(systemName: "ellipsis")
@@ -619,7 +637,7 @@ struct ChannelTimelineView: View {
             // Saying "nothing here yet" there would be inventing a fact, and
             // "say the first thing" would be inviting something the send would
             // be refused for.
-            if channel.isMember {
+            if isMember {
                 Text("Nothing here yet")
                     .textRole(.bodyStrong)
                 Text("Say the first thing.")

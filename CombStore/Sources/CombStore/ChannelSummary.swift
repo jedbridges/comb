@@ -229,17 +229,27 @@ public struct TimelineSnapshot: Sendable, Equatable {
     /// they were sent to. Separate from `zaps` on purpose: these are claims
     /// about a payment Comb cannot observe, so they are never added to a total.
     public let pendingZaps: [String: ZapAttempt]
+    /// Whether this account is on the channel's roster, as of this snapshot.
+    ///
+    /// Nil where the question does not apply, which is a thread: a thread is
+    /// only reachable from inside its channel, so the screen above it already
+    /// answered. Deliberately not defaulted to true. A screen that assumed
+    /// membership it had not been told about is the same mistake as a role
+    /// defaulting to member.
+    public let isMember: Bool?
 
     public init(
         rows: [TimelineRow],
         reactions: [String: [ReactionSummary]],
         zaps: [String: ZapSummary] = [:],
-        pendingZaps: [String: ZapAttempt] = [:]
+        pendingZaps: [String: ZapAttempt] = [:],
+        isMember: Bool? = nil
     ) {
         self.rows = rows
         self.reactions = reactions
         self.zaps = zaps
         self.pendingZaps = pendingZaps
+        self.isMember = isMember
     }
 
     public static let empty = TimelineSnapshot(rows: [], reactions: [:])
@@ -269,7 +279,7 @@ public extension EventStore {
         ValueObservation
             .tracking { db -> TimelineSnapshot in
                 let rows = try Self.fetchTimeline(db, channel: channel, before: nil, limit: limit)
-                return try Self.snapshot(db, rows: rows, me: me)
+                return try Self.snapshot(db, rows: rows, me: me, channel: channel)
             }
             .removeDuplicates()
             .values(in: reader)
@@ -297,10 +307,24 @@ public extension EventStore {
     private static func snapshot(
         _ db: Database,
         rows: [TimelineRow],
-        me: String?
+        me: String?,
+        channel: String? = nil
     ) throws -> TimelineSnapshot {
         let ids = rows.map(\.id)
         let attempts = try fetchPendingZapAttempts(db)
+
+        // Read here rather than left to the screen's own copy of the channel.
+        // A pushed ChannelSummary is a value frozen when the row was tapped, so
+        // joining from inside a channel changed nothing until you backed out
+        // and came in again. Reading it in the observation means the answer
+        // arrives the same way every other change to the screen does, and it
+        // covers being added by somebody else while the screen is open.
+        let isMember = try channel.map { id in
+            try Bool.fetchOne(db, sql: """
+                SELECT EXISTS(SELECT 1 FROM channel_member
+                               WHERE channel_id = ? AND pubkey = ?)
+                """, arguments: [id, me ?? ""]) ?? false
+        }
 
         return TimelineSnapshot(
             rows: rows,
@@ -313,7 +337,8 @@ public extension EventStore {
                     attempt.targetID.map { ($0, attempt) }
                 },
                 uniquingKeysWith: { first, _ in first }
-            )
+            ),
+            isMember: isMember
         )
     }
 
