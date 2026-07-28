@@ -15,7 +15,7 @@ import GRDB
 enum Schema {
     /// Bump when any projection's shape or meaning changes. On next open, every
     /// projection table is dropped and replayed from `event`.
-    static let projectionVersion = 8
+    static let projectionVersion = 9
 
     static var migrator: DatabaseMigrator {
         var migrator = DatabaseMigrator()

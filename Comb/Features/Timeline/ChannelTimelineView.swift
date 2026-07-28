@@ -421,14 +421,24 @@ struct ChannelTimelineView: View {
     /// that out.
     private var joinBar: some View {
         VStack(spacing: Space.xs) {
-            Text("You are not in this channel yet.")
-                .textRole(.meta)
-            PrimaryButton(
-                title: isJoining ? "Joining\u{2026}" : "Join channel",
-                isBusy: isJoining,
-                isDisabled: isJoining
-            ) {
-                Task { await attemptJoin() }
+            // An invite-only channel is a different sentence, not a disabled
+            // button. The relay refuses a join to one outright, so offering the
+            // action would be offering a rejection.
+            if channel.isPrivate {
+                Text("This channel is invite only. Someone in it has to add you.")
+                    .textRole(.meta)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: .infinity)
+            } else {
+                Text("You are not in this channel yet.")
+                    .textRole(.meta)
+                PrimaryButton(
+                    title: isJoining ? "Joining\u{2026}" : "Join channel",
+                    isBusy: isJoining,
+                    isDisabled: isJoining
+                ) {
+                    Task { await attemptJoin() }
+                }
             }
         }
         .padding(.horizontal, Space.lg)

@@ -167,3 +167,122 @@ struct ZapCapabilityTests {
         #expect(profile == .yes)
     }
 }
+
+/// Roles, and the reason they were empty strings until now.
+@Suite("Channel roles")
+struct ChannelRoleTests {
+    /// Seeds a channel whose roster is exactly `people`, each with the role
+    /// given beside them.
+    ///
+    /// Every member gets a kind 0 as well, and that is load-bearing rather than
+    /// scenery: `members(of:)` resolves each pubkey through `profile(pubkey:)`,
+    /// which returns nil for someone with no profile and no messages. Without
+    /// it the roster comes back empty and an assertion on `first?.role` passes
+    /// because there is no first, not because the role is right.
+    private func seed(_ people: [(Fixture, String?)]) async throws -> EventStore {
+        let store = try EventStore()
+        let relay = try Fixture(name: "relay")
+
+        var events = [
+            try relay.event(
+                .groupMetadata, #"{"name":"General"}"#, tags: [["d", "room-1"]], at: 900
+            ),
+        ]
+        var roster: [[String]] = [["d", "room-1"]]
+
+        for (person, role) in people {
+            events.append(try person.event(.metadata, "{\"name\":\"\(person.name)\"}", at: 800))
+            roster.append(role.map { ["p", person.pubkey, "", $0] } ?? ["p", person.pubkey])
+        }
+
+        events.append(try relay.event(.groupMembers, "", tags: roster, at: 1_000))
+        _ = try await store.ingest(events)
+        return store
+    }
+
+    /// The bug this suite exists for. NIP-29 spells a roster entry
+    /// ["p", pubkey, relay_url, role], and Buzz sends the relay slot empty, so
+    /// reading index 2 stored "" for every member of every channel.
+    @Test("the role is read from the fourth element, not the third")
+    func readsRoleFromTheRightIndex() async throws {
+        let owner = try Fixture(name: "Ada")
+        let plain = try Fixture(name: "Bob")
+        let store = try await seed([(owner, "owner"), (plain, "member")])
+
+        let members = try store.members(of: "room-1")
+        #expect(members.count == 2)
+        #expect(members.first(where: { $0.pubkey == owner.pubkey })?.role == .owner)
+        #expect(members.first(where: { $0.pubkey == plain.pubkey })?.role == .member)
+    }
+
+    /// A relay that publishes no roles is saying it does not publish them. That
+    /// is not the same answer as "everyone is an ordinary member", and
+    /// flattening the two would hide actions from people who may be owners.
+    @Test("a roster with no roles yields nil, never a guess")
+    func missingRoleIsUnknown() async throws {
+        let someone = try Fixture(name: "Ada")
+        let store = try await seed([(someone, nil)])
+
+        let members = try store.members(of: "room-1")
+        #expect(members.count == 1)
+        #expect(members.first?.role == nil)
+    }
+
+    /// The relay slot is empty, not absent, in a roster that carries no role.
+    @Test("an empty role is not mistaken for one")
+    func emptyRoleIsNil() async throws {
+        let someone = try Fixture(name: "Ada")
+        let store = try await seed([(someone, "")])
+
+        let members = try store.members(of: "room-1")
+        #expect(members.count == 1)
+        #expect(members.first?.role == nil)
+    }
+
+    /// The set is the relay's to extend, so an unrecognised value must read as
+    /// "no answer" rather than being coerced into one Comb knows.
+    @Test("a role Comb has never heard of is unknown")
+    func unknownRoleIsNil() async throws {
+        let someone = try Fixture(name: "Ada")
+        let store = try await seed([(someone, "archivist")])
+
+        let members = try store.members(of: "room-1")
+        #expect(members.count == 1)
+        #expect(members.first?.role == nil)
+    }
+
+    @Test("the viewer's own role reaches the channel summary")
+    func ownRoleOnTheSummary() async throws {
+        let me = try Fixture(name: "me")
+        let store = try await seed([(me, "admin")])
+
+        let summaries = try store.channelSummaries(me: me.pubkey)
+        let summary = try #require(summaries.first(where: { $0.id == "room-1" }))
+        #expect(summary.myRole == .admin)
+        #expect(summary.myRole?.isElevated == true)
+        #expect(summary.isMember)
+    }
+
+    @Test("owners and admins sort above the rest")
+    func elevatedFirst() async throws {
+        let owner = try Fixture(name: "Ada")
+        let plain = try Fixture(name: "Bob")
+        let store = try await seed([(plain, "member"), (owner, "owner")])
+
+        let members = try store.members(of: "room-1")
+        #expect(members.count == 2)
+        #expect(members.first?.pubkey == owner.pubkey)
+    }
+
+    /// The whole point of the version bump: an install whose rosters were
+    /// projected by the broken parser must end up with real roles, not "".
+    @Test("a projection rebuild re-derives roles from the log")
+    func rebuildRecoversRoles() async throws {
+        let owner = try Fixture(name: "Ada")
+        let store = try await seed([(owner, "owner")])
+
+        try await store.rebuildProjections()
+
+        #expect(try store.members(of: "room-1").first?.role == .owner)
+    }
+}

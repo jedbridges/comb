@@ -26,7 +26,7 @@ final class MentionComposer {
     }
 
     func loadCandidates() {
-        candidates = (try? store.members(of: channelID)) ?? []
+        candidates = (try? store.members(of: channelID))?.map(\.profile) ?? []
     }
 
     /// Offers matches for a trailing `@token`, and nothing otherwise.

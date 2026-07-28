@@ -171,7 +171,7 @@ struct MemberListView: View {
     let channelID: String
     let channelName: String
 
-    @State private var members: [ProfileSummary] = []
+    @State private var members: [ChannelMember] = []
     @State private var selected: ProfileTarget?
 
     var body: some View {
@@ -211,13 +211,24 @@ struct MemberListView: View {
         }
     }
 
-    private func row(_ member: ProfileSummary) -> some View {
+    private func row(_ member: ChannelMember) -> some View {
         HStack(spacing: Space.sm) {
             AvatarView(name: member.name, picture: member.picture, pubkey: member.pubkey)
             VStack(alignment: .leading, spacing: Space.hairline) {
-                Text(member.name)
-                    .textRole(.bodyStrong)
-                    .lineLimit(1)
+                HStack(spacing: Space.xs) {
+                    Text(member.name)
+                        .textRole(.bodyStrong)
+                        .lineLimit(1)
+                    // Owners and admins only. Nothing is drawn for an ordinary
+                    // member, and nothing at all when the relay publishes no
+                    // roles: a badge reading "Member" on a relay that never said
+                    // so would be Comb inventing the fact.
+                    if let role = member.role, role.isElevated {
+                        Text(role == .owner ? "Owner" : "Admin")
+                            .textRole(.meta, .brand)
+                            .combChip()
+                    }
+                }
                 if member.messageCount > 0 {
                     Text("\(member.messageCount) messages")
                         .textRole(.meta)
@@ -227,6 +238,10 @@ struct MemberListView: View {
         }
         .contentShape(.rect)
         .accessibilityElement(children: .combine)
+        .accessibilityLabel(
+            member.role.map { $0.isElevated ? "\(member.name), \($0.rawValue)" : member.name }
+                ?? member.name
+        )
     }
 }
 

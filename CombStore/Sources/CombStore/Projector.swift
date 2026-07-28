@@ -159,12 +159,24 @@ enum Projector {
         )
 
         for tag in event.tags where tag.first == "p" && tag.count > 1 {
+            // NIP-29 spells a roster entry ["p", pubkey, relay_url, role], so
+            // the role is the fourth element. This read index 2 and therefore
+            // stored the relay-url slot, which Buzz sends empty: every row held
+            // "" rather than a role. Nothing read the column, and the demo seed
+            // emits two-element tags, so the mistake was invisible from both
+            // directions.
+            //
+            // Left nullable on purpose. A relay that sends no role is saying it
+            // does not publish them, which is a different answer from "member"
+            // and must not be flattened into one.
+            let role = tag.count > 3 && !tag[3].isEmpty ? tag[3] : nil
+
             try db.execute(
                 sql: """
                     INSERT INTO channel_member (channel_id, pubkey, role) VALUES (?, ?, ?)
                     ON CONFLICT(channel_id, pubkey) DO UPDATE SET role = excluded.role
                     """,
-                arguments: [channelID, tag[1], tag.count > 2 ? tag[2] : nil]
+                arguments: [channelID, tag[1], role]
             )
         }
     }

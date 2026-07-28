@@ -2,6 +2,32 @@ import CombCore
 import Foundation
 import GRDB
 
+/// What someone is allowed to do in a channel, as the relay reports it.
+///
+/// NIP-29 puts the role in a roster entry's fourth element and says nothing
+/// about which values exist, so a relay may send a role Comb has never heard of,
+/// or none at all. Both are `unknown`, and `unknown` is not `member`: one is a
+/// relay declining to say, the other is an answer. Flattening them would mean
+/// hiding an action from someone who may well be an owner.
+public enum ChannelRole: String, Sendable, Equatable, Hashable {
+    case owner
+    case admin
+    case member
+    case guest
+    case bot
+
+    /// Parsed leniently, because the set is the relay's to extend.
+    public init?(stored: String?) {
+        guard let stored, let role = ChannelRole(rawValue: stored) else { return nil }
+        self = role
+    }
+
+    /// Whether this role may do the things NIP-29 gates on owner or admin.
+    /// Advisory only: the relay decides, and this is a guess made from a roster
+    /// that arrives on a historical query and may be minutes old.
+    public var isElevated: Bool { self == .owner || self == .admin }
+}
+
 /// One row of the channel list: metadata joined with activity.
 public struct ChannelSummary: Sendable, Equatable, Hashable, Identifiable {
     public let id: String
@@ -34,6 +60,15 @@ public struct ChannelSummary: Sendable, Equatable, Hashable, Identifiable {
     /// list has always held rooms this account cannot post in, with nothing
     /// saying so.
     public let isMember: Bool
+    /// This account's role here, or nil when the relay publishes no roles.
+    ///
+    /// Advisory. Roles arrive only on a historical query, so this is a snapshot,
+    /// and the relay is the only thing that actually enforces anything. Use it
+    /// to avoid offering what is certain to be refused, never as permission.
+    public let myRole: ChannelRole?
+    /// Whether the channel is invite only. Joining a private channel is refused
+    /// at the relay, so offering the button would be offering a rejection.
+    public let isPrivate: Bool
 
     public var hasUnread: Bool { unreadCount > 0 }
     public var hasMention: Bool { mentionCount > 0 }
@@ -85,7 +120,7 @@ public extension EventStore {
         // Correlated subqueries rather than joins: the channel count is small
         // (tens), and this keeps "latest message" unambiguous.
         let rows = try Row.fetchAll(db, sql: """
-            SELECT c.id, c.name, c.about, c.picture, c.is_dm,
+            SELECT c.id, c.name, c.about, c.picture, c.is_dm, c.is_private,
                    (SELECT COUNT(*) FROM channel_member m
                      WHERE m.channel_id = c.id)                       AS members,
                    (SELECT e.content FROM event e
@@ -131,7 +166,9 @@ public extension EventStore {
                                           AND (d.kind = 9005 OR d.deleted_by = e.pubkey))
                    )                                                  AS mentions,
                    EXISTS(SELECT 1 FROM channel_member m
-                           WHERE m.channel_id = c.id AND m.pubkey = :me) AS is_member
+                           WHERE m.channel_id = c.id AND m.pubkey = :me) AS is_member,
+                   (SELECT m.role FROM channel_member m
+                     WHERE m.channel_id = c.id AND m.pubkey = :me)        AS my_role
             FROM channel c
             -- A channel this account was removed from. The metadata and the
             -- messages stay in the log, because the log is append-only and they
@@ -174,7 +211,9 @@ public extension EventStore {
                 lastActivity: row["last_at"],
                 unreadCount: row["unread"] ?? 0,
                 mentionCount: row["mentions"] ?? 0,
-                isMember: row["is_member"] ?? false
+                isMember: row["is_member"] ?? false,
+                myRole: ChannelRole(stored: row["my_role"]),
+                isPrivate: row["is_private"] ?? false
             )
         }
     }
@@ -388,6 +427,22 @@ public struct ProfileSummary: Sendable, Equatable, Identifiable {
     public var canReceiveZaps: Bool { zapCapability == .yes }
 }
 
+/// Someone on a channel's roster, with the role they hold in it.
+///
+/// A separate type rather than a field on `ProfileSummary`, because a role is a
+/// fact about a person *in a channel*, and `ProfileSummary` is shared with the
+/// profile sheet, which has no channel in scope.
+public struct ChannelMember: Sendable, Equatable, Identifiable {
+    public let profile: ProfileSummary
+    public let role: ChannelRole?
+
+    public var id: String { profile.pubkey }
+    public var name: String { profile.name }
+    public var picture: String? { profile.picture }
+    public var pubkey: String { profile.pubkey }
+    public var messageCount: Int { profile.messageCount }
+}
+
 /// One search hit, with enough context to render a result row.
 public struct SearchResult: Sendable, Equatable, Identifiable {
     public let id: String
@@ -442,15 +497,28 @@ public extension EventStore {
     }
 
     /// The roster of a channel, most talkative first.
-    nonisolated func members(of channel: String) throws -> [ProfileSummary] {
-        let pubkeys: [String] = try reader.read { db in
-            try String.fetchAll(db, sql: """
-                SELECT pubkey FROM channel_member WHERE channel_id = ?
-                """, arguments: [channel])
+    nonisolated func members(of channel: String) throws -> [ChannelMember] {
+        let rows: [(String, String?)] = try reader.read { db in
+            try Row.fetchAll(db, sql: """
+                SELECT pubkey, role FROM channel_member WHERE channel_id = ?
+                """, arguments: [channel]).map { ($0["pubkey"], $0["role"]) }
         }
-        return try pubkeys
-            .compactMap { try profile(pubkey: $0) }
-            .sorted { $0.messageCount > $1.messageCount }
+
+        return try rows
+            .compactMap { pubkey, role in
+                try profile(pubkey: pubkey).map {
+                    ChannelMember(profile: $0, role: ChannelRole(stored: role))
+                }
+            }
+            // Whoever runs the room first, then the usual order. A roster is
+            // read to find someone to ask, and the answer is usually near the
+            // top of that hierarchy.
+            .sorted {
+                if $0.role?.isElevated != $1.role?.isElevated {
+                    return $0.role?.isElevated == true
+                }
+                return $0.profile.messageCount > $1.profile.messageCount
+            }
     }
 
     /// Searches message text already on this device.

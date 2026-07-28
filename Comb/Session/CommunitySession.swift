@@ -361,8 +361,14 @@ actor CommunitySession {
     /// Joins an open channel.
     ///
     /// Standard NIP-29 kind 9021. Open channels only: the relay rejects a join
-    /// request for a private one at ingest, and its refusal is the thing worth
-    /// showing, since Comb cannot tell the two apart from the metadata it holds.
+    /// request for a private one at ingest.
+    ///
+    /// The refusal is still shown verbatim, but it is now the second line of
+    /// defence rather than the first. An earlier version of this comment said
+    /// Comb could not tell an open channel from a private one, which was wrong:
+    /// the relay marks 39000 with a bare `private` tag, `projectChannel` has
+    /// always stored it, and it simply never reached a summary. The button is
+    /// no longer offered where the answer is already known to be no.
     ///
     /// The refetch matters for the same reason it does when creating. Joining
     /// changes the roster, and the roster is a relay-signed kind 39002 that is
