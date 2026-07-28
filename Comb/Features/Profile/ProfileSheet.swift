@@ -1,4 +1,5 @@
 import CombCore
+import CombNet
 import CombStore
 import SwiftUI
 
@@ -170,9 +171,14 @@ struct MemberListView: View {
     let session: CommunitySession
     let channelID: String
     let channelName: String
+    /// Whether this account may remove people. Read from the channel rather
+    /// than guessed here, and false only for a role known to be insufficient.
+    var mayModerate = false
 
     @State private var members: [ChannelMember] = []
     @State private var selected: ProfileTarget?
+    @State private var removing: ChannelMember?
+    @State private var removeFailure: String?
 
     var body: some View {
         Group {
@@ -208,6 +214,56 @@ struct MemberListView: View {
         }
         .sheet(item: $selected) { target in
             ProfileSheet(session: session, pubkey: target.pubkey)
+        }
+        .confirmationDialog(
+            "Remove \(removing?.name ?? "them") from \(channelName)?",
+            isPresented: Binding(
+                get: { removing != nil },
+                set: { if !$0 { removing = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Remove", role: .destructive) {
+                if let target = removing {
+                    Task { await remove(target) }
+                }
+                removing = nil
+            }
+        } message: {
+            Text("They stop receiving this channel. Anyone who can add people can put them back.")
+        }
+        .alert(
+            "Nothing changed",
+            isPresented: Binding(
+                get: { removeFailure != nil },
+                set: { if !$0 { removeFailure = nil } }
+            )
+        ) {
+            Button("OK", role: .cancel) { removeFailure = nil }
+        } message: {
+            Text(removeFailure ?? "")
+        }
+    }
+
+    /// Removes somebody, and reports what the roster says rather than what the
+    /// relay said. Buzz can accept a removal and then drop it in a layer whose
+    /// failures are only logged, so an acknowledgement is not evidence.
+    private func remove(_ member: ChannelMember) async {
+        do {
+            let changed = try await session.removeMember(member.pubkey, from: channelID)
+            if changed {
+                members = (try? session.store.members(of: channelID)) ?? members
+            } else {
+                removeFailure = "\(member.name) is still in this channel. The community accepted the request and did not act on it, which usually means this account cannot remove people here."
+            }
+        } catch let error as RelayError {
+            if case .publishRejected(let reason) = error, !reason.isEmpty {
+                removeFailure = reason
+            } else {
+                removeFailure = "\(member.name) is still in this channel."
+            }
+        } catch {
+            removeFailure = "\(member.name) is still in this channel."
         }
     }
 

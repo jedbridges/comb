@@ -412,6 +412,96 @@ actor CommunitySession {
         await refreshGroupState()
     }
 
+    // MARK: - Moderation
+    //
+    // Everything below is gated by the relay on a role, and none of it is
+    // enforced here. `ChannelSummary.mayModerate` decides whether to offer an
+    // action, never whether it is permitted: the roster it reads arrives on a
+    // historical query and can be minutes old, and a relay is not obliged to
+    // publish roles at all. The relay's refusal is the answer, and it is shown
+    // in the relay's own words.
+
+    /// Removes somebody else's message from the channel.
+    ///
+    /// Kind 9005, NIP-29's moderation tombstone, which the relay accepts from a
+    /// channel's owners and admins. Distinct from `deleteMessage`, which
+    /// publishes a kind 5 and only ever applies to the reader's own messages:
+    /// read-time authorization honours a 9005 from anyone the relay accepted,
+    /// because in NIP-29 the relay is the group's moderation authority, and a
+    /// kind 5 only from the message's own author.
+    func moderateMessage(_ messageID: String, in channel: String) async throws {
+        let event = try await signer.sign(
+            kind: .groupDeleteEvent,
+            content: "",
+            tags: [["h", channel], ["e", messageID]]
+        )
+        try await relay.publish(event)
+        // Only after the relay accepted it. Ingesting first would hide a
+        // message that is still there for everyone else.
+        _ = try? await store.ingest([event])
+    }
+
+    /// Renames a channel, or changes what it says it is for.
+    ///
+    /// Kind 9002. `name` and `about` are the owner-and-admin half of that kind;
+    /// `topic` and `purpose` on the same kind are open to any member, which is a
+    /// different affordance and deliberately not bundled in here.
+    func editChannel(_ channelID: String, name: String, about: String) async throws {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { throw ChannelFailure.nameRequired }
+
+        var tags = [["h", channelID], ["name", trimmed]]
+        tags.append(["about", about.trimmingCharacters(in: .whitespacesAndNewlines)])
+
+        let event = try await signer.sign(kind: .groupEditMetadata, content: "", tags: tags)
+        try await relay.publish(event)
+
+        // The new name lives in a relay-signed 39000, which is channel-scoped
+        // and never arrives on the live subscription. Without this the rename
+        // succeeds and the old name stays on screen.
+        await refreshGroupState()
+    }
+
+    /// Removes somebody from a channel.
+    ///
+    /// Kind 9001. Returns whether the roster actually changed, which is not the
+    /// same question as whether the relay said yes.
+    ///
+    /// Buzz validates most of this before storing and refuses in the OK, but its
+    /// membership layer has a second check that runs afterwards and is only
+    /// logged. An action rejected there is acknowledged and then quietly
+    /// dropped, so an OK is not evidence that anything happened. The roster is,
+    /// and it is one query away.
+    @discardableResult
+    func removeMember(_ pubkey: String, from channel: String) async throws -> Bool {
+        let before = (try? store.members(of: channel))?.map(\.pubkey) ?? []
+
+        let event = try await signer.sign(
+            kind: .groupRemoveUser,
+            content: "",
+            tags: [["h", channel], ["p", pubkey]]
+        )
+        try await relay.publish(event)
+        await refreshGroupState()
+
+        let after = (try? store.members(of: channel))?.map(\.pubkey) ?? []
+        // Unchanged rosters mean the relay took the event and did nothing with
+        // it. Reporting success there would be repeating a claim Comb has just
+        // watched fail.
+        return before.contains(pubkey) && !after.contains(pubkey)
+    }
+
+    /// Deletes a channel outright. Owner only, and there is no undoing it.
+    func deleteChannel(_ channelID: String) async throws {
+        let event = try await signer.sign(
+            kind: .groupDelete,
+            content: "",
+            tags: [["h", channelID]]
+        )
+        try await relay.publish(event)
+        await refreshGroupState()
+    }
+
     /// Leaves a channel, so the reader stops being a member of it.
     ///
     /// Standard NIP-29 kind 9022, which any member may send. Deliberately not a

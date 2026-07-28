@@ -70,6 +70,21 @@ public struct ChannelSummary: Sendable, Equatable, Hashable, Identifiable {
     /// at the relay, so offering the button would be offering a rejection.
     public let isPrivate: Bool
 
+    /// Whether an owner-or-admin action is worth offering here.
+    ///
+    /// Offered when the role is known and sufficient, and *also* when it is not
+    /// known at all: a relay that publishes no roles must not cost the reader
+    /// every action they are entitled to, and the relay refuses what it will
+    /// not allow anyway. Hidden only on a positive negative, a known role that
+    /// is known insufficient. Same rule `ZapCapability.unknown` follows.
+    ///
+    /// Never enforcement. The relay decides; this only avoids offering what is
+    /// certain to be refused.
+    public var mayModerate: Bool { myRole.map(\.isElevated) ?? true }
+
+    /// Owner only, on the same terms.
+    public var mayDeleteChannel: Bool { myRole.map { $0 == .owner } ?? true }
+
     public var hasUnread: Bool { unreadCount > 0 }
     public var hasMention: Bool { mentionCount > 0 }
 

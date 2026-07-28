@@ -448,3 +448,62 @@ struct ObservedMembershipTests {
         throw CancellationError()
     }
 }
+
+/// What an admin action is offered on. The rule is not enforcement: the relay
+/// decides, and this only avoids offering what is certain to be refused.
+@Suite("Moderation gating")
+struct ModerationGatingTests {
+    private func summary(role: String?) async throws -> ChannelSummary {
+        let store = try EventStore()
+        let relay = try Fixture(name: "relay")
+        let me = try Fixture(name: "me")
+
+        var roster: [[String]] = [["d", "room-1"]]
+        if let role { roster.append(["p", me.pubkey, "", role]) }
+
+        _ = try await store.ingest([
+            try relay.event(
+                .groupMetadata, #"{"name":"General"}"#, tags: [["d", "room-1"]], at: 900
+            ),
+            try relay.event(.groupMembers, "", tags: roster, at: 1_000),
+        ])
+
+        let summaries = try store.channelSummaries(me: me.pubkey)
+        return try #require(summaries.first(where: { $0.id == "room-1" }))
+    }
+
+    @Test("an owner may moderate and may delete the channel")
+    func owner() async throws {
+        let channel = try await summary(role: "owner")
+        #expect(channel.mayModerate)
+        #expect(channel.mayDeleteChannel)
+    }
+
+    /// Admins moderate. Deleting a channel is owner-only, and this is the one
+    /// place the two capabilities come apart.
+    @Test("an admin may moderate but may not delete the channel")
+    func admin() async throws {
+        let channel = try await summary(role: "admin")
+        #expect(channel.mayModerate)
+        #expect(!channel.mayDeleteChannel)
+    }
+
+    @Test("an ordinary member is offered neither")
+    func member() async throws {
+        let channel = try await summary(role: "member")
+        #expect(!channel.mayModerate)
+        #expect(!channel.mayDeleteChannel)
+    }
+
+    /// The case that decides whether Comb works against a plain NIP-29 relay.
+    /// A relay that publishes no roles must not cost every reader every action
+    /// they might be entitled to, so an unknown role offers and lets the relay
+    /// answer. Hidden only on a positive negative.
+    @Test("an unknown role is offered both, not denied both")
+    func unknown() async throws {
+        let channel = try await summary(role: nil)
+        #expect(channel.myRole == nil)
+        #expect(channel.mayModerate)
+        #expect(channel.mayDeleteChannel)
+    }
+}

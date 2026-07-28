@@ -24,6 +24,9 @@ struct ChannelTimelineView: View {
     @State private var zappersOf: ZappersTarget?
     @State private var isLeaving = false
     @State private var isJoining = false
+    /// Somebody else's message the reader is about to remove.
+    @State private var moderating: TimelineRow?
+    @State private var moderateFailed: String?
     /// Bumped when membership turns true, so joining is felt as well as seen.
     @State private var joins = 0
     /// The relay's reason for refusing a join, shown beside the button that
@@ -298,7 +301,8 @@ struct ChannelTimelineView: View {
                         MemberListView(
                             session: session,
                             channelID: channel.id,
-                            channelName: channel.name
+                            channelName: channel.name,
+                            mayModerate: channel.mayModerate
                         )
                     } label: {
                         Label("\(channel.memberCount)", systemImage: "person.2")
@@ -309,6 +313,13 @@ struct ChannelTimelineView: View {
             }
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
+                    if channel.mayModerate {
+                        NavigationLink {
+                            ChannelSettingsView(session: session, channel: channel)
+                        } label: {
+                            Label("Channel settings", systemImage: "gearshape")
+                        }
+                    }
                     // Only where there is something to leave. It used to be
                     // offered on a channel you were reading as a non-member,
                     // directly above a button asking you to join it.
@@ -336,6 +347,35 @@ struct ChannelTimelineView: View {
             // a local hide, so the relay stops delivering the channel and the
             // way back in depends on whether anyone can add you.
             Text("You stop receiving this channel. Rejoining depends on whether it is open or someone adds you back.")
+        }
+        .confirmationDialog(
+            "Remove this message?",
+            isPresented: Binding(
+                get: { moderating != nil },
+                set: { if !$0 { moderating = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Remove message", role: .destructive) {
+                if let target = moderating {
+                    Task { await attemptModerate(target) }
+                }
+                moderating = nil
+            }
+        } message: {
+            Text("It disappears for everyone in the channel. They may already have read it, and they will be able to tell it was removed.")
+        }
+        .confirmationDialog(
+            "That message is still there",
+            isPresented: Binding(
+                get: { moderateFailed != nil },
+                set: { if !$0 { moderateFailed = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("OK", role: .cancel) { moderateFailed = nil }
+        } message: {
+            Text(moderateFailed ?? "")
         }
         // A dialog, not a toast. The refusal that matters here tells a channel's
         // last owner to hand ownership on first, which is an instruction to go
@@ -426,6 +466,7 @@ struct ChannelTimelineView: View {
                 draft = entry.row.displayContent
             },
             onDelete: ownMessageAction(entry.row) { deleting = entry.row },
+            onModerate: moderateAction(entry.row),
             onPickEmoji: entry.row.isDeleted ? nil : { reactingTo = entry.row },
             onShowReactors: { showReactors(entry.row, $0) },
             onShowZappers: { zappersOf = ZappersTarget(messageID: entry.row.id) },
@@ -434,6 +475,19 @@ struct ChannelTimelineView: View {
             onReport: reportAction(entry.row),
             onBlock: blockAction(entry.row)
         )
+    }
+
+    /// Offered on somebody else's message when this account may moderate.
+    ///
+    /// `mayModerate` is true for a known owner or admin and also when the relay
+    /// publishes no roles at all, so a plain NIP-29 relay does not cost every
+    /// reader an action they may be entitled to. It is false only for a role
+    /// known to be insufficient. The relay decides either way.
+    private func moderateAction(_ row: TimelineRow) -> (() -> Void)? {
+        guard row.pubkey != session.me.hex, !row.isDeleted, channel.mayModerate else {
+            return nil
+        }
+        return { moderating = row }
     }
 
     /// The action, only when the message is the viewer's own and not deleted.
@@ -456,6 +510,26 @@ struct ChannelTimelineView: View {
     /// Deletes, and raises the retry dialog if it did not take. Shared by the
     /// first attempt and the retry, so a second failure asks again rather than
     /// giving up silently on the one path where silence is worst.
+    /// Removes somebody else's message, and reports the relay's answer.
+    ///
+    /// A dialog on failure for the same reason a failed delete gets one: the
+    /// reader has just asked, in an acknowledged dialog, to destroy something,
+    /// and a hint that fades in three seconds lets them walk away believing it
+    /// is gone.
+    private func attemptModerate(_ row: TimelineRow) async {
+        do {
+            try await session.moderateMessage(row.id, in: channel.id)
+        } catch let error as RelayError {
+            if case .publishRejected(let reason) = error, !reason.isEmpty {
+                moderateFailed = reason
+            } else {
+                moderateFailed = FailureText.deleteBody
+            }
+        } catch {
+            moderateFailed = FailureText.deleteBody
+        }
+    }
+
     private func attemptDelete(_ row: TimelineRow) async {
         if await !model.deleteMessage(row.id) {
             deleteFailed = row
@@ -766,6 +840,9 @@ struct MessageRow: View {
     /// Present only on the viewer's own messages.
     var onEdit: (() -> Void)?
     var onDelete: (() -> Void)?
+    /// Removes somebody else's message. Present only for a channel's owners and
+    /// admins, and never on the reader's own messages, which have Delete.
+    var onModerate: (() -> Void)?
     /// Opens the full emoji picker for this message.
     var onPickEmoji: (() -> Void)?
     /// Long-press on a reaction chip: shows who reacted.
@@ -1051,6 +1128,14 @@ struct MessageRow: View {
                 // Destructive is earned here, unlike sign-out: the message
                 // really is removed for everyone.
                 Button("Delete", systemImage: "trash", role: .destructive, action: onDelete)
+            }
+            if let onModerate {
+                // Worded for what it is. "Delete" on somebody else's message
+                // would read as the same act as deleting your own, and it is
+                // not: this is a moderator removing a member's message from a
+                // room, and everyone will see it go.
+                Divider()
+                Button("Remove this message", systemImage: "trash.slash", role: .destructive, action: onModerate)
             }
         }
     }
