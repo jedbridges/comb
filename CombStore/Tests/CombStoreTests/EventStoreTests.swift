@@ -627,3 +627,100 @@ struct SettleTests {
         #expect(try await store.count() == 0)
     }
 }
+
+// MARK: - Parallel verification
+
+@Suite("Parallel verification")
+struct ParallelVerificationTests {
+    /// Big enough to be split across every core several times over, so the
+    /// chunking is genuinely exercised rather than falling back to one line.
+    private static let batchSize = 600
+
+    /// A batch of known composition: every third event has its content swapped
+    /// after signing, every fifth has its signature corrupted, the rest are
+    /// good. Interleaved rather than grouped, so a chunk boundary lands in the
+    /// middle of a run of each kind.
+    private func batch(_ fixture: Fixture) throws -> (events: [NostrEvent], expected: [Rejection]) {
+        var events: [NostrEvent] = []
+        var expected: [Rejection] = []
+
+        for index in 0..<Self.batchSize {
+            let original = try fixture.message("message \(index)", at: 1_700_000_000 + Int64(index))
+
+            if index % 3 == 0 {
+                events.append(NostrEvent(
+                    id: original.id,
+                    pubkey: original.pubkey,
+                    createdAt: original.createdAt,
+                    kind: original.kind,
+                    tags: original.tags,
+                    content: "swapped \(index)",
+                    sig: original.sig
+                ))
+                expected.append(Rejection(id: original.id, reason: .idMismatch))
+            } else if index % 5 == 0 {
+                var corrupted = Array(original.sig)
+                corrupted[0] = corrupted[0] == "a" ? "b" : "a"
+                events.append(NostrEvent(
+                    id: original.id,
+                    pubkey: original.pubkey,
+                    createdAt: original.createdAt,
+                    kind: original.kind,
+                    tags: original.tags,
+                    content: original.content,
+                    sig: String(corrupted)
+                ))
+                expected.append(Rejection(id: original.id, reason: .badSignature))
+            } else {
+                events.append(original)
+            }
+        }
+        return (events, expected)
+    }
+
+    @Test("classifies a mixed batch exactly as a serial pass would")
+    func matchesSerialClassification() async throws {
+        let store = try EventStore()
+        let fixture = try Fixture()
+        let (events, expected) = try batch(fixture)
+
+        let result = try await store.ingest(events)
+
+        // Order included: rejections come back in the order they arrived, which
+        // is the property splitting the work across cores could quietly break.
+        #expect(result.rejected == expected)
+        #expect(result.inserted.count == events.count - expected.count)
+        #expect(try await store.count() == events.count - expected.count)
+    }
+
+    @Test("stores a valid batch in arrival order")
+    func preservesOrder() async throws {
+        let store = try EventStore()
+        let fixture = try Fixture()
+        let events = try (0..<Self.batchSize).map { index in
+            try fixture.message("message \(index)", at: 1_700_000_000 + Int64(index))
+        }
+
+        let result = try await store.ingest(events)
+
+        #expect(result.inserted == events.map(\.id))
+    }
+
+    @Test("gives the same answer at every batch size around the split threshold")
+    func agreesAcrossSizes() async throws {
+        let fixture = try Fixture()
+        let (events, _) = try batch(fixture)
+
+        // One event takes the serial path by design; the rest are chunked. The
+        // boundary is where a partition bug would hide.
+        for size in [1, 2, 3, 7, 8, 9, 16, 33] {
+            let store = try EventStore()
+            let slice = Array(events.prefix(size))
+            let result = try await store.ingest(slice)
+
+            let expected = slice.filter(\.isValid).map(\.id)
+            #expect(result.inserted == expected, "batch of \(size)")
+            #expect(result.rejected.count == size - expected.count, "batch of \(size)")
+        }
+    }
+}
