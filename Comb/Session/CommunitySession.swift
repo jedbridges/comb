@@ -161,9 +161,56 @@ actor CommunitySession {
             try FileManager.default.createDirectory(
                 at: directory,
                 withIntermediateDirectories: true,
-                attributes: [.protectionKey: FileProtectionType.completeUnlessOpen]
+                attributes: [.protectionKey: storeProtection]
             )
+            applyProtection(in: directory)
             return try EventStore(path: path)
+        }
+    }
+
+    /// Readable once the phone has been unlocked a single time since boot, and
+    /// not before.
+    ///
+    /// This used to be `completeUnlessOpen`, which is stronger and was the wrong
+    /// tool. That level lets you keep writing to a file you already had open
+    /// when the phone locked, and forbids opening a new handle while it stays
+    /// locked. A background wake always opens a new handle, and a phone in a
+    /// pocket is always locked, so mention notifications did nothing in exactly
+    /// the situation they exist for. A notification system that silently
+    /// under-delivers is the thing this app promised not to ship.
+    ///
+    /// What is given up is real and worth naming: between the first unlock after
+    /// a reboot and the next reboot, someone holding the locked phone who can
+    /// get at the filesystem can read the message history. The key is unaffected
+    /// and stays in the Keychain at `ThisDeviceOnly`. Before that first unlock
+    /// the history is unreadable, which is the state a lost or stolen phone that
+    /// has been powered off is in.
+    private static let storeProtection = FileProtectionType.completeUntilFirstUserAuthentication
+
+    /// Applies the protection level to a store that already exists.
+    ///
+    /// The attribute passed to `createDirectory` only lands when the directory
+    /// is actually created, and files inherit it only at the moment they are
+    /// written. Neither helps a database already on disk under the old level, so
+    /// every existing file is set explicitly. That is the whole migration: the
+    /// contents do not change, only what iOS will unlock them for.
+    ///
+    /// Best effort on purpose. A file this cannot relabel is one the wake will
+    /// fail to open on a locked phone, which is the behaviour being fixed rather
+    /// than a reason to refuse to open the store at all.
+    private static func applyProtection(in directory: URL) {
+        let manager = FileManager.default
+        let attributes: [FileAttributeKey: Any] = [.protectionKey: storeProtection]
+        try? manager.setAttributes(attributes, ofItemAtPath: directory.path)
+
+        // The sidecars matter as much as the database. A wake that can open
+        // comb.sqlite and not its write-ahead log has not got a working store.
+        let contents = (try? manager.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: nil
+        )) ?? []
+        for file in contents {
+            try? manager.setAttributes(attributes, ofItemAtPath: file.path)
         }
     }
 

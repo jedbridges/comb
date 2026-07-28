@@ -60,3 +60,18 @@ These are design choices, not vulnerabilities, but you should know them:
   recovery code.
 - **The community index is unsigned.** See
   [CONTRIBUTING.md](CONTRIBUTING.md#listing-a-community) for why.
+- **Message history is readable after the first unlock.** The per-community
+  database is stored at `completeUntilFirstUserAuthentication`. Before the first
+  unlock following a reboot it cannot be read at all, which is the state a
+  powered-off phone is in. After that, until the next reboot, someone who can
+  reach the filesystem of the locked phone can read the stored history.
+
+  It was previously `completeUnlessOpen`, which is stronger. That level forbids
+  opening a file while the phone is locked, and a background mention check has
+  to open one, so notifications delivered nothing whenever the phone was in a
+  pocket. The choice was between a stronger guarantee on stored messages and a
+  notification feature that worked at all; the weaker level is documented here
+  rather than quietly taken.
+
+  Your key is not affected either way. It lives in the Keychain as
+  `ThisDeviceOnly` and is never in this database.
