@@ -17,6 +17,15 @@ public actor EventStore {
     /// Callers get a reader, never a writer.
     public nonisolated let reader: any DatabaseReader
 
+    /// The key this relay signs group state with, from its NIP-11 `self` field.
+    ///
+    /// Held in `meta` rather than only in memory, so a replay reaches the same
+    /// verdicts offline as live ingest did. Nil means the relay does not
+    /// publish one, and the check is skipped: a plain NIP-29 relay that never
+    /// heard of NIP-11 `self` must still work, and refusing its group state
+    /// would break the app rather than protect it.
+    private var relaySigningKey: String?
+
     // MARK: - Lifecycle
 
     public init(path: String) throws {
@@ -26,6 +35,7 @@ public actor EventStore {
         self.writer = pool
         self.reader = pool
         try Self.prepare(pool)
+        self.relaySigningKey = try Self.storedRelaySigningKey(pool)
     }
 
     /// An in-memory store, for tests.
@@ -36,6 +46,38 @@ public actor EventStore {
         self.writer = queue
         self.reader = queue
         try Self.prepare(queue)
+        self.relaySigningKey = try Self.storedRelaySigningKey(queue)
+    }
+
+    /// Records the key this relay signs group state with, learned from its
+    /// NIP-11 document.
+    ///
+    /// Idempotent, and safe to call on every connect: the relay's key does not
+    /// change often, and when it does the newest answer is the one to keep.
+    /// Passing nil clears it, which turns the check off rather than rejecting
+    /// everything.
+    public func setRelaySigningKey(_ pubkey: String?) throws {
+        relaySigningKey = pubkey
+        try writer.write { db in
+            if let pubkey {
+                try db.execute(sql: """
+                    INSERT INTO meta (key, value) VALUES ('relay_signing_key', ?)
+                    ON CONFLICT(key) DO UPDATE SET value = excluded.value
+                    """, arguments: [pubkey])
+            } else {
+                try db.execute(sql: "DELETE FROM meta WHERE key = 'relay_signing_key'")
+            }
+        }
+    }
+
+    /// Read once at open, so an offline launch and a replay both apply the same
+    /// rule the live session did.
+    private static func storedRelaySigningKey(_ reader: any DatabaseReader) throws -> String? {
+        try reader.read { db in
+            try String.fetchOne(
+                db, sql: "SELECT value FROM meta WHERE key = 'relay_signing_key'"
+            )
+        }
     }
 
     private static func prepare(_ writer: any DatabaseWriter) throws {
@@ -153,6 +195,19 @@ public actor EventStore {
             case .badSignature:
                 result.rejected.append(Rejection(id: event.id, reason: .badSignature))
             case .valid:
+                // Applied here rather than inside `verdicts`, which is spread
+                // across cores and deliberately a pure function of one event.
+                // This one needs state, and it is a string comparison, so it
+                // belongs on the cheap serial side of the split.
+                if let relaySigningKey,
+                   event.kind.isRelaySigned,
+                   event.pubkey != relaySigningKey {
+                    result.rejected.append(
+                        Rejection(id: event.id, reason: .notFromRelay)
+                    )
+                    continue
+                }
+
                 // Ephemeral kinds are diverted rather than stored. Presence and
                 // typing are meaningless within seconds, and writing them would
                 // grow the log without bound. They are still verified, because
@@ -364,5 +419,12 @@ public struct Rejection: Sendable, Equatable {
         /// The id is intact but the signature does not verify under the claimed
         /// pubkey.
         case badSignature
+        /// A relay-signed kind arrived signed by somebody who is not the relay.
+        ///
+        /// The signature is perfectly valid; the signer simply has no standing
+        /// to make this claim. Group metadata and rosters are the relay's word
+        /// on who exists and who runs a channel, so anyone able to publish could
+        /// otherwise name themselves an owner and have Comb believe it.
+        case notFromRelay
     }
 }

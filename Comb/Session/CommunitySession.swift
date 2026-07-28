@@ -224,6 +224,7 @@ actor CommunitySession {
         Log.session.info("connecting to \(self.relayURL.host ?? "?", privacy: .public)")
         DiagnosticsBuffer.report("session", "connecting to \(relayURL.host ?? "?")")
         try await relay.start()
+        await learnRelaySigningKey()
 
         // Bootstrap: one round trip, several filters. Group state, profiles,
         // and enough recent traffic that the first paint has substance.
@@ -257,6 +258,34 @@ actor CommunitySession {
         // replay from a subscription table that exists from one that has to
         // build it from nothing.
         hasStarted = true
+    }
+
+    /// Learns which key this relay signs group state with, and tells the store.
+    ///
+    /// Group metadata and rosters are the relay's word on who exists and who
+    /// runs a channel, and until now Comb checked only that they were signed by
+    /// somebody. Anyone able to publish to the relay could therefore have
+    /// published a roster naming themselves an owner, and Comb would have shown
+    /// it. That was harmless while roles were unread; it stops being harmless
+    /// the moment a role decides what a screen offers.
+    ///
+    /// NIP-11 is fetched over HTTPS against the same host the socket already
+    /// talks to, so this adds no new destination. A failure is not fatal: the
+    /// check is skipped and the app behaves exactly as it did before, which is
+    /// also what happens on a plain NIP-29 relay whose document has no `self`
+    /// field. Refusing group state from a relay that cannot prove which key is
+    /// its own would break the app rather than protect it.
+    private func learnRelaySigningKey() async {
+        guard let info = try? await RelayInfoClient().fetch(from: relayURL) else {
+            DiagnosticsBuffer.report("session", "NIP-11 unavailable; relay-signed events unchecked")
+            return
+        }
+        guard let key = info.selfPubkey, !key.isEmpty else {
+            DiagnosticsBuffer.report("session", "relay publishes no self key; group state unchecked")
+            try? await store.setRelaySigningKey(nil)
+            return
+        }
+        try? await store.setRelaySigningKey(key)
     }
 
     /// Whether a full start has ever completed for this session.

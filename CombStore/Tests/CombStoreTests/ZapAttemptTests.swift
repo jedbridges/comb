@@ -286,3 +286,98 @@ struct ChannelRoleTests {
         #expect(try store.members(of: "room-1").first?.role == .owner)
     }
 }
+
+/// Group state is the relay's word on who exists and who runs a channel, so
+/// only the relay gets to say it.
+@Suite("Relay-signed provenance")
+struct RelayProvenanceTests {
+    private func roster(_ signer: Fixture, owner: Fixture) throws -> NostrEvent {
+        try signer.event(
+            .groupMembers, "",
+            tags: [["d", "room-1"], ["p", owner.pubkey, "", "owner"]],
+            at: 1_000
+        )
+    }
+
+    /// The attack this exists to stop: a perfectly valid signature over a
+    /// roster the signer had no standing to write.
+    @Test("a roster signed by someone other than the relay is refused")
+    func rejectsAForgedRoster() async throws {
+        let store = try EventStore()
+        let relay = try Fixture(name: "relay")
+        let attacker = try Fixture(name: "Mallory")
+        try await store.setRelaySigningKey(relay.pubkey)
+
+        let forged = try roster(attacker, owner: attacker)
+        let result = try await store.ingest([forged])
+
+        #expect(result.inserted.isEmpty)
+        #expect(result.rejected.first?.reason == .notFromRelay)
+        #expect(try store.members(of: "room-1").isEmpty)
+    }
+
+    @Test("the same roster from the relay is stored")
+    func acceptsTheRelaysOwn() async throws {
+        let store = try EventStore()
+        let relay = try Fixture(name: "relay")
+        let owner = try Fixture(name: "Ada")
+        try await store.setRelaySigningKey(relay.pubkey)
+
+        _ = try await store.ingest([
+            try relay.event(
+                .groupMetadata, #"{"name":"General"}"#, tags: [["d", "room-1"]], at: 900
+            ),
+            try owner.event(.metadata, "{}", at: 800),
+            try roster(relay, owner: owner),
+        ])
+
+        #expect(try store.members(of: "room-1").first?.role == .owner)
+    }
+
+    /// Ordinary events are unaffected: the rule is about kinds the relay
+    /// authors, not about who may talk.
+    @Test("a message from a member is untouched by the rule")
+    func leavesOrdinaryEventsAlone() async throws {
+        let store = try EventStore()
+        let relay = try Fixture(name: "relay")
+        let member = try Fixture(name: "Ada")
+        try await store.setRelaySigningKey(relay.pubkey)
+
+        let result = try await store.ingest([try member.message("hello", at: 1_000)])
+        #expect(result.inserted.count == 1)
+    }
+
+    /// A plain NIP-29 relay whose NIP-11 has no `self` cannot be checked.
+    /// Refusing its group state would break the app rather than protect it.
+    @Test("with no known relay key the check is skipped, not failed closed")
+    func skipsWhenTheKeyIsUnknown() async throws {
+        let store = try EventStore()
+        let somebody = try Fixture(name: "somebody")
+
+        let result = try await store.ingest([try roster(somebody, owner: somebody)])
+        #expect(result.inserted.count == 1)
+    }
+
+    /// The key is persisted, so an offline launch and a replay reach the same
+    /// verdicts the live session did rather than quietly reverting to trusting
+    /// everyone.
+    @Test("the relay key survives reopening the store")
+    func persistsAcrossOpen() async throws {
+        let path = FileManager.default.temporaryDirectory
+            .appendingPathComponent("comb-provenance-\(UUID().uuidString).sqlite")
+            .path
+        defer { try? FileManager.default.removeItem(atPath: path) }
+
+        let relay = try Fixture(name: "relay")
+        let attacker = try Fixture(name: "Mallory")
+
+        do {
+            let store = try EventStore(path: path)
+            try await store.setRelaySigningKey(relay.pubkey)
+        }
+
+        let reopened = try EventStore(path: path)
+        let result = try await reopened.ingest([try roster(attacker, owner: attacker)])
+        #expect(result.rejected.first?.reason == .notFromRelay)
+    }
+}
