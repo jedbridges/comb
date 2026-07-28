@@ -28,6 +28,8 @@ enum FailureText {
     /// apology.
     static let leave = "That did not work. You are still in this channel."
 
+    static let join = "That did not work. You are not in this channel."
+
     static let reportSent = "Report sent."
     static let reportFailedButBlocked = "Blocked on this iPhone. The report could not be sent."
     /// No "try again" in the words: the button beside this notice says it.

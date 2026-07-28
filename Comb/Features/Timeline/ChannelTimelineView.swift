@@ -23,6 +23,7 @@ struct ChannelTimelineView: View {
     @State private var reactorsOf: ReactorsTarget?
     @State private var zappersOf: ZappersTarget?
     @State private var isLeaving = false
+    @State private var isJoining = false
     @FocusState private var isComposing: Bool
     @State private var isAwayFromBottom = false
     @State private var arrivalsWhileAway = 0
@@ -175,6 +176,13 @@ struct ChannelTimelineView: View {
         // send has its own reporting.
         .sensoryFeedback(Haptics.send, trigger: sends)
         .safeAreaInset(edge: .bottom) {
+            // A channel this account is not on the roster of. The relay sends
+            // metadata for open channels to people who are not in them, so the
+            // list has always been able to reach rooms like this; until now it
+            // offered a compose bar whose send the relay would refuse.
+            if !channel.isMember {
+                joinBar
+            } else {
             ComposeBar(
                 draft: $draft,
                 attachments: tray,
@@ -207,6 +215,7 @@ struct ChannelTimelineView: View {
             }
             .onChange(of: draft) { _, new in
                 model.draftChanged(new)
+            }
             }
         }
         .safeAreaInset(edge: .bottom) {
@@ -406,6 +415,47 @@ struct ChannelTimelineView: View {
         }
     }
 
+    /// Offered instead of a compose bar in a channel this account has not
+    /// joined. Reading is already possible; what is missing is saying anything,
+    /// and a text field whose send the relay refuses is the worst way to find
+    /// that out.
+    private var joinBar: some View {
+        VStack(spacing: Space.xs) {
+            Text("You are not in this channel yet.")
+                .textRole(.meta)
+            PrimaryButton(
+                title: isJoining ? "Joining\u{2026}" : "Join channel",
+                isBusy: isJoining,
+                isDisabled: isJoining
+            ) {
+                Task { await attemptJoin() }
+            }
+        }
+        .padding(.horizontal, Space.lg)
+        .padding(.vertical, Space.sm)
+    }
+
+    /// Joins, and lets the roster refresh redraw the screen.
+    ///
+    /// Comb cannot tell an open channel from a private one out of the metadata
+    /// it holds, and the relay refuses a join to a private one, so the relay's
+    /// own sentence is the only honest thing to show.
+    private func attemptJoin() async {
+        isJoining = true
+        do {
+            try await session.joinChannel(channel.id)
+        } catch let error as RelayError {
+            if case .publishRejected(let reason) = error, !reason.isEmpty {
+                toast = ToastMessage(reason, tone: .failure)
+            } else {
+                toast = ToastMessage(FailureText.join, tone: .failure)
+            }
+        } catch {
+            toast = ToastMessage(FailureText.join, tone: .failure)
+        }
+        isJoining = false
+    }
+
     /// Leaves, then returns to the list.
     ///
     /// Deliberately does not wait for the channel to disappear. The row goes
@@ -552,10 +602,26 @@ struct ChannelTimelineView: View {
     private var emptyChannel: some View {
         VStack(spacing: Space.sm) {
             ChannelGlyph(name: channel.name, size: 64)
-            Text("Nothing here yet")
-                .textRole(.bodyStrong)
-            Text("Say the first thing.")
-                .textRole(.support)
+            // Two different silences, and only one of them is emptiness. The
+            // relay withholds a channel's messages from people who are not in
+            // it, so in a channel this account has not joined Comb genuinely
+            // cannot tell an empty room from a busy one it is not being shown.
+            // Saying "nothing here yet" there would be inventing a fact, and
+            // "say the first thing" would be inviting something the send would
+            // be refused for.
+            if channel.isMember {
+                Text("Nothing here yet")
+                    .textRole(.bodyStrong)
+                Text("Say the first thing.")
+                    .textRole(.support)
+            } else {
+                Text("Nothing to show")
+                    .textRole(.bodyStrong)
+                Text("Comb only sees this channel's messages once you are in it.")
+                    .textRole(.support)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, Space.xl)
+            }
         }
         .arrival(true)
         .accessibilityElement(children: .combine)

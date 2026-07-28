@@ -311,6 +311,25 @@ actor CommunitySession {
         case nameRequired
     }
 
+    /// Joins an open channel.
+    ///
+    /// Standard NIP-29 kind 9021. Open channels only: the relay rejects a join
+    /// request for a private one at ingest, and its refusal is the thing worth
+    /// showing, since Comb cannot tell the two apart from the metadata it holds.
+    ///
+    /// The refetch matters for the same reason it does when creating. Joining
+    /// changes the roster, and the roster is a relay-signed kind 39002 that is
+    /// stored channel-scoped, so it never arrives on its own.
+    func joinChannel(_ channelID: String) async throws {
+        let event = try await signer.sign(
+            kind: .groupJoinRequest,
+            content: "",
+            tags: [["h", channelID]]
+        )
+        try await relay.publish(event)
+        await refreshGroupState()
+    }
+
     /// Leaves a channel, so the reader stops being a member of it.
     ///
     /// Standard NIP-29 kind 9022, which any member may send. Deliberately not a

@@ -26,6 +26,14 @@ public struct ChannelSummary: Sendable, Equatable, Hashable, Identifiable {
     /// weighed it the same as any other message was disagreeing with the app's
     /// own idea of what matters.
     public let mentionCount: Int
+    /// Whether this account is on the channel's roster.
+    ///
+    /// The relay sends group metadata for open channels to people who are not
+    /// in them, which is what makes joining possible at all: without it there
+    /// would be nothing to list and nothing to tap. It also means the channel
+    /// list has always held rooms this account cannot post in, with nothing
+    /// saying so.
+    public let isMember: Bool
 
     public var hasUnread: Bool { unreadCount > 0 }
     public var hasMention: Bool { mentionCount > 0 }
@@ -121,7 +129,9 @@ public extension EventStore {
                        AND NOT EXISTS (SELECT 1 FROM deletion d
                                         WHERE d.target_id = e.id
                                           AND (d.kind = 9005 OR d.deleted_by = e.pubkey))
-                   )                                                  AS mentions
+                   )                                                  AS mentions,
+                   EXISTS(SELECT 1 FROM channel_member m
+                           WHERE m.channel_id = c.id AND m.pubkey = :me) AS is_member
             FROM channel c
             -- A channel this account was removed from. The metadata and the
             -- messages stay in the log, because the log is append-only and they
@@ -163,7 +173,8 @@ public extension EventStore {
                 lastAuthor: row["last_author"],
                 lastActivity: row["last_at"],
                 unreadCount: row["unread"] ?? 0,
-                mentionCount: row["mentions"] ?? 0
+                mentionCount: row["mentions"] ?? 0,
+                isMember: row["is_member"] ?? false
             )
         }
     }
