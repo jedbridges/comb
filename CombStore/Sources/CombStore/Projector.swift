@@ -19,6 +19,8 @@ enum Projector {
             try projectProfile(event, into: db)
         case .reaction:
             try projectReaction(event, into: db)
+        case .zapReceipt:
+            try projectZap(event, into: db)
         case .deletion, .groupDeleteEvent:
             try projectDeletion(event, into: db)
         case .buzzEdit:
@@ -225,6 +227,52 @@ enum Projector {
                 ON CONFLICT(event_id) DO NOTHING
                 """,
             arguments: [event.id, target, event.pubkey, emoji, emojiURL, event.createdAt]
+        )
+    }
+
+    // MARK: - Zaps
+
+    /// Records what a zap receipt says about itself.
+    ///
+    /// Only the offline half of the check runs here. `decodeReceipt` verifies
+    /// the embedded kind 9734's signature, which is what makes the amount,
+    /// sender and target unforgeable, and that answer never changes. Whether
+    /// the receipt's signer was entitled to issue it needs the recipient's
+    /// LNURL endpoint, an HTTPS fetch, so it happens at read time instead: a
+    /// projector that needed the network could not be replayed offline, and
+    /// `rebuildProjections` has to produce identical rows every time.
+    ///
+    /// This is the first projector that runs cryptography, one secp256k1
+    /// verification per receipt on every rebuild. Receipts are rare next to
+    /// messages, so the cost is small, but it is not nothing.
+    ///
+    /// A receipt that fails to decode simply writes no row. It stays in the
+    /// log, like an undecodable channel or an unauthorised deletion.
+    private static func projectZap(_ event: NostrEvent, into db: Database) throws {
+        guard let receipt = try? Zap.decodeReceipt(event) else { return }
+
+        try db.execute(
+            sql: """
+                INSERT INTO zap (event_id, request_id, target_id, sender, recipient,
+                                 issuer, amount_msats, comment, bolt11, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                -- Both conflicts are the same defence seen from two sides: the
+                -- same receipt arriving twice, and a genuine receipt
+                -- republished under a fresh id to be counted again.
+                ON CONFLICT DO NOTHING
+                """,
+            arguments: [
+                receipt.receiptID,
+                receipt.requestID,
+                receipt.targetEventID,
+                receipt.sender.hex,
+                receipt.recipient,
+                receipt.issuer,
+                receipt.amountMillisats,
+                receipt.comment,
+                receipt.bolt11,
+                event.createdAt,
+            ]
         )
     }
 

@@ -36,10 +36,15 @@ against the new SDK, while hand-drawn chrome stays frozen in the old one.
 Hand-built input boxes are specifically forbidden; that mistake has already
 been made and removed once.
 
-**Type scales with the user.** Tokens map to Apple's semantic text styles, so
-Dynamic Type works everywhere by construction. `Typography.body` is 16pt at
-the default setting, Buzz's chat base size, and grows when the user asks.
-Never `.system(size:)` in a feature view.
+**Type scales with the user.** Roles map to Apple's semantic text styles, so
+Dynamic Type works everywhere by construction. `.body` is 16pt at the default
+setting, Buzz's chat base size, and grows when the user asks. Never
+`.system(size:)` in a feature view.
+
+**One decision per piece of text.** Set type with `.textRole(_:)`, which
+carries the colour with it. A `.font()` beside a `.foregroundStyle()` in a
+feature view is drift: it is two dials where there should be one, and a role
+whose colour is chosen separately on each screen is not a role.
 
 **Spacing comes off the scale.** 2/4/8/12/16/20/24/32/40. An 18 or a 9 in a
 view is a bug. A design that genuinely needs a new step adds a named token.
@@ -77,7 +82,7 @@ of a collection of views taped together.
 
 The full-screen olive-to-blue wash, edge to edge, behind everything.
 
-- Dark: `#4A4616` (olive) to `#0A1423` (navy), eased with smoothstep
+- Dark: `#2B280C` (olive) to `#0A1423` (navy), eased with smoothstep
 - Built from 17 stops, mixed in linear light to avoid the muddy mid-band
   that two-stop sRGB blending produces
 - Applied via `Palette.backgroundGradient.ignoresSafeArea()` on raw
@@ -93,17 +98,28 @@ the top and blue at the bottom, exactly like the gradient it sits on.
 | Token | Value | Use |
 |---|---|---|
 | `Palette.liftOnGradient` | `Color.white.opacity(0.07)` | Row fills, card fills, chip backgrounds |
-| `Palette.hairlineOnGradient` | `Color.white.opacity(0.10)` | Borders on lifted surfaces |
+| `Palette.hairlineOnGradient` | `Color.white.opacity(0.10)` | Borders on lifted surfaces, dividers |
+| `Palette.controlFill` | black 0.08 / white 0.12 (adaptive) | Quiet control fills, media wells |
 | `Palette.glyphLift` | black 0.07 / white 0.10 (adaptive) | Channel badges, avatar stand-ins |
 | `Palette.glyphHairline` | black 0.12 / white 0.14 (adaptive) | Badge and avatar edges |
 
-### 3. Luminous chrome (text and icons on the gradient)
+### 3. Text on the gradient
 
-Secondary text and chrome over the gradient uses `.luminousChrome()`,
-which blends with `plusLighter` (dark) or `plusDarker` (light) so the
-text sits *in* the gradient rather than on top of it. Toolbar glyphs use
-the fixed `Palette.chrome` token instead, so they render identically
-regardless of what scrolls behind the bar.
+Fixed values, no blend. Text colour must not depend on what happens to be
+scrolled behind it.
+
+There used to be a `.luminousChrome()` modifier here that blended text with
+`plusLighter` in dark and `plusDarker` in light, on the theory that chrome
+should sit *in* the gradient rather than on top of it. It was removed. In a
+scrolling view the blend makes one element render as several: a timestamp came
+out brighter than the name beside it under the navigation bar and dim by the
+bottom of the same screen, and a single date pill read as three different
+components going down one timeline. `Palette.chrome` had already been fixed
+for exactly this reason on toolbar glyphs; the rest of the app now follows.
+
+What actually reconciles cool text with a warm backdrop is the text colour
+itself, which is why `text` and `subtext` are warm near-neutrals rather than
+Catppuccin's blues. See the note on those tokens in `Palette.swift`.
 
 ### 4. Glass (Liquid Glass controls)
 
@@ -115,18 +131,55 @@ chartreuse; everything else uses plain glass.
 
 | Token | Hex (dark) | Use |
 |---|---|---|
-| `Palette.text` | `#CAD3F5` | Primary reading text |
-| `Palette.subtext` | `#A5ADCB` | Secondary, timestamps, hints |
+| `Palette.text` | `#DEDCD2` | Primary reading text |
+| `Palette.subtext` | `#B8B5A8` | Secondary, timestamps, hints |
+| `Palette.faint` | `#B1AD9F` | Receding: quiet channels, tombstones, standing context |
 | `Palette.chartreuse` | `#D7D700` | The brand accent, used sparingly |
 | `Palette.ink` | `#231E1E` | Text on chartreuse fills |
-| `Palette.oliveInk` | `#717106` | Text on chartreuse in light contexts |
 | `Palette.chrome` | `#F1EDDB` (dark) | Toolbar glyphs, fixed warm off-white |
+
+### Contrast, measured
+
+Worst case across the whole gradient, including over a `liftOnGradient` row
+and a `controlFill` control, in dark mode. Measured rather than estimated,
+because the ethos asks for AA verified rather than assumed.
+
+| Token | Worst ratio | AA body (4.5) |
+|---|---|---|
+| `chrome` | 8.69 | pass |
+| `text` | 7.42 | pass |
+| `warning` | 7.07 | pass |
+| `chartreuse` | 6.62 | pass |
+| `success` | 6.36 | pass |
+| `glyphMark` | 5.19 | pass |
+| `danger` | 5.17 | pass |
+| `subtext` | 4.96 | pass |
+| `faint` | 4.54 | pass |
+| `ink` on chartreuse | 10.67 | pass |
+
+**Every text token clears WCAG AA for body text.** Two changes bought that,
+and both were structural rather than cosmetic.
+
+The olive end of the gradient went from `#4A4616` to `#2B280C`. A backdrop's
+luminance sets the ceiling on how many readable text tiers can sit on it, and
+at 0.059 there was room for two where the design wanted three: `subtext` sat
+at 3.32:1 and the accent itself at 4.43:1 with nowhere to go. Every ratio in
+the app is measured against this wash, so darkening it was the one change
+that moved all of them at once.
+
+`danger` went from `#ED8796` to `#F2A3AE`. At 2.77:1 it was the lowest ratio
+in the app, on the copy that matters most at the moment it appears.
+
+`faint` has the least room, at 4.54. It is about a tenth of a luminance step
+under `subtext` rather than the half-step the eye would prefer. That is the
+honest limit of a third tier on this backdrop, and it is why the tier means
+*receding* and not *hidden*.
 
 ### 6. Semantic color
 
 | Token | Hex (dark) | Use |
 |---|---|---|
-| `Palette.danger` | `#ED8796` | Destructive actions, errors |
+| `Palette.danger` | `#F2A3AE` | Destructive actions, errors |
 | `Palette.success` | `#A6DA95` | Confirmations, checkmarks |
 | `Palette.warning` | `#EED49F` | Caution states |
 
@@ -176,23 +229,59 @@ chartreuse; everything else uses plain glass.
 | `.hitTarget` | 44pt | Minimum hit target, per Apple HIG |
 | `.compactControl` | 32pt | Small controls inside full-size targets |
 
-### Typography (`Typography`)
+### Text roles (`TextRole`)
 
-| Token | Maps to | Use |
-|---|---|---|
-| `.display` | `.largeTitle` semibold | App name on cold-start screens |
-| `.screenTitle` | `.title2` semibold | Screen titles in content |
-| `.body` | `.callout` | Chat messages, primary reading text (16pt) |
-| `.bodyEmphasis` | `.callout` semibold | Emphasized body text |
-| `.secondary` | `.subheadline` | Supporting copy, explanations (15pt) |
-| `.name` | `.subheadline` semibold | Author names, row titles |
-| `.action` | `.body` semibold | Primary action buttons |
-| `.actionSecondary` | `.callout` medium | Secondary and inline buttons |
-| `.label` | `.footnote` medium | Notices, hints, link-outs (13pt) |
-| `.caption` | `.caption` | Timestamps, counts (12pt) |
-| `.eyebrow` | `.caption2` semibold | Field labels, uppercased with wide tracking |
-| `.mono` | `.callout` monospaced | Relay URLs, keys |
-| `.monoSmall` | `.footnote` monospaced | Log entries, identifiers |
+**Use `.textRole(_:)`, not `.font()` plus `.foregroundStyle()`.** The role
+sets size, weight, letterspacing and colour together, so a call site makes
+one decision instead of three. That is the whole mechanism: hierarchy is
+expressed by role, once, rather than by size in one view and colour in
+another.
+
+| Role | Size | Colour | Use |
+|---|---|---|---|
+| `.display` | 34 semibold | text | App name on cold-start screens |
+| `.title` | 22 semibold | text | Screen titles in content |
+| `.action` | 17 semibold | text | The screen's primary action |
+| `.body` | 16 | text | Chat messages, primary reading text |
+| `.bodyStrong` | 16 semibold | text | Emphasis, author names, row titles |
+| `.bodyItalic` | 16 italic | faint | Tombstones |
+| `.control` | 16 medium | text | Inline and secondary controls |
+| `.support` | 13 | subtext | Previews, explanations, empty states |
+| `.supportStrong` | 13 medium | subtext | Notices, hints, link-outs |
+| `.meta` | 11 | subtext | Timestamps, counts, metadata |
+| `.metaStrong` | 11 medium | text | Metadata picked out of a line of it |
+| `.count` | 11 mono digits | subtext | Numbers that change in place |
+| `.eyebrow` | 11 semibold | subtext | Section labels |
+| `.mono` | 16 mono | text | Relay URLs, keys |
+| `.monoSupport` | 13 mono | subtext | Log entries, identifiers |
+
+Six sizes: 34 / 22 / 17 / 16 / 13 / 11. No two are a point apart. The ramp
+this replaced had eight sizes and twenty tokens, twelve of them crowded into
+the 16/15 and 13/12 bands, where the choice between two tokens rendering a
+point apart at the same weight could only ever be a coin flip. It came up
+differently on every screen.
+
+An author's name is `.bodyStrong`: the same size as the message it
+introduces, distinguished by weight. It used to be a size *below* the
+message, which is a header in name only.
+
+### Tones (`TextTone`)
+
+The second argument to `.textRole(_:_:)`, for when the same role means
+something different here. A closed set, so a screen cannot invent a shade.
+
+| Tone | Use |
+|---|---|
+| `.primary` | Reading text |
+| `.muted` | Demoted text |
+| `.faint` | Present but receding: a quiet channel, a tombstone |
+| `.brand` | The accent. One per screen |
+| `.onBrand` | A label on a chartreuse fill |
+| `.chrome` | Toolbar and bar-button glyphs |
+| `.danger` / `.success` / `.warning` | Semantic state |
+
+`Typography` still holds the fonts themselves, for the few places that need
+a `Font` rather than a view modifier (`AttributedString`, mostly).
 
 ### Letterspacing (`Kerning`)
 
@@ -200,7 +289,7 @@ chartreuse; everything else uses plain glass.
 |---|---|---|
 | `.display` | -0.8 | Large display text tightens |
 | `.title` | -0.4 | Title text |
-| `.eyebrow` | 0.6 | Uppercased labels open up |
+| `.eyebrow` | 0.6 | Small semibold labels open up |
 
 ### Motion (`Motion`)
 

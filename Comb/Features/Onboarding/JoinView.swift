@@ -140,7 +140,7 @@ struct JoinView: View {
                             model.parseInvite()
                             focus = .invite
                         }
-                        .font(Typography.actionSecondary)
+                        .font(Typography.control)
                         .buttonStyle(.plain)
                         // Not chartreuse: once an invite is in, the accent
                         // belongs to Join, and wearing it here put the same
@@ -311,8 +311,7 @@ struct JoinView: View {
                 // a remedy for, which is its own kind of dishonesty.
                 if model.createsNewAccount {
                     Text("Joining creates an account that lives only on this iPhone. Save a copy from Settings, or losing the iPhone loses the account.")
-                        .font(Typography.caption)
-                        .foregroundStyle(Palette.subtext)
+                        .textRole(.support)
                         .multilineTextAlignment(.center)
                         .transition(.opacity)
                 }
@@ -414,27 +413,23 @@ private struct CommunityCard: View {
 
             VStack(alignment: .leading, spacing: Space.xxs) {
                 Text(name)
-                    .font(Typography.screenTitle)
-                    .foregroundStyle(Palette.text)
+                    .textRole(.title)
                     .lineLimit(1)
 
                 if let summary {
                     Text(summary)
-                        .font(Typography.secondary)
-                        .foregroundStyle(Palette.subtext)
+                        .textRole(.support)
                         .lineLimit(2)
                 } else if isVerifying {
                     Label("Checking…", systemImage: "ellipsis")
                         .labelStyle(.compact)
-                        .font(Typography.caption)
-                        .foregroundStyle(Palette.subtext)
+                        .textRole(.meta)
                 } else if isVerified {
                     // The only claim the relay actually backs: it is real and
                     // reachable. Not "this community is X", which it will not say.
                     Label("Verified community", systemImage: "checkmark.seal.fill")
                         .labelStyle(.compact)
-                        .font(Typography.caption)
-                        .foregroundStyle(Palette.success)
+                        .textRole(.meta, .success)
                 }
             }
 

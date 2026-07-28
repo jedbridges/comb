@@ -20,6 +20,7 @@ struct ThreadView: View {
     @State private var zapTarget: TimelineRow?
     @State private var reactingTo: TimelineRow?
     @State private var reactorsOf: ReactorsTarget?
+    @State private var zappersOf: ZappersTarget?
     @FocusState private var isComposing: Bool
     @State private var tray: AttachmentTray
     @State private var loader: MediaLoader
@@ -129,17 +130,18 @@ struct ThreadView: View {
                 focusedEmoji: target.emoji
             )
         }
+        .sheet(item: $zappersOf) { target in
+            ZappersSheet(session: session, messageID: target.messageID)
+        }
         .sheet(item: $zapTarget) { row in
-            if let address = row.authorLightningAddress,
-               let recipient = PublicKey(hex: row.pubkey) {
-                ZapSheet(
-                    session: session,
-                    recipient: recipient,
-                    lightningAddress: address,
-                    messageID: row.id,
-                    recipientName: row.displayName
-                )
-            }
+            ZapPresenter(
+                session: session,
+                pubkey: row.pubkey,
+                lightningAddress: row.authorLightningAddress,
+                capability: row.zapCapability,
+                messageID: row.id,
+                displayName: row.displayName
+            )
         }
     }
 
@@ -147,6 +149,8 @@ struct ThreadView: View {
         MessageRow(
             entry: entry,
             reactions: model.snapshot.reactions[entry.row.id] ?? [],
+            zaps: model.snapshot.zaps[entry.row.id],
+            pendingZap: model.snapshot.pendingZaps[entry.row.id],
             loader: loader,
                             channelID: channel.id,
             mentionNames: model.mentionNames,
@@ -160,12 +164,13 @@ struct ThreadView: View {
             },
             onRetry: { Task { await model.retry(entry.row.id) } },
             onDiscard: { Task { await model.discard(entry.row.id) } },
-            onZap: entry.row.authorLightningAddress == nil ? nil : { zapTarget = entry.row },
+            onZap: entry.row.zapCapability == .no ? nil : { zapTarget = entry.row },
             onOpenAuthor: { profileTarget = ProfileTarget(pubkey: entry.row.pubkey) },
             onPickEmoji: entry.row.isDeleted ? nil : { reactingTo = entry.row },
             onShowReactors: { emoji in
                 reactorsOf = ReactorsTarget(messageID: entry.row.id, emoji: emoji)
-            }
+            },
+            onShowZappers: { zappersOf = ZappersTarget(messageID: entry.row.id) }
             // No `onOpenThread` or `onReply`: this is already the thread, and
             // threads do not nest. The compose bar below is the way to reply.
         )
@@ -176,11 +181,9 @@ struct ThreadView: View {
     private var emptyThread: some View {
         VStack(spacing: Space.xxs) {
             Text("No replies yet")
-                .font(Typography.bodyEmphasis)
-                .foregroundStyle(Palette.text)
+                .textRole(.bodyStrong)
             Text("Start the thread below.")
-                .font(Typography.secondary)
-                .foregroundStyle(Palette.subtext)
+                .textRole(.support)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, Space.xl)
@@ -190,11 +193,12 @@ struct ThreadView: View {
     private var replyDivider: some View {
         HStack(spacing: Space.xs) {
             Text(replyLabel)
-                .font(Typography.caption)
-                .foregroundStyle(Palette.subtext)
-                .luminousChrome()
+                .textRole(.meta)
+            // A lift, not `Palette.border`: that token is a Catppuccin grey,
+            // and a grey rule drawn straight onto the gradient is the same
+            // dead patch the surfaces avoid.
             Rectangle()
-                .fill(Palette.border)
+                .fill(Palette.hairlineOnGradient)
                 .frame(height: Stroke.fine)
         }
         .padding(.vertical, Space.xs)

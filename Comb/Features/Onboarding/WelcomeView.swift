@@ -102,8 +102,7 @@ struct WelcomeView: View {
                                 .foregroundStyle(Palette.wordmarkGlow)
                                 .accessibilityLabel("Comb")
                             Text("Join a Buzz community")
-                                .font(Typography.secondary)
-                                .foregroundStyle(Palette.subtext)
+                                .textRole(.support)
                         }
                         .arrival(appeared, delay: 0.08)
                     }
@@ -187,7 +186,7 @@ struct WelcomeView: View {
                                 // visible slide on every load.
                                 .frame(maxWidth: .infinity)
                         }
-                        .font(Typography.actionSecondary)
+                        .font(Typography.control)
                         .padding(.top, Space.sm)
                         .frame(minHeight: Sizing.hitTarget)
                     }

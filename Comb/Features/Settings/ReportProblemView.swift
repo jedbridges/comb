@@ -124,8 +124,7 @@ private struct PayloadPreview: View {
         NavigationStack {
             ScrollView {
                 Text(text)
-                    .font(Typography.monoSmall)
-                    .foregroundStyle(Palette.text)
+                    .textRole(.monoSupport, .primary)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(Space.md)

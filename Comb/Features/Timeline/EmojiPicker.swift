@@ -89,9 +89,7 @@ struct EmojiPicker: View {
             }
         } header: {
             Text(name)
-                .font(Typography.eyebrow)
-                .kerning(Kerning.eyebrow)
-                .foregroundStyle(Palette.subtext)
+                .textRole(.eyebrow)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.vertical, Space.xxs)
                 .background(Palette.backgroundGradient.opacity(0.01))

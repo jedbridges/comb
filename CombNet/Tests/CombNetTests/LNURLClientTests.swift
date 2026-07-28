@@ -14,6 +14,16 @@ struct LNURLClientTests {
         override func startLoading() {
             Self.lastURL = request.url
             let (status, body) = Self.respond?(request) ?? (500, Data())
+
+            // A status of 0 means the host never answered. The stub fails the
+            // load rather than returning a response, which is how a DNS or TLS
+            // failure actually reaches URLSession, and is the only way to tell
+            // "unreachable" apart from "answered with an error".
+            guard status != 0 else {
+                client?.urlProtocol(self, didFailWithError: URLError(.cannotFindHost))
+                return
+            }
+
             let response = HTTPURLResponse(
                 url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil
             )!
@@ -127,10 +137,92 @@ struct LNURLClientTests {
         }
     }
 
-    @Test("surfaces an unreachable endpoint")
-    func unreachable() async throws {
-        Stub.respond = { _ in (404, Data()) }
+    @Test("tells an unreachable host apart from one that answered badly")
+    func unreachableVersusRejected() async throws {
+        Stub.respond = { _ in (0, Data()) }
         await #expect(throws: LNURLClient.Failure.endpointUnreachable) {
+            _ = try await makeClient().endpoint(
+                for: try #require(Zap.LightningAddress("jed@getalby.com"))
+            )
+        }
+
+        Stub.respond = { _ in (404, Data()) }
+        await #expect(throws: LNURLClient.Failure.endpointRejected(status: 404)) {
+            _ = try await makeClient().endpoint(
+                for: try #require(Zap.LightningAddress("jed@getalby.com"))
+            )
+        }
+    }
+
+    /// The case that matters most: LNURL returns its errors in the body, and
+    /// endpoints routinely send them with a 200. Reading the status first
+    /// turned the endpoint's own explanation into "malformed".
+    @Test("reads an LNURL error sent with a 200")
+    func lnurlErrorWithSuccessStatus() async throws {
+        Stub.respond = { _ in
+            (200, Data(#"{"status":"ERROR","reason":"Account is not active"}"#.utf8))
+        }
+        await #expect(throws: LNURLClient.Failure.endpointError(reason: "Account is not active")) {
+            _ = try await makeClient().endpoint(
+                for: try #require(Zap.LightningAddress("jed@getalby.com"))
+            )
+        }
+    }
+
+    @Test("reads an LNURL error from the invoice callback")
+    func invoiceError() async throws {
+        Stub.respond = { request in
+            if request.url?.path.contains("lnurlp") == true {
+                return (200, self.endpointJSON)
+            }
+            return (400, Data(#"{"status":"ERROR","reason":"Comment too long"}"#.utf8))
+        }
+
+        let zapRequest = try Zap.request(
+            amountMillisats: 21000,
+            recipient: try PrivateKey().publicKey,
+            relays: [],
+            with: try PrivateKey()
+        )
+        await #expect(throws: LNURLClient.Failure.invoiceError(reason: "Comment too long")) {
+            _ = try await makeClient().prepareZap(
+                to: try #require(Zap.LightningAddress("jed@getalby.com")),
+                amountMillisats: 21000,
+                zapRequest: zapRequest
+            )
+        }
+    }
+
+    /// `reason` is written by whoever runs the recipient's wallet host and is
+    /// rendered in Comb's UI, so it must not be able to smuggle in line breaks
+    /// or run to arbitrary length.
+    @Test("flattens and clamps hostile error text")
+    func sanitisesReason() async throws {
+        // Escaped in the source so the JSON stays valid and the newlines are
+        // real once decoded, which is what the sanitiser has to strip.
+        let hostile = #"Denied.\n\n\n"# + String(repeating: "padding ", count: 60)
+        Stub.respond = { _ in
+            (200, Data(#"{"status":"ERROR","reason":"\#(hostile)"}"#.utf8))
+        }
+
+        do {
+            _ = try await makeClient().endpoint(
+                for: try #require(Zap.LightningAddress("jed@getalby.com"))
+            )
+            Issue.record("expected an endpoint error")
+        } catch let LNURLClient.Failure.endpointError(reason) {
+            #expect(!reason.contains("\n"))
+            #expect(reason.count <= 120)
+            #expect(reason.hasPrefix("Denied. padding"))
+        }
+    }
+
+    /// An error body with no reason carries nothing worth reporting, so it must
+    /// fall through to the status rather than surfacing an empty sentence.
+    @Test("ignores an error body with no reason")
+    func errorWithoutReason() async throws {
+        Stub.respond = { _ in (503, Data(#"{"status":"ERROR"}"#.utf8)) }
+        await #expect(throws: LNURLClient.Failure.endpointRejected(status: 503)) {
             _ = try await makeClient().endpoint(
                 for: try #require(Zap.LightningAddress("jed@getalby.com"))
             )

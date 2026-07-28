@@ -54,7 +54,7 @@ enum MessageLinks {
             else { continue }
 
             switch style.kind {
-            case .bold: attributed[range].font = Typography.bodyEmphasis
+            case .bold: attributed[range].font = Typography.bodyStrong
             case .italic: attributed[range].font = Typography.bodyItalic
             case .code: attributed[range].font = Typography.mono
             case .strikethrough: attributed[range].strikethroughStyle = .single
@@ -101,7 +101,7 @@ enum MessageLinks {
                 // A mention inside a URL is part of the URL.
                 if attributed[range].link == nil {
                     attributed[range].foregroundColor = Palette.chartreuse
-                    attributed[range].font = Typography.bodyEmphasis
+                    attributed[range].font = Typography.bodyStrong
                     claimed.append(found)
                 }
             }

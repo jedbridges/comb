@@ -15,7 +15,7 @@ import GRDB
 enum Schema {
     /// Bump when any projection's shape or meaning changes. On next open, every
     /// projection table is dropped and replayed from `event`.
-    static let projectionVersion = 7
+    static let projectionVersion = 8
 
     static var migrator: DatabaseMigrator {
         var migrator = DatabaseMigrator()
@@ -173,6 +173,42 @@ enum Schema {
             try db.execute(sql: "UPDATE read_state SET updated_at = last_read_at")
         }
 
+        // Local-only, like the outbox and for the same reason: neither table can
+        // be derived from the log, so a projection rebuild must not wipe them.
+        //
+        // `zap_attempt` is what the reader did. Comb hands an invoice to a
+        // wallet and never learns whether it was paid, so an attempt is a record
+        // of the handoff and nothing more. It exists so the moment survives the
+        // sheet being dismissed and the app being killed, and so a zap that
+        // never completes ages out rather than lingering as a claim.
+        //
+        // `lnurl_issuer` is the key an endpoint signs its receipts with, learned
+        // for free whenever this reader sends a zap. Caching it is what later
+        // makes a receipt verifiable without going back to the network, which
+        // matters because the alternative is a request to a third-party host
+        // triggered by scrolling.
+        migrator.registerMigration("v5.zap.local") { db in
+            try db.execute(sql: """
+                CREATE TABLE zap_attempt (
+                    request_id   TEXT PRIMARY KEY NOT NULL,
+                    target_id    TEXT,
+                    recipient    TEXT NOT NULL,
+                    issuer       TEXT NOT NULL,
+                    amount_msats INTEGER NOT NULL,
+                    created_at   INTEGER NOT NULL
+                )
+                """)
+            try db.execute(sql: "CREATE INDEX zap_attempt_target ON zap_attempt(target_id)")
+
+            try db.execute(sql: """
+                CREATE TABLE lnurl_issuer (
+                    pubkey        TEXT PRIMARY KEY NOT NULL,
+                    issuer_pubkey TEXT NOT NULL,
+                    fetched_at    INTEGER NOT NULL
+                )
+                """)
+        }
+
         return migrator
     }
 
@@ -244,6 +280,36 @@ enum Schema {
             """)
         try db.execute(sql: "CREATE INDEX reaction_target ON reaction(target_id)")
 
+        // A zap someone received, projected from a kind 9735 receipt.
+        //
+        // `sender`, `recipient`, `amount_msats` and `target_id` all come from
+        // the kind 9734 embedded in the receipt, which the sender signed. That
+        // signature is why a republished receipt cannot be retargeted or
+        // revalued. `issuer` is the receipt's own signer, kept so a read can
+        // ask whether it was the key the recipient's endpoint advertises.
+        try db.execute(sql: """
+            CREATE TABLE zap (
+                event_id     TEXT PRIMARY KEY NOT NULL,
+                -- The kind 9734 this answers, which is how a pending attempt
+                -- learns it has been answered.
+                request_id   TEXT NOT NULL,
+                -- Null for a zap sent to a person rather than a message.
+                target_id    TEXT,
+                sender       TEXT NOT NULL,
+                recipient    TEXT NOT NULL,
+                issuer       TEXT NOT NULL,
+                amount_msats INTEGER NOT NULL,
+                comment      TEXT NOT NULL,
+                bolt11       TEXT NOT NULL,
+                created_at   INTEGER NOT NULL
+            )
+            """)
+        try db.execute(sql: "CREATE INDEX zap_target ON zap(target_id)")
+        // One payment, one row. Without this a hostile relay can republish a
+        // genuine receipt under fresh event ids and inflate the total without
+        // forging anything.
+        try db.execute(sql: "CREATE UNIQUE INDEX zap_bolt11 ON zap(bolt11)")
+
         // The deleted event stays in the log. Relays may or may not honour a
         // deletion, and the UI wants to render "message deleted" rather than a
         // hole in the conversation.
@@ -302,7 +368,7 @@ enum Schema {
     }
 
     static let projectionTables = [
-        "thread", "rich_content", "edit", "deletion", "reaction",
+        "thread", "rich_content", "edit", "deletion", "reaction", "zap",
         "profile", "channel_member", "channel", "channel_departure",
     ]
 

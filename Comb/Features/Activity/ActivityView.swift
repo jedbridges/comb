@@ -46,8 +46,7 @@ struct ActivityView: View {
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button("Done") { dismiss() }
-                    .font(Typography.actionSecondary)
-                    .foregroundStyle(Palette.chrome)
+                    .textRole(.control, .chrome)
             }
         }
         .task { await model.activate() }
@@ -118,14 +117,12 @@ private struct ActivityRow: View {
                     Spacer(minLength: Space.xxs)
 
                     Text(item.date, format: .relative(presentation: .named))
-                        .font(Typography.caption)
-                        .foregroundStyle(Palette.subtext)
+                        .textRole(.meta)
                         .lineLimit(1)
                         // Never squeezed: the headline is the part that can
                         // afford to truncate, and a half-written timestamp is
                         // worth less than a half-written name.
                         .layoutPriority(1)
-                        .luminousChrome()
                 }
 
                 // The channel and then the message, or the emoji that landed on
@@ -137,8 +134,7 @@ private struct ActivityRow: View {
                     reactionLine
                 } else {
                     Text("\(place)  \(item.text)")
-                        .font(Typography.secondary)
-                        .foregroundStyle(Palette.subtext)
+                        .textRole(.support)
                         .lineLimit(2)
                 }
             }
@@ -151,11 +147,9 @@ private struct ActivityRow: View {
     private var headline: some View {
         HStack(spacing: Space.xxs) {
             Image(systemName: symbol)
-                .font(Typography.caption)
-                .foregroundStyle(Palette.chartreuse)
+                .textRole(.meta, .brand)
             Text("\(item.actorName) \(verb)")
-                .font(Typography.name)
-                .foregroundStyle(Palette.text)
+                .textRole(.bodyStrong)
                 .lineLimit(1)
         }
     }
@@ -171,8 +165,7 @@ private struct ActivityRow: View {
                     .font(Typography.emoji)
             }
             Text(place)
-                .font(Typography.secondary)
-                .foregroundStyle(Palette.subtext)
+                .textRole(.support)
                 .lineLimit(1)
         }
     }

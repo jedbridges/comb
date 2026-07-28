@@ -45,15 +45,13 @@ struct SignInView: View {
 
                         VStack(alignment: .leading, spacing: Space.xxs) {
                             Text("Scan the code from Buzz")
-                                .font(Typography.name)
-                                .foregroundStyle(Palette.text)
+                                .textRole(.bodyStrong)
                             // The exact clicks on the other machine, because
                             // the person reading this has Buzz open beside
                             // them: the avatar menu is per community, so the
                             // community comes first.
                             Text("In the community you want to add, click your avatar, then Settings, then Mobile.")
-                                .font(Typography.caption)
-                                .foregroundStyle(Palette.subtext)
+                                .textRole(.support)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                     }

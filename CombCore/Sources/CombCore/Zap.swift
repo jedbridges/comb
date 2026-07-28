@@ -42,10 +42,20 @@ public enum Zap {
         public let allowsNostr: Bool?
         /// The pubkey the endpoint will sign receipts with.
         public let nostrPubkey: String?
+        /// How long a comment the endpoint accepts. Absent or zero means none.
+        public let commentAllowed: Int?
 
         enum CodingKeys: String, CodingKey {
             case callback, minSendable, maxSendable, allowsNostr, nostrPubkey
+            case commentAllowed
         }
+
+        /// Characters the endpoint will accept in a zap comment.
+        ///
+        /// Zero is a real answer, not a missing one: plenty of endpoints take
+        /// no comment at all, and offering the field anyway means the invoice
+        /// request is refused for a reason the reader never sees.
+        public var allowedCommentLength: Int { commentAllowed ?? 0 }
 
         /// Whether this endpoint can produce a verifiable Nostr zap receipt, as
         /// opposed to only a plain Lightning payment.
@@ -107,7 +117,7 @@ public enum Zap {
 
     // MARK: - Zap receipt (kind 9735)
 
-    /// A verified zap receipt, everything the UI needs to display and trust it.
+    /// A zap receipt's contents, once its internal claims hold together.
     public struct Receipt: Equatable, Sendable {
         public let amountMillisats: Int64
         public let sender: PublicKey
@@ -115,6 +125,17 @@ public enum Zap {
         public let targetEventID: String?
         public let comment: String
         public let receiptID: String
+        /// The id of the embedded kind 9734. This is what ties a receipt back
+        /// to the handoff the reader made, so a pending marker can stop being
+        /// shown once its answer arrives.
+        public let requestID: String
+        /// The key that signed the receipt. Whether it is the *right* key is a
+        /// separate question, answered by `verifyReceipt` where the endpoint's
+        /// advertised key is known.
+        public let issuer: String
+        /// The payment string, unique per invoice. Deduplicating on it is what
+        /// stops a genuine receipt being republished to count twice.
+        public let bolt11: String
     }
 
     public enum ReceiptError: Error, Equatable {
@@ -131,23 +152,45 @@ public enum Zap {
     /// Validates a kind 9735 receipt against the endpoint that should have
     /// issued it, and extracts what it attests.
     ///
-    /// Receipts are trivially forgeable without this: anyone can publish a 9735
-    /// claiming any amount from anyone. Trust comes entirely from the checks
-    /// here, which is why sender-attested zaps on a Buzz relay embed the receipt
-    /// and let every client run this itself rather than trusting the relay.
+    /// Two different questions live in here, and only one of them can be
+    /// answered offline. `decodeReceipt` checks everything the receipt says
+    /// about itself, which is fixed forever and needs nothing but the event.
+    /// The issuer check needs the recipient's LNURL endpoint, an HTTPS fetch,
+    /// and its answer can change when someone moves wallet provider. So the
+    /// pure half runs at write time in the projector and this whole function
+    /// runs at read time, where the endpoint's key is known.
+    ///
+    /// That split is the same shape as edits and deletions: record the claim,
+    /// judge it where the evidence is.
     public static func verifyReceipt(
         _ receipt: NostrEvent,
         expectedIssuer: PublicKey
     ) throws -> Receipt {
-        guard receipt.kind == .zapReceipt else { throw ReceiptError.notAReceipt }
+        let decoded = try decodeReceipt(receipt)
 
         // The receipt must be signed by the LNURL endpoint's advertised key, not
-        // by whoever relayed it.
-        guard receipt.pubkey == expectedIssuer.hex, receipt.isValid else {
+        // by whoever relayed it. Without this, anyone can mint a request from a
+        // key they own, sign their own receipt for it, and claim a payment that
+        // never happened.
+        guard decoded.issuer == expectedIssuer.hex else {
             throw ReceiptError.wrongIssuer
         }
+        return decoded
+    }
 
-        guard receipt.firstValue(for: "bolt11") != nil else {
+    /// Everything a receipt can be checked on without asking the network.
+    ///
+    /// What this establishes is narrower than it looks, and worth stating
+    /// plainly: the embedded request is signed by the sender, so its amount,
+    /// recipient, target and comment cannot be altered by anyone republishing
+    /// it. What it does not establish is that the signer of the *receipt* was
+    /// entitled to issue it, or that any payment occurred.
+    public static func decodeReceipt(_ receipt: NostrEvent) throws -> Receipt {
+        guard receipt.kind == .zapReceipt else { throw ReceiptError.notAReceipt }
+
+        guard receipt.isValid else { throw ReceiptError.wrongIssuer }
+
+        guard let bolt11 = receipt.firstValue(for: "bolt11") else {
             throw ReceiptError.missingBolt11
         }
 
@@ -178,7 +221,10 @@ public enum Zap {
             recipient: requestRecipient,
             targetEventID: request.firstValue(for: "e"),
             comment: request.content,
-            receiptID: receipt.id
+            receiptID: receipt.id,
+            requestID: request.id,
+            issuer: receipt.pubkey,
+            bolt11: bolt11
         )
     }
 }

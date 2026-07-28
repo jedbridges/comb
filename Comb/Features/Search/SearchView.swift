@@ -54,21 +54,16 @@ struct SearchView: View {
                     VStack(alignment: .leading, spacing: Space.xxs) {
                         HStack(spacing: Space.xs) {
                             Text(result.channelName)
-                                .font(Typography.eyebrow)
-                                .kerning(Kerning.eyebrow)
-                                .foregroundStyle(Palette.chartreuse)
+                                .textRole(.eyebrow, .brand)
                             Spacer()
                             Text(result.date, format: .dateTime.month().day())
-                                .font(Typography.caption)
-                                .foregroundStyle(Palette.subtext)
+                                .textRole(.meta)
                         }
                         Text(result.content)
-                            .font(Typography.secondary)
-                            .foregroundStyle(Palette.text)
+                            .textRole(.body)
                             .lineLimit(3)
                         Text(result.author)
-                            .font(Typography.caption)
-                            .foregroundStyle(Palette.subtext)
+                            .textRole(.meta)
                     }
                     .padding(.vertical, Space.xxs)
                     .accessibilityElement(children: .combine)

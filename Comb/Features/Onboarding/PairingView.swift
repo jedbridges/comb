@@ -53,12 +53,10 @@ struct PairingView: View {
 
             VStack(spacing: Space.md) {
                 Text("Do these numbers match?")
-                    .font(Typography.screenTitle)
-                    .foregroundStyle(Palette.text)
+                    .textRole(.title)
 
                 Text(code.spacedDigits)
-                    .font(Typography.pairingCode)
-                    .foregroundStyle(Palette.chartreuse)
+                    .textRole(.pairingCode, .brand)
                     .kerning(2)
                     // Spoken one digit at a time. "482917" read as "four
                     // hundred eighty-two thousand..." is useless for comparing
@@ -66,8 +64,7 @@ struct PairingView: View {
                     .accessibilityLabel(code.map(String.init).joined(separator: " "))
 
                 Text("Check the other device shows the same code.")
-                    .font(Typography.secondary)
-                    .foregroundStyle(Palette.subtext)
+                    .textRole(.support)
                     .multilineTextAlignment(.center)
             }
             .arrival(true)
@@ -90,13 +87,11 @@ struct PairingView: View {
     private func statusPane(_ text: String, systemImage: String) -> some View {
         VStack(spacing: Space.md) {
             Image(systemName: systemImage)
-                .font(Typography.display)
-                .foregroundStyle(Palette.subtext)
+                .textRole(.display, .muted)
                 .symbolEffect(.pulse)
                 .accessibilityHidden(true)
             Text(text)
-                .font(Typography.bodyEmphasis)
-                .foregroundStyle(Palette.text)
+                .textRole(.bodyStrong)
         }
     }
 
@@ -142,11 +137,10 @@ private struct ScannerPane: View {
     private var manualField: some View {
         VStack(spacing: Space.xs) {
             Text("or paste a pairing code")
-                .font(Typography.caption)
-                .foregroundStyle(Palette.subtext)
+                .textRole(.meta)
             HStack {
                 TextField("nostrpair://…", text: $manualEntry)
-                    .font(Typography.monoSmall)
+                    .font(Typography.monoSupport)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                 Button("Go") { onScan(manualEntry) }
@@ -162,12 +156,10 @@ private struct ScannerPane: View {
         VStack(spacing: Space.md) {
             Spacer()
             Image(systemName: "qrcode.viewfinder")
-                .font(Typography.display)
-                .foregroundStyle(Palette.subtext)
+                .textRole(.display, .muted)
                 .accessibilityHidden(true)
             Text("The camera is unavailable in the simulator. Paste a pairing code to continue.")
-                .font(Typography.secondary)
-                .foregroundStyle(Palette.subtext)
+                .textRole(.support)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, Space.xl)
             manualField

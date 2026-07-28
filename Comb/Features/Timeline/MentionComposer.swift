@@ -105,8 +105,7 @@ struct MentionSuggestions: View {
                                 .scaleEffect(0.7)
                                 .frame(width: Sizing.avatar * 0.7, height: Sizing.avatar * 0.7)
                             Text(profile.name)
-                                .font(Typography.label)
-                                .foregroundStyle(Palette.text)
+                                .textRole(.supportStrong, .primary)
                                 .lineLimit(1)
                         }
                         .padding(.trailing, Space.xs)

@@ -67,16 +67,14 @@ struct ProfileSheet: View {
             profile = try? session.store.profile(pubkey: pubkey)
         }
         .sheet(isPresented: $isZapping) {
-            if let profile, let address = profile.lightningAddress,
-               let recipient = PublicKey(hex: pubkey) {
-                ZapSheet(
-                    session: session,
-                    recipient: recipient,
-                    lightningAddress: address,
-                    messageID: nil,
-                    recipientName: profile.name
-                )
-            }
+            ZapPresenter(
+                session: session,
+                pubkey: pubkey,
+                lightningAddress: profile?.lightningAddress,
+                capability: profile?.zapCapability ?? .unknown,
+                messageID: nil,
+                displayName: profile?.name ?? String(pubkey.prefix(8))
+            )
         }
     }
 
@@ -90,13 +88,11 @@ struct ProfileSheet: View {
 
                     VStack(alignment: .leading, spacing: Space.xxs) {
                         Text(profile.name)
-                            .font(Typography.screenTitle)
-                            .foregroundStyle(Palette.text)
+                            .textRole(.title)
                             .lineLimit(2)
                         if let nip05 = profile.nip05, !nip05.isEmpty {
                             Label(nip05, systemImage: "checkmark.seal")
-                                .font(Typography.caption)
-                                .foregroundStyle(Palette.success)
+                                .textRole(.meta, .success)
                         }
                     }
                 }
@@ -104,8 +100,7 @@ struct ProfileSheet: View {
 
                 if let about = profile.about, !about.isEmpty {
                     Text(about)
-                        .font(Typography.secondary)
-                        .foregroundStyle(Palette.text)
+                        .textRole(.support, .primary)
                 }
             }
             .combRows()
@@ -133,7 +128,10 @@ struct ProfileSheet: View {
                     .disabled(isOpeningDirectMessage)
                 }
 
-                if profile.canReceiveZaps {
+                // Offered when the answer is yes, and when Comb has never seen
+                // their profile and so has no answer. Hidden only when they
+                // published one and it carries no Lightning address.
+                if profile.zapCapability != .no {
                     Button {
                         isZapping = true
                     } label: {
@@ -156,8 +154,7 @@ struct ProfileSheet: View {
             // what it is, and nobody else has to meet it.
             Section {
                 Text(PublicKey(hex: pubkey)?.npub ?? pubkey)
-                    .font(Typography.monoSmall)
-                    .foregroundStyle(Palette.subtext)
+                    .textRole(.monoSupport)
                     .textSelection(.enabled)
             } header: {
                 Text("Public identity")
@@ -219,13 +216,11 @@ struct MemberListView: View {
             AvatarView(name: member.name, picture: member.picture, pubkey: member.pubkey)
             VStack(alignment: .leading, spacing: Space.hairline) {
                 Text(member.name)
-                    .font(Typography.name)
-                    .foregroundStyle(Palette.text)
+                    .textRole(.bodyStrong)
                     .lineLimit(1)
                 if member.messageCount > 0 {
                     Text("\(member.messageCount) messages")
-                        .font(Typography.caption)
-                        .foregroundStyle(Palette.subtext)
+                        .textRole(.meta)
                 }
             }
             Spacer(minLength: 0)

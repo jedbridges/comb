@@ -18,25 +18,75 @@ enum Palette {
     /// Warm near-black. Pairs with chartreuse; not the same as the text color.
     static let ink = Color(hex: 0x231E1E)
 
-    /// Olive ink, for text sitting on a chartreuse field.
-    static let oliveInk = Color(hex: 0x717106)
-
     // MARK: - Surfaces
+    //
+    // There is no opaque surface ramp here, and that is deliberate.
+    //
+    // Catppuccin's `base`, `mantle`, `surface` and `border` were ported with
+    // the rest of the palette and are gone, along with `oliveInk`, because
+    // nothing used them any more. They are flat greys, and this app paints
+    // every screen on a coloured gradient, so each one that survived did so as
+    // a dead patch fighting the hue behind it: a grey rule drawn across the
+    // olive, a grey wash under a compose button. They were replaced one at a
+    // time by the lifts below, and the last of them went in a polish pass.
+    //
+    // Deleted rather than left unused. A grey surface token sitting in the
+    // palette is an invitation to reach for it, and the whole argument of the
+    // lift is that reaching for it is the mistake.
 
-    static let base = adaptive(light: 0xEFF1F5, dark: 0x24273A)
-    static let mantle = adaptive(light: 0xE6E9EF, dark: 0x1E2030)
-    static let surface = adaptive(light: 0xCCD0DA, dark: 0x363A4F)
-    static let border = adaptive(light: 0xBCC0CC, dark: 0x494D64)
+    /// Reading text, and the tier below it.
+    ///
+    /// These were Catppuccin's own content colours, `#CAD3F5` and `#A5ADCB`,
+    /// and both are blue: that palette assumes a navy background, and it is
+    /// right about that. Comb's background is navy only at the bottom. At the
+    /// top of every screen the gradient is olive, and a blue-lavender glyph on
+    /// warm ground reads as a cold patch that does not belong to the surface
+    /// it sits on. `luminousChrome()` existed to reconcile the two and could
+    /// not: adding light to a colour does not change its hue.
+    ///
+    /// Warm near-neutrals belong at both ends of the wash. Luminance is held
+    /// close to the values they replace, so contrast ratios hold and nothing
+    /// jumps in brightness; only the hue moves. They are the same family as
+    /// `chrome` below, one and two steps down, which is why the toolbar now
+    /// looks like it was drawn by the same hand as the content under it.
+    static let text = adaptive(light: 0x413E33, dark: 0xDEDCD2)
+    static let subtext = adaptive(light: 0x67645A, dark: 0xB8B5A8)
 
-    // MARK: - Content
-
-    static let text = adaptive(light: 0x4C4F69, dark: 0xCAD3F5)
-    static let subtext = adaptive(light: 0x6C6F85, dark: 0xA5ADCB)
+    /// A third tier, for text that is present but deliberately receding: a
+    /// channel nobody has posted in, a tombstone where a message used to be,
+    /// standing context about a room.
+    ///
+    /// It exists as a token because it existed anyway. It was `subtext` at
+    /// `.opacity(0.8)`, at `0.7`, at `0.55` and at `0.45`, four values applied
+    /// by hand with no rule for which, which is a tier whether or not anyone
+    /// named it. Named, it can be tuned once, and it was: the hand-rolled
+    /// values measured as low as 2.2:1 against the gradient.
+    ///
+    /// **A narrow tier, and deliberately so.** 4.54:1 at its worst point on
+    /// the gradient, which clears WCAG AA for body text with nothing to spare.
+    /// It sits about a tenth of a luminance step under `subtext` rather than
+    /// the half-step the eye would prefer, because the backdrop only affords
+    /// so much headroom before a third tier stops being readable. Receding is
+    /// as far as it goes: if something needs to disappear more than this, it
+    /// should be saying less rather than saying it fainter.
+    static let faint = adaptive(light: 0x7C7972, dark: 0xB1AD9F)
 
     /// A hue-preserving lift for surfaces sitting on the gradient. White at low
     /// opacity shifts lightness without introducing a competing grey.
     static let liftOnGradient = Color.white.opacity(0.07)
     static let hairlineOnGradient = Color.white.opacity(0.10)
+
+    /// The fill under a quiet control or a well: compose-bar buttons, the
+    /// add-reaction chip, an image placeholder waiting on its bytes.
+    ///
+    /// A stronger lift than `liftOnGradient`, because a control has to read as
+    /// a thing you can press rather than as a slightly lighter patch of
+    /// background. These were `Palette.surface` at 40% and at 50%, which is
+    /// grey on colour twice over: `surface` is a literal Catppuccin grey, and
+    /// two values a tenth apart doing the same job is the same coin flip the
+    /// type ramp had.
+    static let controlFill = adaptiveOverlay(light: .black, lightAlpha: 0.08,
+                                             dark: .white, darkAlpha: 0.12)
 
     /// Nav-bar and toolbar glyphs. Solid, and never blended.
     ///
@@ -79,7 +129,14 @@ enum Palette {
 
     // MARK: - Semantic
 
-    static let danger = adaptive(light: 0xD20F39, dark: 0xED8796)
+    /// Errors and destructive actions.
+    ///
+    /// Lightened from Catppuccin's `#ED8796`, which measured 2.77:1 against
+    /// the gradient: the lowest ratio in the app, on the copy that matters
+    /// most at the moment it appears. The hue is unchanged and the saturation
+    /// is barely touched, so it still reads as a warning rather than as a
+    /// decoration; it is the value that moved.
+    static let danger = adaptive(light: 0xD20F39, dark: 0xF2A3AE)
     static let success = adaptive(light: 0x40A02B, dark: 0xA6DA95)
     static let warning = adaptive(light: 0xDF8E1D, dark: 0xEED49F)
 
@@ -119,8 +176,21 @@ enum Palette {
     /// the wash holds its olive at the top and settles into navy at the bottom
     /// instead of ramping at a constant rate. A constant ramp reads as a
     /// mechanical fade; eased, it reads as light falling off.
+    ///
+    /// **Why the olive is this dark.** It was `#4A4616`, and that one value
+    /// was the reason the app could not meet its own accessibility bar. A
+    /// backdrop's luminance sets the ceiling on how many readable text tiers
+    /// can sit on it: at 0.059, clearing 4.5:1 needed a near-white foreground,
+    /// and needed more again once a row lift was on top. There was room for
+    /// two tiers, and the design wanted three, so `subtext` sat at 3.32:1 and
+    /// the accent itself at 4.43:1 with nowhere to go.
+    ///
+    /// Darkening the top is the one change that fixes all of them at once,
+    /// because every ratio in the app is measured against this wash. It is
+    /// also the more honest reading of the brand: a dark gradient with one
+    /// bright accent, where the accent now has the room to be bright.
     static let backgroundGradient = LinearGradient(
-        stops: gradientStops(light: (0xE6E6B6, 0xC4D0DA), dark: (0x4A4616, 0x0A1423)),
+        stops: gradientStops(light: (0xE6E6B6, 0xC4D0DA), dark: (0x2B280C, 0x0A1423)),
         startPoint: .top,
         endPoint: .bottom
     )

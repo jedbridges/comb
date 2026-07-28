@@ -20,6 +20,7 @@ struct ChannelTimelineView: View {
     @State private var deleting: TimelineRow?
     @State private var reactingTo: TimelineRow?
     @State private var reactorsOf: ReactorsTarget?
+    @State private var zappersOf: ZappersTarget?
     @FocusState private var isComposing: Bool
     @State private var isAwayFromBottom = false
     @State private var arrivalsWhileAway = 0
@@ -84,38 +85,7 @@ struct ChannelTimelineView: View {
                         if entry.showsDayBreak {
                             DayBreak(date: entry.row.date)
                         }
-                        MessageRow(
-                            entry: entry,
-                            reactions: model.snapshot.reactions[entry.row.id] ?? [],
-                            loader: loader,
-                            channelID: channel.id,
-                            mentionNames: model.mentionNames,
-                            mentionsMe: entry.row.mentions(session.me.hex),
-                            onReact: { emoji in
-                                Task {
-                                    if await !model.toggleReaction(emoji, on: entry.row.id) {
-                                        toast = ToastMessage(FailureText.reaction, tone: .failure)
-                                    }
-                                }
-                            },
-                            onRetry: { Task { await model.retry(entry.row.id) } },
-                            onDiscard: { Task { await model.discard(entry.row.id) } },
-                            onZap: entry.row.authorLightningAddress == nil ? nil : { zapTarget = entry },
-                            onOpenAuthor: { profileTarget = ProfileTarget(pubkey: entry.row.pubkey) },
-                            onOpenThread: { threadRoot = entry.row },
-                            onReply: entry.row.isDeleted ? nil : { threadRoot = entry.row },
-                            onEdit: ownMessageAction(entry.row) {
-                                editing = entry.row
-                                draft = entry.row.displayContent
-                            },
-                            onDelete: ownMessageAction(entry.row) { deleting = entry.row },
-                            onPickEmoji: entry.row.isDeleted ? nil : { reactingTo = entry.row },
-                            onShowReactors: { showReactors(entry.row, $0) },
-                            onMarkUnread: { markUnread(entry.row) },
-                            onRemind: { remind(entry.row, at: $0) },
-                            onReport: reportAction(entry.row),
-                            onBlock: blockAction(entry.row)
-                        )
+                        messageRow(entry)
                         .background {
                             if entry.row.id == highlightedID {
                                 RoundedRectangle(cornerRadius: Radii.bubble)
@@ -294,8 +264,7 @@ struct ChannelTimelineView: View {
                         )
                     } label: {
                         Label("\(channel.memberCount)", systemImage: "person.2")
-                            .font(Typography.count)
-                            .foregroundStyle(Palette.chrome)
+                            .textRole(.count, .chrome)
                     }
                     .accessibilityLabel("\(channel.memberCount) members")
                 }
@@ -324,23 +293,65 @@ struct ChannelTimelineView: View {
                 focusedEmoji: target.emoji
             )
         }
+        .sheet(item: $zappersOf) { target in
+            ZappersSheet(session: session, messageID: target.messageID)
+        }
         .sheet(item: $reportTarget) { row in
             ReportSheet(session: session, message: row, channelID: channel.id) { outcome in
                 toast = ToastMessage(outcome)
             }
         }
         .sheet(item: $zapTarget) { entry in
-            if let address = entry.row.authorLightningAddress,
-               let recipient = PublicKey(hex: entry.row.pubkey) {
-                ZapSheet(
-                    session: session,
-                    recipient: recipient,
-                    lightningAddress: address,
-                    messageID: entry.row.id,
-                    recipientName: entry.row.displayName
-                )
-            }
+            ZapPresenter(
+                session: session,
+                pubkey: entry.row.pubkey,
+                lightningAddress: entry.row.authorLightningAddress,
+                capability: entry.row.zapCapability,
+                messageID: entry.row.id,
+                displayName: entry.row.displayName
+            )
         }
+    }
+
+    /// Its own function rather than inline in the `ForEach`. With the zap
+    /// tallies added, the call has enough arguments that the type-checker gave
+    /// up on the surrounding expression outright.
+    private func messageRow(_ entry: ChannelTimeline.Entry) -> some View {
+        MessageRow(
+            entry: entry,
+            reactions: model.snapshot.reactions[entry.row.id] ?? [],
+            zaps: model.snapshot.zaps[entry.row.id],
+            pendingZap: model.snapshot.pendingZaps[entry.row.id],
+            loader: loader,
+            channelID: channel.id,
+            mentionNames: model.mentionNames,
+            mentionsMe: entry.row.mentions(session.me.hex),
+            onReact: { emoji in
+                Task {
+                    if await !model.toggleReaction(emoji, on: entry.row.id) {
+                        toast = ToastMessage(FailureText.reaction, tone: .failure)
+                    }
+                }
+            },
+            onRetry: { Task { await model.retry(entry.row.id) } },
+            onDiscard: { Task { await model.discard(entry.row.id) } },
+            onZap: entry.row.zapCapability == .no ? nil : { zapTarget = entry },
+            onOpenAuthor: { profileTarget = ProfileTarget(pubkey: entry.row.pubkey) },
+            onOpenThread: { threadRoot = entry.row },
+            onReply: entry.row.isDeleted ? nil : { threadRoot = entry.row },
+            onEdit: ownMessageAction(entry.row) {
+                editing = entry.row
+                draft = entry.row.displayContent
+            },
+            onDelete: ownMessageAction(entry.row) { deleting = entry.row },
+            onPickEmoji: entry.row.isDeleted ? nil : { reactingTo = entry.row },
+            onShowReactors: { showReactors(entry.row, $0) },
+            onShowZappers: { zappersOf = ZappersTarget(messageID: entry.row.id) },
+            onMarkUnread: { markUnread(entry.row) },
+            onRemind: { remind(entry.row, at: $0) },
+            onReport: reportAction(entry.row),
+            onBlock: blockAction(entry.row)
+        )
     }
 
     /// The action, only when the message is the viewer's own and not deleted.
@@ -470,8 +481,7 @@ struct ChannelTimelineView: View {
                         .font(Typography.count)
                 }
             }
-            .font(Typography.actionSecondary)
-            .foregroundStyle(Palette.text)
+            .textRole(.control)
             .padding(.horizontal, Space.sm)
             .frame(minHeight: Sizing.hitTarget)
         }
@@ -492,11 +502,9 @@ struct ChannelTimelineView: View {
         VStack(spacing: Space.sm) {
             ChannelGlyph(name: channel.name, size: 64)
             Text("Nothing here yet")
-                .font(Typography.bodyEmphasis)
-                .foregroundStyle(Palette.text)
+                .textRole(.bodyStrong)
             Text("Say the first thing.")
-                .font(Typography.secondary)
-                .foregroundStyle(Palette.subtext)
+                .textRole(.support)
         }
         .arrival(true)
         .accessibilityElement(children: .combine)
@@ -516,7 +524,7 @@ struct ChannelTimelineView: View {
                         // is a decision rather than a repeat of one that
                         // already did not work.
                         Text(model.olderFailed ? "Try again" : "Earlier messages")
-                            .font(Typography.label)
+                            .font(Typography.supportStrong)
                     }
                 }
                 .buttonStyle(.glass)
@@ -533,9 +541,11 @@ struct ChannelTimelineView: View {
                 // Quieter than the button and tight against it, so it reads as
                 // that control's own state rather than as a third thing
                 // stacked in the same column.
+                // `muted`, not `faint`. This sentence is the only thing that
+                // says the fetch failed, and a failure should not be the
+                // quietest thing on the screen it happened on.
                 Text("Could not reach this community")
-                    .font(Typography.caption)
-                    .foregroundStyle(Palette.subtext.opacity(0.8))
+                    .textRole(.meta)
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, Space.md)
             }
@@ -549,6 +559,10 @@ struct ChannelTimelineView: View {
 struct MessageRow: View {
     let entry: ChannelTimeline.Entry
     let reactions: [ReactionSummary]
+    /// The zaps this message has been seen to receive.
+    var zaps: ZapSummary?
+    /// The reader's own zap, handed to a wallet and not yet answered.
+    var pendingZap: ZapAttempt?
     let loader: MediaLoader
     /// Needed only to build a "Copy link" URL, which names the channel as
     /// well as the message.
@@ -574,6 +588,8 @@ struct MessageRow: View {
     var onPickEmoji: (() -> Void)?
     /// Long-press on a reaction chip: shows who reacted.
     var onShowReactors: ((String) -> Void)?
+    /// Long-press on the zap chip: shows who zapped, and what the total means.
+    var onShowZappers: (() -> Void)?
     /// Marks the channel unread from this message and returns to the list.
     var onMarkUnread: (() -> Void)?
     /// Schedules a local reminder for this message at the chosen offset.
@@ -633,15 +649,15 @@ struct MessageRow: View {
                                 // someone else's choice, and it must not shove
                                 // the timestamp off the screen.
                                 Text(entry.row.displayName)
-                                    .font(Typography.name)
-                                    .foregroundStyle(Palette.text)
+                                    // Body size, not below it. A name set
+                                    // smaller than the message it introduces
+                                    // is a header in weight only.
+                                    .textRole(.bodyStrong)
                                     .lineLimit(1)
                             }
                             .buttonStyle(.plain)
                             Text(entry.row.date, format: .dateTime.hour().minute())
-                                .font(Typography.caption)
-                                .foregroundStyle(Palette.subtext)
-                                .luminousChrome()
+                                .textRole(.meta)
                         }
                     }
 
@@ -666,12 +682,17 @@ struct MessageRow: View {
                 // feature behind knowledge.
                 .onTapGesture { onOpenThread?() }
 
-                if !reactions.isEmpty {
+                // Zaps get the row too, so a message with sats and no reactions
+                // still shows them.
+                if !reactions.isEmpty || zaps != nil || pendingZap != nil {
                     ReactionBar(
                         reactions: reactions,
                         onTap: onReact,
                         onPickEmoji: onPickEmoji,
-                        onShowReactors: onShowReactors
+                        onShowReactors: onShowReactors,
+                        zaps: zaps,
+                        pendingZap: pendingZap,
+                        onShowZappers: onShowZappers
                     )
                     // The first reaction on a message adds a whole row beneath
                     // it. Growing from the leading edge, where the chips are,
@@ -746,8 +767,7 @@ struct MessageRow: View {
     private var content: some View {
         if entry.row.isDeleted {
             Text("Message deleted")
-                .font(Typography.secondary.italic())
-                .foregroundStyle(Palette.subtext.opacity(0.7))
+                .textRole(.bodyItalic)
         } else {
             let text = entry.row.displayContent
             if !text.isEmpty {
@@ -766,8 +786,7 @@ struct MessageRow: View {
 
         if case .failed(let reason) = entry.row.delivery {
             Label(reason ?? "Could not send", systemImage: "exclamationmark.circle")
-                .font(Typography.caption)
-                .foregroundStyle(Palette.danger)
+                .textRole(.meta, .danger)
         }
     }
 
@@ -859,7 +878,7 @@ struct MessageRow: View {
     private var editedMarker: Text {
         guard entry.row.isEdited else { return Text(verbatim: "") }
         return Text("  (edited)")
-            .font(Typography.caption)
+            .font(Typography.meta)
             .foregroundStyle(Palette.subtext)
     }
 }
@@ -900,11 +919,10 @@ struct DirectMessageDisclosure: View {
             Image(systemName: "lock.open")
         }
         .labelStyle(.compact)
-        .font(Typography.caption)
         // Quieter than the date pills it sits above. This is standing context
         // about the room, not a marker in the conversation, and at full subtext
         // weight it read as the loudest thing on an otherwise empty screen.
-        .foregroundStyle(Palette.subtext.opacity(0.8))
+        .textRole(.meta, .faint)
         .multilineTextAlignment(.leading)
         // No chip. As a pill it was a paragraph wearing the same shape as the
         // date marker and the backfill button, so three unrelated things all
@@ -923,8 +941,7 @@ struct DayBreak: View {
         HStack {
             Spacer()
             Text(label)
-                .font(Typography.caption)
-                .foregroundStyle(Palette.subtext)
+                .textRole(.meta)
                 .combChip()
             Spacer()
         }
@@ -956,13 +973,11 @@ private struct ThreadAffordance: View {
             // both what this is and that it goes somewhere.
             HStack(spacing: Space.xxs) {
                 Text(count == 1 ? "1 reply" : "\(count) replies")
-                    .font(Typography.label)
                     .contentTransition(.numericText())
                 Image(systemName: "chevron.right")
-                    .font(Typography.icon)
                     .foregroundStyle(Palette.subtext)
             }
-            .foregroundStyle(Palette.text)
+            .textRole(.supportStrong, .primary)
             .combChip()
         }
         .buttonStyle(.plain)
@@ -979,9 +994,22 @@ struct ReactionBar: View {
     var onPickEmoji: (() -> Void)?
     /// Long-press on a chip, carrying the emoji pressed.
     var onShowReactors: ((String) -> Void)?
+    /// The zaps this message has been seen to receive, if any.
+    var zaps: ZapSummary?
+    /// The reader's own zap of this message, still waiting on its receipt.
+    var pendingZap: ZapAttempt?
+    /// Long-press on the zap chip.
+    var onShowZappers: (() -> Void)?
 
     var body: some View {
         HStack(spacing: Space.xs) {
+            // Leading, so the money reads before the faces.
+            if let zaps {
+                ZapChip(zaps: zaps, onShowZappers: { onShowZappers?() })
+            } else if pendingZap != nil {
+                PendingZapChip()
+            }
+
             ForEach(reactions) { reaction in
                 // Tapping a chip toggles: join the pile, or withdraw your own.
                 // Button, with the long press added simultaneously rather
@@ -1006,12 +1034,10 @@ struct ReactionBar: View {
                 onPickEmoji?()
             } label: {
                 Image(systemName: "plus")
-                    .font(Typography.label)
-                    .foregroundStyle(Palette.subtext)
+                    .textRole(.supportStrong)
                     .padding(.horizontal, Space.xs)
                     .padding(.vertical, Space.xxs)
-                    .background(Palette.surface.opacity(0.5), in: .capsule)
-                    .luminousChrome()
+                    .background(Palette.controlFill, in: .capsule)
             }
             .buttonStyle(.plain)
             .disabled(onPickEmoji == nil)
@@ -1020,6 +1046,74 @@ struct ReactionBar: View {
         .padding(.top, Space.xxs)
     }
 
+}
+
+/// The sats a message has been seen to receive.
+///
+/// Read-only, unlike a reaction chip: tapping cannot add to it, because a zap
+/// goes through a wallet. Long press opens the list, which is also where the
+/// caveats about what this number means live.
+///
+/// Never chartreuse-filled. A message can already carry a chartreuse reaction
+/// pill, and a bolt is the single most tempting glyph in this app to make
+/// yellow, so the reader's own zap is marked by a brand-coloured glyph on the
+/// usual lift instead. That keeps one accent per bubble.
+///
+/// No burst and no haptic, unlike a reaction. A receipt arrives asynchronously,
+/// possibly minutes later and possibly while the app is in a pocket, and
+/// DESIGN.md is explicit that haptics fire only for what the reader did.
+private struct ZapChip: View {
+    let zaps: ZapSummary
+    let onShowZappers: () -> Void
+
+    var body: some View {
+        Button(action: onShowZappers) {
+            HStack(spacing: Space.xxs) {
+                // Emoji size, not count size. A reaction chip sets its emoji at
+                // body size, and both chips share the same capsule, so a glyph
+                // at caption size here made the zap chip visibly shorter than
+                // the pile sitting next to it in the same row.
+                Image(systemName: "bolt.fill")
+                    .font(Typography.emoji)
+                    .foregroundStyle(zaps.includesMe ? Palette.chartreuse : Palette.subtext)
+                Text("\(zaps.totalSats.formatted())")
+                    .font(Typography.count)
+                    .contentTransition(.numericText())
+                    .foregroundStyle(Palette.subtext)
+            }
+            .tallyChip(isMine: false)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(
+            "\(zaps.totalSats) sats"
+                + (zaps.includesMe ? ", including yours" : "")
+        )
+        .accessibilityHint("Shows who zapped this")
+    }
+}
+
+/// The reader's own zap, handed to a wallet and not yet answered by a receipt.
+///
+/// Deliberately not a number and deliberately not part of the tally. Comb does
+/// not know whether the payment happened, so counting it would assert something
+/// it cannot support, and there is no timeout that distinguishes "abandoned"
+/// from "the relay is slow". It says only what is true: the reader did
+/// something and Comb is waiting. Visible to nobody else, and it ages out.
+private struct PendingZapChip: View {
+    var body: some View {
+        HStack(spacing: Space.xxs) {
+            // Matched to the zap chip it will be replaced by, so the row does
+            // not change height when the receipt lands.
+            Image(systemName: "bolt")
+                .font(Typography.emoji)
+                .foregroundStyle(Palette.subtext)
+            Text("Waiting")
+                .font(Typography.count)
+                .foregroundStyle(Palette.subtext)
+        }
+        .tallyChip(isMine: false)
+        .accessibilityLabel("Your zap is waiting for a receipt")
+    }
 }
 
 /// One reaction pile, and what happens when you join it.
@@ -1106,22 +1200,12 @@ private struct ReactionChip: View {
                 // lost its number.
                 .foregroundStyle(reaction.includesMe ? Palette.ink : Palette.subtext)
         }
-        .padding(.horizontal, Space.xs)
-        .padding(.vertical, Space.xxs)
         // The same lift the glyphs use, for the same reason: a Catppuccin grey
         // is a literal grey and fights the gradient's hue instead of belonging
         // to it, so an unjoined pile read as a dead slab dropped on the wash.
-        .background(
-            reaction.includesMe
-                ? AnyShapeStyle(Palette.chartreuse)
-                : AnyShapeStyle(Palette.glyphLift),
-            in: .capsule
-        )
-        .overlay {
-            if !reaction.includesMe {
-                Capsule().strokeBorder(Palette.glyphHairline, lineWidth: Stroke.hairline)
-            }
-        }
+        // Shared with the zap chip, which is the same shape counting something
+        // else.
+        .tallyChip(isMine: reaction.includesMe)
         // The thing you touched responds, whatever else happens. Overshoot
         // then settle, on two springs rather than one, so the recovery is
         // slower than the strike.
@@ -1184,6 +1268,15 @@ struct ReactorsTarget: Identifiable, Hashable {
     var id: String { messageID + emoji }
 }
 
+/// The message whose zaps are being looked at. A wrapper rather than a bare
+/// `String?`, because `sheet(item:)` needs `Identifiable` and making every
+/// string in the app identifiable to get one sheet is not a trade worth making.
+struct ZappersTarget: Identifiable, Hashable {
+    let messageID: String
+
+    var id: String { messageID }
+}
+
 /// Who is typing, just above the compose bar.
 ///
 /// Reserves no space when silent and animates in, so a channel does not
@@ -1197,9 +1290,7 @@ struct TypingStrip: View {
         Group {
             if let summary {
                 Text(summary)
-                    .font(Typography.caption)
-                    .foregroundStyle(Palette.subtext)
-                    .luminousChrome()
+                    .textRole(.meta)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, Space.lg)
                     .padding(.bottom, Space.xxs)
@@ -1253,15 +1344,12 @@ struct ComposeBar: View {
             if let editingPreview {
                 HStack(spacing: Space.xs) {
                     Image(systemName: "pencil")
-                        .font(Typography.caption)
-                        .foregroundStyle(Palette.chartreuse)
+                        .textRole(.meta, .brand)
                     VStack(alignment: .leading, spacing: 0) {
                         Text("Editing")
-                            .font(Typography.captionEmphasis)
-                            .foregroundStyle(Palette.text)
+                            .textRole(.metaStrong)
                         Text(editingPreview)
-                            .font(Typography.caption)
-                            .foregroundStyle(Palette.subtext)
+                            .textRole(.meta)
                             .lineLimit(1)
                     }
                     Spacer(minLength: Space.xs)
@@ -1291,8 +1379,7 @@ struct ComposeBar: View {
                     "Too long for one message. Trim it or split it up.",
                     systemImage: "exclamationmark.circle"
                 )
-                .font(Typography.caption)
-                .foregroundStyle(Palette.danger)
+                .textRole(.meta, .danger)
                 .padding(.horizontal, Space.sm)
                 .padding(.top, Space.xxs)
             }
@@ -1305,8 +1392,7 @@ struct ComposeBar: View {
             VStack(alignment: .leading, spacing: Space.xs) {
                 TextField(placeholder, text: $draft, axis: .vertical)
                     .lineLimit(1...6)
-                    .font(Typography.body)
-                    .foregroundStyle(Palette.text)
+                    .textRole(.body)
                     .textFieldStyle(.plain)
                     .focused(focus)
                     .padding(.horizontal, Space.xs)
@@ -1330,13 +1416,10 @@ struct ComposeBar: View {
                             matching: .images,
                             photoLibrary: .shared()
                         ) {
-                            // No `luminousChrome()` here: the picker's label
-                            // closure is not main-actor isolated.
                             Image(systemName: "plus")
-                                .font(Typography.actionSecondary)
-                                .foregroundStyle(Palette.text)
+                                .textRole(.control)
                                 .frame(width: Sizing.compactControl, height: Sizing.compactControl)
-                                .background(Palette.surface.opacity(0.5), in: .circle)
+                                .background(Palette.controlFill, in: .circle)
                                 .contentShape(.circle)
                         }
                         .accessibilityLabel("Add a photo")
@@ -1346,11 +1429,10 @@ struct ComposeBar: View {
 
                     Button(action: onSend) {
                         Image(systemName: "arrow.up")
-                            .font(Typography.actionSecondary)
-                            .foregroundStyle(canSend ? Palette.ink : Palette.subtext)
+                            .textRole(.control, canSend ? .onBrand : .muted)
                             .frame(width: Sizing.compactControl, height: Sizing.compactControl)
                             .background(
-                                canSend ? Palette.chartreuse : Palette.surface.opacity(0.5),
+                                canSend ? Palette.chartreuse : Palette.controlFill,
                                 in: .circle
                             )
                             .contentShape(.circle)
@@ -1673,4 +1755,54 @@ final class ChannelTimeline {
             }
         }
     }
+}
+
+// MARK: - Previews
+
+// The zap chip's states cannot be reached by driving the app: a real total
+// needs a receipt from someone else's wallet, and the pending marker needs a
+// payment. These render them directly, which is the only way to look at them.
+#Preview("Zap chips") {
+    VStack(alignment: .leading, spacing: Space.md) {
+        // Somebody else's zaps.
+        ReactionBar(
+            reactions: [],
+            onTap: { _ in },
+            zaps: ZapSummary(
+                totalMillisats: 21_000, count: 1,
+                includesMe: false, issuersKnown: false
+            )
+        )
+
+        // Including the reader's own: a chartreuse bolt on the usual lift,
+        // never a chartreuse fill.
+        ReactionBar(
+            reactions: [],
+            onTap: { _ in },
+            zaps: ZapSummary(
+                totalMillisats: 1_250_000, count: 8,
+                includesMe: true, issuersKnown: true
+            )
+        )
+
+        // A four-figure total, which is where the chip's width is tested.
+        ReactionBar(
+            reactions: [],
+            onTap: { _ in },
+            onPickEmoji: {},
+            zaps: ZapSummary(
+                totalMillisats: 210_000_000, count: 42,
+                includesMe: true, issuersKnown: false
+            )
+        )
+
+        // Handed to a wallet, no receipt yet. A word, not a number.
+        ReactionBar(reactions: [], onTap: { _ in }, pendingZap: ZapAttempt(
+            requestID: "req", targetID: "msg", recipient: "r",
+            issuer: "i", amountMillisats: 21_000, createdAt: 0
+        ))
+    }
+    .padding(Space.lg)
+    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+    .background(Palette.backgroundGradient.ignoresSafeArea())
 }

@@ -71,8 +71,7 @@ struct ReactorsSheet: View {
                             HStack(spacing: Space.sm) {
                                 AvatarView(name: reactor.name, picture: reactor.picture)
                                 Text(reactor.name)
-                                    .font(Typography.name)
-                                    .foregroundStyle(Palette.text)
+                                    .textRole(.bodyStrong)
                                     .lineLimit(1)
                                 Spacer(minLength: 0)
                             }
@@ -86,8 +85,7 @@ struct ReactorsSheet: View {
                         Text(group.emoji)
                             .font(Typography.emoji)
                         Text("\(group.reactors.count)")
-                            .font(Typography.count)
-                            .foregroundStyle(Palette.subtext)
+                            .textRole(.count)
                     }
                     .accessibilityElement(children: .combine)
                     .accessibilityLabel("\(group.reactors.count) reacted with \(group.emoji)")

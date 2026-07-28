@@ -54,7 +54,7 @@ struct PolicyDocumentView: View {
             switch self {
             case .heading(let level, let text):
                 Text(PolicyDocumentView.inline(text))
-                    .font(level <= 1 ? Typography.screenTitle : Typography.bodyEmphasis)
+                    .font(level <= 1 ? Typography.title : Typography.bodyStrong)
                     .padding(.top, Space.sm)
             case .bullet(let text):
                 HStack(alignment: .firstTextBaseline, spacing: Space.sm) {

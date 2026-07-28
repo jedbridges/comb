@@ -129,8 +129,7 @@ struct ChannelListView: View {
                     isShowingActivity = true
                 } label: {
                     Image(systemName: "bell")
-                        .font(Typography.actionSecondary)
-                        .foregroundStyle(Palette.chrome)
+                        .textRole(.control, .chrome)
                 }
                 .accessibilityLabel("Activity")
             }
@@ -139,8 +138,7 @@ struct ChannelListView: View {
                     isShowingSettings = true
                 } label: {
                     Image(systemName: "gearshape")
-                        .font(Typography.actionSecondary)
-                        .foregroundStyle(Palette.chrome)
+                        .textRole(.control, .chrome)
                 }
                 .accessibilityLabel("Settings")
             }
@@ -286,8 +284,7 @@ struct ChannelListView: View {
             }
         } label: {
             Image(systemName: "square.grid.2x2")
-                .font(Typography.actionSecondary)
-                .foregroundStyle(Palette.chrome)
+                .textRole(.control, .chrome)
         }
         .accessibilityLabel("Communities")
         .accessibilityHint("Switch between communities or add another")
@@ -305,7 +302,7 @@ struct ChannelListView: View {
 
                     if channel.id != model.channels.last?.id {
                         Divider()
-                            .overlay(Palette.border.opacity(0.5))
+                            .overlay(Palette.hairlineOnGradient)
                             .padding(.leading, Space.md + Sizing.channelCell + Space.xs)
                     }
                 }
@@ -362,9 +359,7 @@ struct ChannelListView: View {
     ) -> some View {
         VStack(alignment: .leading, spacing: Space.xs) {
             Text(title)
-                .font(Typography.eyebrow)
-                .kerning(Kerning.eyebrow)
-                .foregroundStyle(Palette.subtext)
+                .textRole(.eyebrow)
                 .padding(.leading, Space.xs)
 
             VStack(spacing: 0) { content() }
@@ -376,21 +371,18 @@ struct ChannelListView: View {
         VStack(alignment: .leading, spacing: Space.xxs) {
             HStack(spacing: Space.xs) {
                 Text(hit.channelName)
-                    .font(Typography.eyebrow)
-                    .kerning(Kerning.eyebrow)
-                    .foregroundStyle(Palette.subtext)
+                    .textRole(.eyebrow)
                 Spacer(minLength: Space.xs)
                 Text(hit.date, format: .dateTime.month().day())
-                    .font(Typography.caption)
-                    .foregroundStyle(Palette.subtext)
+                    .textRole(.meta)
             }
+            // The hit itself is the message, so it is set as one: the same
+            // role the timeline gives it, not a size below.
             Text(hit.content)
-                .font(Typography.secondary)
-                .foregroundStyle(Palette.text)
+                .textRole(.body)
                 .lineLimit(3)
             Text(hit.author)
-                .font(Typography.caption)
-                .foregroundStyle(Palette.subtext)
+                .textRole(.meta)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(Space.sm)
@@ -404,11 +396,9 @@ struct ChannelListView: View {
                 .opacity(0.5)
                 .accessibilityHidden(true)
             Text("No channels yet")
-                .font(Typography.bodyEmphasis)
-                .foregroundStyle(Palette.text)
+                .textRole(.bodyStrong)
             Text("Channels will appear here once this community adds them.")
-                .font(Typography.secondary)
-                .foregroundStyle(Palette.subtext)
+                .textRole(.support)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, Space.xl)
         }
@@ -494,8 +484,10 @@ private struct ChannelRow: View {
         Text(channel.name)
             // Weight is the scanning cue: you should find what is new
             // without reading a single word.
-            .font(activity == .unread ? Typography.bodyEmphasis : Typography.name)
-            .foregroundStyle(activity == .quiet ? Palette.subtext : Palette.text)
+            .textRole(
+                activity == .unread ? .bodyStrong : .body,
+                activity == .quiet ? .muted : .primary
+            )
             // A group conversation is titled with names, and names do not
             // abbreviate. One line would cut "Alice Chen & 3 others" mid-word
             // and take the tail with it, losing the only part that says this is
@@ -510,12 +502,10 @@ private struct ChannelRow: View {
         case .unread, .settled:
             if let when = channel.lastActivityDate {
                 Text(when, format: .relative(presentation: .named))
-                    .font(Typography.caption)
-                    .foregroundStyle(Palette.subtext)
+                    .textRole(.meta)
                     // One line always: a relative date that wraps to four
                     // lines is worse than one that is simply shorter.
                     .lineLimit(1)
-                    .luminousChrome()
             }
         case .quiet:
             // With no second line, the member count rides up here rather
@@ -527,8 +517,7 @@ private struct ChannelRow: View {
     private var previewLine: some View {
         HStack(spacing: Space.xxs) {
             Text(preview ?? "")
-                .font(Typography.secondary)
-                .foregroundStyle(activity == .unread ? Palette.text : Palette.subtext)
+                .textRole(.support, activity == .unread ? .primary : .muted)
                 .lineLimit(1)
 
             Spacer(minLength: Space.xs)
@@ -561,8 +550,7 @@ private struct ChannelRow: View {
     private var memberCount: some View {
         if showsMemberCount {
             memberCountLabel
-                .foregroundStyle(Palette.subtext.opacity(activity == .quiet ? 0.7 : 1))
-                .luminousChrome()
+                .foregroundStyle(activity == .quiet ? Palette.faint : Palette.subtext)
         }
     }
 

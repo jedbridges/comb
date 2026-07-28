@@ -320,7 +320,7 @@ struct AttachmentView: View {
                 .clipShape(.rect(cornerRadius: Radii.bubble))
                 .overlay(
                     RoundedRectangle(cornerRadius: Radii.bubble)
-                        .strokeBorder(Palette.border.opacity(0.6), lineWidth: Stroke.fine)
+                        .strokeBorder(Palette.glyphHairline, lineWidth: Stroke.fine)
                 )
         }
         .buttonStyle(.plain)
@@ -330,7 +330,7 @@ struct AttachmentView: View {
 
     private var placeholder: some View {
         RoundedRectangle(cornerRadius: Radii.bubble)
-            .fill(Palette.surface.opacity(0.4))
+            .fill(Palette.controlFill)
             .frame(width: placeholderSize.width, height: placeholderSize.height)
             .overlay(ProgressView().controlSize(.small))
             .accessibilityLabel("Image loading")
@@ -338,8 +338,7 @@ struct AttachmentView: View {
 
     private var unavailable: some View {
         Label("Image unavailable", systemImage: "photo.badge.exclamationmark")
-            .font(Typography.caption)
-            .foregroundStyle(Palette.subtext)
+            .textRole(.meta)
             .padding(.vertical, Space.xs)
     }
 
@@ -347,11 +346,10 @@ struct AttachmentView: View {
     /// a tap that does nothing.
     private var unsupportedVideo: some View {
         Label("Video, not playable in Comb yet", systemImage: "film")
-            .font(Typography.caption)
-            .foregroundStyle(Palette.subtext)
+            .textRole(.meta)
             .padding(.horizontal, Space.sm)
             .padding(.vertical, Space.xs)
-            .background(Palette.surface.opacity(0.4), in: .rect(cornerRadius: Radii.bubble))
+            .background(Palette.controlFill, in: .rect(cornerRadius: Radii.bubble))
     }
 
     /// The reported aspect ratio, scaled to fit the cap. Falls back to a modest

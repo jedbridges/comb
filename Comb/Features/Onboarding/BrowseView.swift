@@ -132,8 +132,7 @@ struct BrowseView: View {
             }
         } label: {
             Image(systemName: "arrow.up.arrow.down")
-                .font(Typography.actionSecondary)
-                .foregroundStyle(Palette.chrome)
+                .textRole(.control, .chrome)
         }
         .accessibilityLabel("Sort communities")
     }
@@ -147,7 +146,7 @@ struct BrowseView: View {
                             row(entry)
                                 .arrival(true, delay: Double(min(index, 8)) * 0.04)
                             if entry.id != sorted.last?.id {
-                                Divider().overlay(Palette.border.opacity(0.5))
+                                Divider().overlay(Palette.hairlineOnGradient)
                             }
                         }
                     }
@@ -166,20 +165,17 @@ struct BrowseView: View {
         HStack(spacing: Space.md) {
             VStack(alignment: .leading, spacing: Space.xxs) {
                 Text(entry.name)
-                    .font(Typography.name)
-                    .foregroundStyle(Palette.text)
+                    .textRole(.bodyStrong)
                 if let description = entry.description {
                     Text(description)
-                        .font(Typography.secondary)
-                        .foregroundStyle(Palette.subtext)
+                        .textRole(.support)
                         .lineLimit(2)
                 }
                 if !entry.tags.isEmpty {
                     HStack(spacing: Space.xxs) {
                         ForEach(entry.tags, id: \.self) { tag in
                             Text(tag)
-                                .font(Typography.caption)
-                                .foregroundStyle(Palette.subtext)
+                                .textRole(.meta)
                                 .combChip()
                         }
                     }
@@ -201,7 +197,7 @@ struct BrowseView: View {
                         communityDescription: entry.description
                     )
                 }
-                .font(Typography.actionSecondary)
+                .font(Typography.control)
                 .buttonStyle(.glass)
             } else {
                 // A chevron, not just grey text. "Invite only" alone read as a
@@ -210,11 +206,9 @@ struct BrowseView: View {
                 // The affordance has to promise that.
                 HStack(spacing: Space.xxs) {
                     Text("Invite only")
-                        .font(Typography.caption)
                     Image(systemName: "chevron.right")
-                        .font(Typography.icon)
                 }
-                .foregroundStyle(Palette.subtext)
+                .textRole(.meta)
             }
         }
         .padding(.vertical, Space.md)
@@ -247,16 +241,14 @@ struct BrowseView: View {
     private var listYourCommunityContent: some View {
         VStack(spacing: Space.md) {
             Text("Run a community?")
-                .font(Typography.bodyEmphasis)
-                .foregroundStyle(Palette.text)
+                .textRole(.bodyStrong)
             // Says exactly what the button does and where it goes: out to a
             // short form on GitHub. It used to open the raw index file in
             // GitHub's editor, which meant a sign-in wall, a fork, and
             // hand-written JSON on a phone keyboard; the form asks for a name
             // and an address and leaves the JSON to the maintainer.
             Text("Get it listed here. The button opens a short form on GitHub: its name, its address, and a line about who it is for. A maintainer takes it from there.")
-                .font(Typography.secondary)
-                .foregroundStyle(Palette.subtext)
+                .textRole(.support)
                 .multilineTextAlignment(.center)
 
             // Safari, deliberately: listing is a pull request, and pretending

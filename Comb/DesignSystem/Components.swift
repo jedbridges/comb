@@ -31,16 +31,16 @@ struct PrimaryButton: View {
     var body: some View {
         Button(action: action) {
             Text(title)
-                .font(Typography.action)
+                // Ink only earns its place on the chartreuse fill. Disabled,
+                // the style drops the fill to dim glass, and ink on dim glass
+                // is black on dark: the label has to switch with the
+                // background it sits on.
+                .textRole(.action, isInactive ? .muted : .onBrand)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, Space.xxs)
         }
         .buttonStyle(.glassProminent)
         .tint(Palette.chartreuse)
-        // Ink only earns its place on the chartreuse fill. Disabled, the style
-        // drops the fill to dim glass, and ink on dim glass is black on dark:
-        // the label has to switch with the background it sits on.
-        .foregroundStyle(isInactive ? Palette.subtext : Palette.ink)
         .disabled(isInactive)
     }
 }
@@ -53,7 +53,7 @@ struct SecondaryButton: View {
     var body: some View {
         Button(action: action) {
             Text(title)
-                .font(Typography.actionSecondary)
+                .font(Typography.control)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, Space.xxs)
         }
@@ -75,12 +75,12 @@ struct InlineNotice: View {
             }
         }
 
-        var tint: Color {
+        var tone: TextTone {
             switch self {
-            case .success: Palette.success
-            case .info: Palette.subtext
-            case .warning: Palette.warning
-            case .failure: Palette.danger
+            case .success: .success
+            case .info: .muted
+            case .warning: .warning
+            case .failure: .danger
             }
         }
     }
@@ -91,8 +91,7 @@ struct InlineNotice: View {
     var body: some View {
         Label(text, systemImage: kind.symbol)
             .labelStyle(.compact)
-            .font(Typography.label)
-            .foregroundStyle(kind.tint)
+            .textRole(.supportStrong, kind.tone)
     }
 }
 
@@ -133,18 +132,14 @@ struct CheckboxToggleStyle: ToggleStyle {
         } label: {
             HStack(alignment: .firstTextBaseline, spacing: Space.xs) {
                 Image(systemName: configuration.isOn ? "checkmark.circle.fill" : "circle")
-                    .font(Typography.secondary)
-                    .foregroundStyle(
-                        configuration.isOn ? Palette.success : Palette.subtext
-                    )
+                    .textRole(.body, configuration.isOn ? .success : .muted)
                     // The mark carries the state, so it is the only thing that
                     // moves. Animating the label would read as the sentence
                     // changing rather than the answer.
                     .animation(Motion.instant, value: configuration.isOn)
 
                 configuration.label
-                    .font(Typography.secondary)
-                    .foregroundStyle(Palette.text)
+                    .textRole(.body)
 
                 Spacer(minLength: 0)
             }
@@ -283,8 +278,7 @@ struct Toast: View {
 
     var body: some View {
         Text(text)
-            .font(Typography.label)
-            .foregroundStyle(Palette.text)
+            .textRole(.supportStrong, .primary)
             .multilineTextAlignment(.center)
             .padding(.horizontal, Space.md)
             .padding(.vertical, Space.sm)
@@ -485,6 +479,14 @@ extension View {
     /// The capsule chip: a luminance lift in a pill, for tags, date breaks,
     /// and any other small floating label on the gradient. One modifier so
     /// the treatment cannot be re-derived slightly differently per screen.
+    ///
+    /// The lift is a fill, and stops there. It used to end in a `plusLighter`
+    /// blend, and that made one component render as three going down a single
+    /// screen: the same date pill was bright olive under the navigation bar,
+    /// muted in the middle, and cold at the bottom, because the blend adds
+    /// whatever the gradient happens to be doing behind it. The fill alone
+    /// already picks up the backdrop's hue, which was the point; the blend was
+    /// only ever adding light on top of that.
     func combChip() -> some View {
         padding(.horizontal, Space.xs)
             .padding(.vertical, Space.hairline)
@@ -492,38 +494,36 @@ extension View {
             .overlay(
                 Capsule().strokeBorder(Palette.hairlineOnGradient, lineWidth: Stroke.fine)
             )
-            .luminousChrome()
     }
-}
 
-
-// MARK: - Chrome over the gradient
-
-/// Makes controls and secondary text sit *in* the gradient rather than on top
-/// of it, by blending rather than compositing flat.
-///
-/// Grey chrome over a coloured backdrop reads as dead: the grey is a literal
-/// grey, so it fights the hue behind it instead of belonging to it.
-/// `plusLighter` adds the source to the destination, so light content glows
-/// through and picks up the backdrop's colour. It is the treatment Apple uses
-/// for overlay chrome on media.
-///
-/// The blend has to invert with the appearance: `plusLighter` on a light
-/// background blows out to white, so light mode gets `plusDarker`, which is the
-/// same idea in the other direction.
-struct LuminousChrome: ViewModifier {
-    @Environment(\.colorScheme) private var scheme
-
-    func body(content: Content) -> some View {
-        content.blendMode(scheme == .dark ? .plusLighter : .plusDarker)
-    }
-}
-
-extension View {
-    /// Blends chrome into the gradient instead of laying it flat on top.
-    /// For toolbar glyphs, secondary text, and separators over the backdrop.
-    func luminousChrome() -> some View {
-        modifier(LuminousChrome())
+    /// The tally capsule that rides under a message: a glyph and a number that
+    /// counts something other people did.
+    ///
+    /// Extracted on the second use, per DESIGN.md. Reactions and zaps are
+    /// different counts of the same shape, and the shape is the part that must
+    /// not be re-derived: the lift fill exists because a literal grey fights the
+    /// gradient's hue instead of belonging to it, and that reasoning is not
+    /// specific to either one.
+    ///
+    /// `isMine` takes the solid brand fill, so a pile you have joined reads as
+    /// decided. Only reactions pass true. A zap chip stays lifted whatever its
+    /// total, and marks the reader's own with a brand-coloured glyph instead:
+    /// a bubble can already carry a chartreuse reaction pill, and DESIGN.md's
+    /// rule is that three accents on a screen means one of them is wrong.
+    func tallyChip(isMine: Bool) -> some View {
+        padding(.horizontal, Space.xs)
+            .padding(.vertical, Space.xxs)
+            .background(
+                isMine
+                    ? AnyShapeStyle(Palette.chartreuse)
+                    : AnyShapeStyle(Palette.glyphLift),
+                in: .capsule
+            )
+            .overlay {
+                if !isMine {
+                    Capsule().strokeBorder(Palette.glyphHairline, lineWidth: Stroke.hairline)
+                }
+            }
     }
 }
 
@@ -569,8 +569,7 @@ struct ConnectionBanner: View {
                     .controlSize(.mini)
                     .tint(Palette.ink)
                 Text(message)
-                    .font(Typography.label)
-                    .foregroundStyle(Palette.ink)
+                    .textRole(.supportStrong, .onBrand)
             }
             .padding(.horizontal, Space.sm)
             .padding(.vertical, Space.xs)

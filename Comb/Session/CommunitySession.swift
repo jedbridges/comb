@@ -33,6 +33,16 @@ actor CommunitySession {
     private static let stateKinds: [EventKind] = [
         .metadata, .groupMetadata, .groupMembers,
     ]
+    /// Zap receipts, kept out of `contentKinds` deliberately.
+    ///
+    /// A kind 9735 is not a group event. It carries no `h` tag, because it is
+    /// published by the recipient's wallet rather than by a member, so it can
+    /// only be asked for unscoped. A NIP-29 relay that insists every filter name
+    /// a group will refuse that, and if it were folded into the main filter the
+    /// refusal would take the entire live feed with it. In its own filter, the
+    /// worst case is a community with no zap totals, which is the correct
+    /// degraded state.
+    private static let receiptKinds: [EventKind] = [.zapReceipt]
     /// Kinds that are never stored, so nothing here is ever backfilled and the
     /// store's newest timestamp says nothing about them. Kept separate from the
     /// stored kinds for that reason, and because forgetting to list a kind here
@@ -162,6 +172,7 @@ actor CommunitySession {
                 Filter(kinds: [.groupMembers], limit: 200),
                 Filter(kinds: [.metadata], limit: 500),
                 Filter(kinds: Self.contentKinds, limit: 500),
+                Filter(kinds: Self.receiptKinds, limit: 200),
             ],
             timeout: .seconds(25)
         )
@@ -175,6 +186,11 @@ actor CommunitySession {
         // marked sending are included: that state means we never heard back, and
         // resending is safe because the relay deduplicates by event id.
         await retryPendingSends()
+
+        // Zaps whose receipts never came. Read paths already ignore an expired
+        // attempt, so this is only housekeeping, but without it the table grows
+        // forever with rows nothing will ever look at again.
+        _ = try? await store.pruneZapAttempts()
 
         // Only now, at the end: `resume` uses this to tell a reconnect it can
         // replay from a subscription table that exists from one that has to
@@ -228,6 +244,31 @@ actor CommunitySession {
     enum DirectMessageFailure: Error, Equatable {
         case noRecipients
         case noChannelReturned
+    }
+
+    /// Leaves a channel, so the reader stops being a member of it.
+    ///
+    /// Standard NIP-29 kind 9022, which any member may send. Deliberately not a
+    /// local hide: leaving is a real change to the roster, the relay stops
+    /// delivering the channel's messages, and a client that only hid the row
+    /// would keep receiving everything while claiming otherwise.
+    ///
+    /// Nothing is refreshed afterwards and nothing is written locally, which
+    /// looks like an omission and is not. The relay answers a leave by sending
+    /// this account a kind 44101, which the live membership subscription
+    /// already carries, `projectMembershipChange` already records in
+    /// `channel_departure`, and the channel list already excludes. The whole
+    /// return path predates this function.
+    ///
+    /// The failure worth reading is the relay's own: leaving as a channel's
+    /// last owner is refused, because it would orphan the channel.
+    func leaveChannel(_ channelID: String) async throws {
+        let event = try await signer.sign(
+            kind: .groupLeaveRequest,
+            content: "",
+            tags: [["h", channelID]]
+        )
+        try await relay.publish(event)
     }
 
     /// Re-reads the channels this account can see.
@@ -355,7 +396,13 @@ actor CommunitySession {
         // membership changes.
         let membership = Filter(kinds: Self.membershipKinds).taggingPubkey(me.hex)
 
-        var filters = [filter, ephemeral, membership]
+        // Separate for the same reason it is separate in the bootstrap: an
+        // unscoped filter is the only way to ask for receipts, and a relay that
+        // rejects it should cost only this.
+        var receipts = Filter(kinds: Self.receiptKinds)
+        receipts.since = newest - 5
+
+        var filters = [filter, ephemeral, membership, receipts]
 
         // Only this identity's own app data, and only when the feature is on:
         // a subscription is a statement to the relay about what interests you,
@@ -758,9 +805,24 @@ actor CommunitySession {
 
     // MARK: - Zaps
 
+    /// A payable invoice, plus what is needed to remember the attempt.
+    ///
+    /// `issuer` is the key the recipient's endpoint signs receipts with. It is
+    /// obtainable only by asking that endpoint, and it is the one thing a
+    /// receipt cannot be checked without, so it is carried out of here rather
+    /// than discarded as it used to be.
+    public struct PreparedZap: Equatable, Sendable {
+        public let invoice: String
+        public let requestID: String
+        public let targetID: String?
+        public let recipient: String
+        public let issuer: String
+        public let amountMillisats: Int64
+    }
+
     public enum ZapPreparation {
         /// A payable invoice, ready to hand to a Lightning wallet.
-        case invoice(String)
+        case prepared(PreparedZap)
         /// The recipient has no Lightning address, or none that supports
         /// verifiable Nostr zaps.
         case unsupported
@@ -790,16 +852,141 @@ actor CommunitySession {
                 eventID: messageID,
                 with: signer
             )
-            let (invoice, _) = try await LNURLClient().prepareZap(
+            let (invoice, issuer) = try await LNURLClient().prepareZap(
                 to: address,
                 amountMillisats: amountSats * 1000,
                 zapRequest: request
             )
-            return .invoice(invoice)
-        } catch LNURLClient.Failure.zapsUnsupported {
-            return .unsupported
+            return .prepared(PreparedZap(
+                invoice: invoice,
+                requestID: request.id,
+                targetID: messageID,
+                recipient: recipient.hex,
+                issuer: issuer.hex,
+                amountMillisats: amountSats * 1000
+            ))
+        } catch let failure as LNURLClient.Failure {
+            guard let message = Self.describe(failure, host: address.host) else {
+                return .unsupported
+            }
+            return .failed(message)
         } catch {
-            return .failed("Could not reach the recipient's Lightning wallet.")
+            // Signing or encoding the request, which never leaves the device.
+            return .failed("Comb could not prepare the zap.")
+        }
+    }
+
+    /// Fetches one person's profile on demand.
+    ///
+    /// The bootstrap asks for 500 profiles once, which covers a community until
+    /// it does not: someone who joined afterwards, or the five-hundred-and-first
+    /// member, has no kind 0 here at all. Every screen then quietly treats them
+    /// as someone who set nothing up, and the zap button disappears without
+    /// saying why.
+    ///
+    /// Called when the reader acts on a specific person, never on scroll. One
+    /// request for one key is a very different thing from a request per row.
+    @discardableResult
+    func fetchProfile(pubkey: String) async -> Bool {
+        guard let events = try? await relay.query([
+            Filter(authors: [pubkey], kinds: [.metadata], limit: 1)
+        ]), !events.isEmpty else { return false }
+
+        return (try? await store.ingest(events)) != nil
+    }
+
+    /// Remembers that an invoice reached a wallet.
+    ///
+    /// Called after the OS confirms a wallet took the `lightning:` link, not
+    /// when the invoice was made: an invoice nobody opened is not an attempt at
+    /// anything. Even then this records only that the handoff happened. Whether
+    /// the payment went through is a question only a receipt answers.
+    func recordZapHandoff(_ zap: PreparedZap) async {
+        do {
+            try await store.recordZapAttempt(
+                requestID: zap.requestID,
+                targetID: zap.targetID,
+                recipient: zap.recipient,
+                issuer: zap.issuer,
+                amountMillisats: zap.amountMillisats
+            )
+        } catch {
+            // A missing pending marker is a worse-looking zap, not a failed one.
+            // The payment is already in the wallet's hands either way.
+        }
+    }
+
+    /// What the recipient's endpoint will actually accept.
+    public enum ZapLimits {
+        case limits(low: Int64, high: Int64, commentLength: Int)
+        case unsupported
+        case failed(String)
+    }
+
+    /// Asks the recipient's endpoint what it accepts, before the reader commits
+    /// to an amount.
+    ///
+    /// Without this the amounts on offer are guesses: a recipient whose minimum
+    /// sits above every preset cannot be zapped at all, and the reader only
+    /// finds out after choosing. The cost is that opening the sheet now touches
+    /// the recipient's wallet host, which is a request Comb did not previously
+    /// make until the reader committed.
+    func zapLimits(toLightningAddress addressString: String) async -> ZapLimits {
+        guard let address = Zap.LightningAddress(addressString) else {
+            return .unsupported
+        }
+        do {
+            let endpoint = try await LNURLClient().endpoint(for: address)
+            guard endpoint.supportsNostrZaps else { return .unsupported }
+            return .limits(
+                low: endpoint.minSendable,
+                high: endpoint.maxSendable,
+                commentLength: endpoint.allowedCommentLength
+            )
+        } catch let failure as LNURLClient.Failure {
+            guard let message = Self.describe(failure, host: address.host) else {
+                return .unsupported
+            }
+            return .failed(message)
+        } catch {
+            return .failed("Comb could not reach \(address.host).")
+        }
+    }
+
+    /// Turns an LNURL failure into a sentence the reader can act on. Returns nil
+    /// when the failure means "this recipient cannot receive zaps", which the
+    /// caller reports as a state rather than an error.
+    ///
+    /// Worth being exhaustive rather than defaulting: the case this replaced
+    /// reported an amount rejection, which carries the exact bounds it should
+    /// have printed, as "could not reach the recipient's wallet". Naming the
+    /// host matters too, since it is the recipient's wallet provider and not
+    /// Comb or the relay that is failing.
+    private static func describe(
+        _ failure: LNURLClient.Failure,
+        host: String
+    ) -> String? {
+        switch failure {
+        case .noLightningAddress, .zapsUnsupported:
+            return nil
+
+        case .amountOutOfRange(let low, let high):
+            return "\(host) accepts between \((low / 1000).formatted()) and "
+                + "\((high / 1000).formatted()) sats."
+
+        case .endpointUnreachable, .invoiceUnreachable:
+            return "Could not reach \(host)."
+
+        case .endpointRejected(let status), .invoiceRejected(let status):
+            return "\(host) answered with an error (\(status))."
+
+        // The host's own words. Sanitised in LNURLClient, and rendered as plain
+        // text, never as markup.
+        case .endpointError(let reason), .invoiceError(let reason):
+            return "\(host) said: \(reason)"
+
+        case .malformedEndpoint, .malformedInvoice:
+            return "\(host) answered with something Comb could not read."
         }
     }
 

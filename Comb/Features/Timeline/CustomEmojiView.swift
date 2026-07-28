@@ -70,8 +70,7 @@ struct EmojiText: View {
 
     var body: some View {
         composed
-            .font(Typography.body)
-            .foregroundStyle(Palette.text)
+            .textRole(.body)
             .lineSpacing(2)
             .textSelection(.enabled)
             .task(id: entries) { await load() }

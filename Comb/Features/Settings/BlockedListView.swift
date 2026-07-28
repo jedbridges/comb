@@ -45,14 +45,13 @@ struct BlockedListView: View {
                     HStack(spacing: Space.sm) {
                         AvatarView(name: person.name, picture: person.picture)
                         Text(person.name)
-                            .font(Typography.name)
-                            .foregroundStyle(Palette.text)
+                            .textRole(.bodyStrong)
                             .lineLimit(1)
                         Spacer(minLength: 0)
                         Button("Unblock") {
                             Task { try? await session.store.unblock(pubkey: person.pubkey) }
                         }
-                        .font(Typography.actionSecondary)
+                        .font(Typography.control)
                         .buttonStyle(.glass)
                     }
                 }

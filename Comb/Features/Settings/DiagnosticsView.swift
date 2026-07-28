@@ -13,16 +13,14 @@ struct DiagnosticsView: View {
         Form {
             Section {
                 Text("Comb keeps this log on your iPhone and sends it nowhere. If you hit a bug, copy it into a GitHub issue so it can be fixed.")
-                    .font(Typography.secondary)
-                    .foregroundStyle(Palette.subtext)
+                    .textRole(.support)
             }
             .combRows()
 
             if buffer.entries.isEmpty {
                 Section {
                     Text("Nothing logged yet.")
-                        .font(Typography.secondary)
-                        .foregroundStyle(Palette.subtext)
+                        .textRole(.support)
                 }
                 .combRows()
             } else {
@@ -31,16 +29,13 @@ struct DiagnosticsView: View {
                         VStack(alignment: .leading, spacing: Space.hairline) {
                             HStack {
                                 Text(entry.category)
-                                    .font(Typography.eyebrow)
-                                    .foregroundStyle(Palette.subtext)
+                                    .textRole(.eyebrow)
                                 Spacer()
                                 Text(entry.at, format: .dateTime.hour().minute().second())
-                                    .font(Typography.caption)
-                                    .foregroundStyle(Palette.subtext)
+                                    .textRole(.meta)
                             }
                             Text(entry.message)
-                                .font(Typography.monoSmall)
-                                .foregroundStyle(Palette.text)
+                                .textRole(.monoSupport, .primary)
                         }
                         .padding(.vertical, Space.hairline)
                     }

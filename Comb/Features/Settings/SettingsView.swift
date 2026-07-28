@@ -145,7 +145,7 @@ struct SettingsView: View {
                 } header: {
                     Text("Community")
                 } footer: {
-                    Text(host).font(Typography.monoSmall)
+                    Text(host).font(Typography.monoSupport)
                 }
                 .combRows()
 
@@ -299,12 +299,11 @@ struct RecoveryCodeView: View {
                     Group {
                         if isRevealed {
                             Text(key.nsec)
-                                .font(Typography.monoSmall)
+                                .font(Typography.monoSupport)
                                 .textSelection(.enabled)
                         } else {
                             Text(String(repeating: "•", count: 24))
-                                .font(Typography.monoSmall)
-                                .foregroundStyle(Palette.subtext)
+                                .textRole(.monoSupport)
                         }
                     }
 
@@ -336,7 +335,7 @@ struct RecoveryCodeView: View {
 
                 Section {
                     Text(key.publicKey.npub)
-                        .font(Typography.monoSmall)
+                        .font(Typography.monoSupport)
                         .textSelection(.enabled)
                 } header: {
                     Text("Public key (npub)")
