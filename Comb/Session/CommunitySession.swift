@@ -142,15 +142,29 @@ actor CommunitySession {
     /// Not private: the activity list reads across every community this device
     /// has joined, and the separation that makes each store safe is the same
     /// separation that means there is no single place to read them all from.
+    /// Opening is memoised by path, because a second store on the same file is
+    /// not a second reader, it is a second connection pool. SQLite's WAL
+    /// locking assumes one pool per file per process; two race on the same
+    /// shared-memory lock table, and what that corrupts it corrupts quietly.
+    ///
+    /// Two is easy to reach here without meaning to. The activity list opens
+    /// every community's store to read across them, and a background wake opens
+    /// the store for a community whose foreground session is still holding one.
+    /// Callers keep asking whenever they need a store, and there is still only
+    /// ever the one.
     static func openStore(host: String) throws -> EventStore {
         let directory = URL.applicationSupportDirectory
             .appending(path: "Communities/\(host)", directoryHint: .isDirectory)
-        try FileManager.default.createDirectory(
-            at: directory,
-            withIntermediateDirectories: true,
-            attributes: [.protectionKey: FileProtectionType.completeUnlessOpen]
-        )
-        return try EventStore(path: directory.appending(path: "comb.sqlite").path)
+        let path = directory.appending(path: "comb.sqlite").path
+
+        return try StoreRegistry.shared.store(at: path) {
+            try FileManager.default.createDirectory(
+                at: directory,
+                withIntermediateDirectories: true,
+                attributes: [.protectionKey: FileProtectionType.completeUnlessOpen]
+            )
+            return try EventStore(path: path)
+        }
     }
 
     // MARK: - Lifecycle

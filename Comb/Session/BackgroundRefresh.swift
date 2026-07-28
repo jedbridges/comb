@@ -110,6 +110,14 @@ enum BackgroundRefresh {
     /// So this does not try to make the work finish in time. It makes the
     /// *task* finish in time, and lets whatever is still in flight be frozen
     /// when iOS suspends us a moment later.
+    ///
+    /// With one exception, which is the whole of `settled` below. Being frozen
+    /// between transactions is fine and is what this design assumes. Being
+    /// frozen *during* one is not: iOS terminates a process suspended while
+    /// holding a lock on a database file rather than resuming it. Since a wake
+    /// spends most of its time ingesting, abandoning the work at the deadline
+    /// without checking lands mid-write often enough to read as a random crash
+    /// on a phone nobody is touching.
     private static let budget: Duration = .seconds(20)
 
     private static func handle(_ task: BGAppRefreshTask) {
@@ -121,14 +129,14 @@ enum BackgroundRefresh {
 
         let work = Task {
             await run()
-            completion.finish(success: true)
+            await settled(completion, success: true)
         }
 
         let deadline = Task {
             try? await Task.sleep(for: budget)
             guard !Task.isCancelled else { return }
             work.cancel()
-            completion.finish(success: false)
+            await settled(completion, success: false)
         }
 
         // Stands the deadline down once the work is genuinely done, so a
@@ -142,8 +150,26 @@ enum BackgroundRefresh {
         task.expirationHandler = {
             work.cancel()
             deadline.cancel()
+            // Reported straight away, with no wait for the stores. This is iOS
+            // saying it is already out of patience, and the seconds left are
+            // better spent ending cleanly than on a barrier that might not
+            // return inside them.
             completion.finish(success: false)
         }
+    }
+
+    /// Reports the task complete, but not before every store is between
+    /// transactions.
+    ///
+    /// Completion is the app volunteering that now is a good moment to suspend
+    /// it. The deadline path gets here having cancelled work that does not stop
+    /// promptly, so something is usually still finishing; waiting for it is what
+    /// makes the claim true. The barrier is bounded by the transaction it is
+    /// waiting on, which is milliseconds, against the ten seconds of the wake's
+    /// thirty that the budget deliberately leaves unspent.
+    private static func settled(_ completion: TaskCompletion, success: Bool) async {
+        await StoreRegistry.shared.settleAll()
+        completion.finish(success: success)
     }
 
     /// One pass over every joined community: connect, sync, notify, update the

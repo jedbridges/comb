@@ -43,6 +43,23 @@ public actor EventStore {
         try rebuildProjectionsIfStale(writer)
     }
 
+    /// Returns once no write is in flight, and guarantees nothing about after.
+    ///
+    /// A barrier rather than a query: GRDB serialises writes, so an empty one
+    /// cannot begin until whatever transaction was open has committed, and
+    /// awaiting it is how a caller learns the database is not mid-write.
+    ///
+    /// This exists for backgrounding. iOS terminates a process that is
+    /// suspended while holding a lock on a database file rather than resuming
+    /// it, so any moment the app volunteers as a good one to suspend it, by
+    /// reporting a background task complete, has to be a moment no transaction
+    /// is open. Cancelling the work that was writing is not enough, because a
+    /// transaction already in progress does not check for cancellation and
+    /// finishes on its own schedule.
+    public nonisolated func settle() async {
+        try? await writer.write { _ in }
+    }
+
     // MARK: - Ingest
 
     /// Verifies and stores a batch, returning what happened to each event.

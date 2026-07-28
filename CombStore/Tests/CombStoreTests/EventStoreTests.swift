@@ -569,3 +569,61 @@ struct ScaleTests {
         #expect(try await store.count() == 2000)
     }
 }
+
+// MARK: - Settling
+
+@Suite("Settling")
+struct SettleTests {
+    /// Records the order two things happened in, from whichever thread each
+    /// happened on.
+    private final class Order: @unchecked Sendable {
+        private let lock = NSLock()
+        private var marks: [String] = []
+
+        func mark(_ mark: String) {
+            lock.lock()
+            defer { lock.unlock() }
+            marks.append(mark)
+        }
+
+        var all: [String] {
+            lock.lock()
+            defer { lock.unlock() }
+            return marks
+        }
+    }
+
+    @Test("returns only once an in-flight write has committed")
+    func waitsForInFlightWrite() async throws {
+        let store = try EventStore()
+        let order = Order()
+
+        // Driven through the writer rather than through `ingest`, because
+        // ingest verifies signatures before it opens its transaction and the
+        // barrier says nothing about that. What is being tested is the wait on
+        // a transaction that has actually begun, so the test opens one and
+        // holds it.
+        let writing = Task.detached {
+            try await store.writer.write { _ in
+                Thread.sleep(forTimeInterval: 0.3)
+                order.mark("write")
+            }
+        }
+
+        // Long enough for the write above to be inside its transaction, and
+        // comfortably shorter than the time it holds it.
+        try await Task.sleep(for: .milliseconds(100))
+        await store.settle()
+        order.mark("settle")
+
+        try await writing.value
+        #expect(order.all == ["write", "settle"])
+    }
+
+    @Test("returns promptly when nothing is writing")
+    func idleIsCheap() async throws {
+        let store = try EventStore()
+        await store.settle()
+        #expect(try await store.count() == 0)
+    }
+}

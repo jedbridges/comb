@@ -176,14 +176,36 @@ final class AppModel {
     ///
     /// Cancellation is what makes it work. `foreground` cancels the pending
     /// task, so a quick round trip never disconnects at all.
+    ///
+    /// The assertion is what makes the grace real. iOS suspends a backgrounded
+    /// app after roughly the same five seconds we wait here, so without one the
+    /// disconnect below lost that race about as often as it won it. Losing it is
+    /// not a missed disconnect: the socket is still delivering events into an
+    /// open write transaction at that moment, and being suspended holding a
+    /// database lock is a termination, not a pause.
     func background() {
         guard case .active(let session) = stage else { return }
 
         lifecycleTask?.cancel()
+
+        // Taken here rather than inside the task, so the request lands in the
+        // same turn of the run loop the phase change arrived on. Deferred until
+        // the task first runs, it would be racing the suspension it exists to
+        // prevent.
+        let assertion = BackgroundAssertion("community.suspend")
+
         lifecycleTask = Task {
+            defer { assertion.end() }
+
             try? await Task.sleep(for: Self.backgroundGrace)
             guard !Task.isCancelled else { return }
             await session.suspend()
+
+            // Putting the socket down stops new events arriving; it says
+            // nothing about one already being written. Giving the time back
+            // while a transaction is open is the case this whole assertion was
+            // taken to avoid, so the last thing it buys is the wait for it.
+            await session.store.settle()
         }
     }
 
