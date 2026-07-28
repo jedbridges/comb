@@ -76,4 +76,9 @@ enum Sizing {
     /// A control drawn small inside a full-size target: the compose bar's
     /// round buttons, which should not dominate a two-row input.
     static let compactControl: CGFloat = 32
+    /// The glyph above a state that reports rather than offers: an empty
+    /// screen, a handed-off zap, something Comb cannot do. Was picked by eye at
+    /// 36, 44 and 64 in three different files, which is how one component
+    /// becomes three.
+    static let stateGlyph: CGFloat = 44
 }

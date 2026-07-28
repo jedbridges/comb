@@ -83,6 +83,11 @@ struct ZapSheet: View {
         return amount * 1000 >= low && amount * 1000 <= high
     }
 
+    private var isHandedOff: Bool {
+        if case .handedOff = phase { return true }
+        return false
+    }
+
     private var rangeNote: String? {
         guard case .known(let low, let high, _) = limits else { return nil }
         return "\(recipientName) accepts \((low / 1000).formatted()) to "
@@ -102,7 +107,13 @@ struct ZapSheet: View {
         // field otherwise sits against the button, and someone who actually
         // wants to write something should not have to compose it through a
         // letterbox.
-        .presentationDetents([.medium, .large])
+        //
+        // Once the invoice is gone the sheet settles back down. Someone who
+        // dragged to large to write a comment would otherwise get their
+        // confirmation as a full-height sheet with a bolt floating in it: the
+        // task is over, and the sheet should stop taking the room the task
+        // needed.
+        .presentationDetents(isHandedOff ? [.medium] : [.medium, .large])
         .task { await loadLimits() }
     }
 
@@ -121,7 +132,7 @@ struct ZapSheet: View {
             Spacer()
 
             Image(systemName: "bolt.fill")
-                .font(.system(size: 44))
+                .font(.system(size: Sizing.stateGlyph))
                 .foregroundStyle(Palette.chartreuse)
 
             Text("\(zap.amountMillisats / 1000) sats to \(recipientName)")
@@ -252,11 +263,12 @@ struct ZapSheet: View {
                     // sheet: the one moment the reader needs it is the one
                     // moment it could not be read.
                     if case .failed(let message) = phase {
-                        Label(message, systemImage: "exclamationmark.triangle.fill")
-                            .textRole(.meta, .danger)
-                            .multilineTextAlignment(.leading)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .transition(.opacity)
+                        // InlineNotice rather than a third hand-rolled copy of it, and
+                            // because .meta is 11pt: a failure should not be the smallest
+                            // type on the screen it happened on.
+                            InlineNotice(kind: .failure, text: message)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .transition(.opacity)
                     }
 
                     PrimaryButton(

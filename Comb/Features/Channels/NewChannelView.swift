@@ -71,9 +71,10 @@ struct NewChannelView: View {
             .safeAreaInset(edge: .bottom) {
                 VStack(spacing: Space.xs) {
                     if let failure {
-                        Label(failure, systemImage: "exclamationmark.triangle.fill")
-                            .textRole(.meta, .danger)
-                            .multilineTextAlignment(.leading)
+                        // InlineNotice rather than a third hand-rolled copy of
+                        // it, and because .meta is 11pt: a failure should not be
+                        // the smallest type on the screen it happened on.
+                        InlineNotice(kind: .failure, text: failure)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .transition(.opacity)
                     }

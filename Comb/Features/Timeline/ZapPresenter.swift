@@ -54,7 +54,7 @@ struct ZapPresenter: View {
             VStack(spacing: Space.md) {
                 Spacer()
                 Image(systemName: "bolt.slash")
-                    .font(.system(size: 36))
+                    .font(.system(size: Sizing.stateGlyph))
                     .foregroundStyle(Palette.subtext)
                 Text(message)
                     .textRole(.support)

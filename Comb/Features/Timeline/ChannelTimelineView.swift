@@ -26,6 +26,14 @@ struct ChannelTimelineView: View {
     @State private var isJoining = false
     /// Bumped when membership turns true, so joining is felt as well as seen.
     @State private var joins = 0
+    /// The relay's reason for refusing a join, shown beside the button that
+    /// asked. Rule: the control that owns the action is still on screen, so the
+    /// message belongs next to it rather than in a toast that expires.
+    @State private var joinFailure: String?
+    /// The relay's reason for refusing a leave. A dialog rather than a toast,
+    /// because the one that matters says to transfer ownership first, and an
+    /// instruction that vanishes after three seconds is not an instruction.
+    @State private var leaveFailure: String?
 
     /// Live where the observation has answered, and the pushed value until it
     /// has. The pushed `channel` is frozen at the moment the row was tapped, so
@@ -100,8 +108,14 @@ struct ChannelTimelineView: View {
                         messageRow(entry)
                         .background {
                             if entry.row.id == highlightedID {
+                                // A lift rather than the accent. Arriving from
+                                // a mention notification landed a chartreuse
+                                // wash under a chartreuse @yourname, so the two
+                                // signals fired in the same colour on top of
+                                // each other. "You jumped here" is a transient
+                                // surface, which is what lifts are for.
                                 RoundedRectangle(cornerRadius: Radii.bubble)
-                                    .fill(Palette.chartreuse.opacity(0.12))
+                                    .fill(Palette.liftOnGradient)
                                     .padding(.horizontal, -Space.xs)
                             }
                         }
@@ -323,6 +337,21 @@ struct ChannelTimelineView: View {
             // way back in depends on whether anyone can add you.
             Text("You stop receiving this channel. Rejoining depends on whether it is open or someone adds you back.")
         }
+        // A dialog, not a toast. The refusal that matters here tells a channel's
+        // last owner to hand ownership on first, which is an instruction to go
+        // and do something, and it has to survive being read.
+        .confirmationDialog(
+            "You are still in this channel",
+            isPresented: Binding(
+                get: { leaveFailure != nil },
+                set: { if !$0 { leaveFailure = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("OK", role: .cancel) { leaveFailure = nil }
+        } message: {
+            Text(leaveFailure ?? "")
+        }
         .task { await model.activate() }
         .navigationDestination(item: $threadRoot) { root in
             ThreadView(session: session, channel: channel, root: root)
@@ -448,6 +477,11 @@ struct ChannelTimelineView: View {
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: .infinity)
             } else {
+                if let joinFailure {
+                    InlineNotice(kind: .failure, text: joinFailure)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .transition(.opacity)
+                }
                 Text("You are not in this channel yet.")
                     .textRole(.meta)
                 PrimaryButton(
@@ -461,6 +495,7 @@ struct ChannelTimelineView: View {
         }
         .padding(.horizontal, Space.lg)
         .padding(.vertical, Space.sm)
+        .animation(Motion.fast, value: joinFailure)
     }
 
     /// Joins, and lets the roster refresh redraw the screen.
@@ -470,16 +505,17 @@ struct ChannelTimelineView: View {
     /// own sentence is the only honest thing to show.
     private func attemptJoin() async {
         isJoining = true
+        joinFailure = nil
         do {
             try await session.joinChannel(channel.id)
         } catch let error as RelayError {
             if case .publishRejected(let reason) = error, !reason.isEmpty {
-                toast = ToastMessage(reason, tone: .failure)
+                joinFailure = reason
             } else {
-                toast = ToastMessage(FailureText.join, tone: .failure)
+                joinFailure = FailureText.join
             }
         } catch {
-            toast = ToastMessage(FailureText.join, tone: .failure)
+            joinFailure = FailureText.join
         }
         isJoining = false
     }
@@ -500,12 +536,12 @@ struct ChannelTimelineView: View {
             dismiss()
         } catch let error as RelayError {
             if case .publishRejected(let reason) = error, !reason.isEmpty {
-                toast = ToastMessage(reason, tone: .failure)
+                leaveFailure = reason
             } else {
-                toast = ToastMessage(FailureText.leave, tone: .failure)
+                leaveFailure = FailureText.leave
             }
         } catch {
-            toast = ToastMessage(FailureText.leave, tone: .failure)
+            leaveFailure = FailureText.leave
         }
     }
 
@@ -1196,7 +1232,7 @@ struct ReactionBar: View {
 /// The sats a message has been seen to receive.
 ///
 /// Read-only, unlike a reaction chip: tapping cannot add to it, because a zap
-/// goes through a wallet. Long press opens the list, which is also where the
+/// goes through a wallet. Tapping opens the list, which is also where the
 /// caveats about what this number means live.
 ///
 /// Never chartreuse-filled. A message can already carry a chartreuse reaction
