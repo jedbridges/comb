@@ -37,6 +37,7 @@ struct ChannelListView: View {
     @State private var messageHits: [SearchResult] = []
     @State private var isBrowsing = false
     @State private var isAddingByInvite = false
+    @State private var isCreatingChannel = false
     @State private var arrivalChannel: ChannelSummary?
     @State private var deepLink: DeepLinkChannel?
 
@@ -123,6 +124,18 @@ struct ChannelListView: View {
                 communityMenu
             }
             ToolbarItem(placement: .topBarTrailing) {
+                // A channel action, so it belongs here rather than in the
+                // community menu on the other side, which switches between
+                // communities and would be a category error.
+                Button {
+                    isCreatingChannel = true
+                } label: {
+                    Image(systemName: "plus")
+                        .textRole(.control, .chrome)
+                }
+                .accessibilityLabel("New channel")
+            }
+            ToolbarItem(placement: .topBarTrailing) {
                 // Left of settings, because this is a place you go often and
                 // settings is a place you go twice.
                 Button {
@@ -162,6 +175,12 @@ struct ChannelListView: View {
                     isAddingByInvite = false
                     onJoined(joined)
                 })
+            }
+        }
+        .sheet(isPresented: $isCreatingChannel) {
+            NewChannelView(session: session) { id in
+                isCreatingChannel = false
+                openCreatedChannel(id)
             }
         }
         .onChange(of: pendingInvite) { _, invite in
@@ -389,6 +408,20 @@ struct ChannelListView: View {
         .accessibilityElement(children: .combine)
     }
 
+    /// Pushes straight into a channel the reader just made.
+    ///
+    /// `createChannel` has already refetched group state, so the row normally
+    /// exists by now. Normally is not always: the relay's metadata is a second
+    /// query away and can lose the race, so a miss here is silent and the
+    /// channel simply appears in the list a moment later. Better than pushing
+    /// an empty screen built from a summary that does not exist yet.
+    private func openCreatedChannel(_ id: String) {
+        guard let created = (try? session.store.channelSummaries(me: session.me.hex))?
+            .first(where: { $0.id == id })
+        else { return }
+        arrivalChannel = created
+    }
+
     private var emptyState: some View {
         VStack(spacing: Space.sm) {
             WelcomeSymbol()
@@ -397,10 +430,15 @@ struct ChannelListView: View {
                 .accessibilityHidden(true)
             Text("No channels yet")
                 .textRole(.bodyStrong)
-            Text("Channels will appear here once this community adds them.")
+            // This used to say channels would appear once the community added
+            // them, which stopped being true the moment anyone could make one.
+            Text("Make the first one, or wait to be added to a channel someone else makes.")
                 .textRole(.support)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, Space.xl)
+            Button("New channel") { isCreatingChannel = true }
+                .textRole(.control, .brand)
+                .padding(.top, Space.xs)
         }
     }
 }

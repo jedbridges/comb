@@ -417,6 +417,34 @@ struct PublishTests {
         }
     }
 
+    /// A create is the one place the client, not the relay, decides the
+    /// channel's id. The relay reads it out of the `h` tag, so if that tag were
+    /// dropped or malformed the channel would come into existence under an id
+    /// this device never learns.
+    @Test("a channel create carries a lowercase uuid and its name")
+    func createCarriesIdAndName() async throws {
+        let key = try PrivateKey()
+        let id = UUID().uuidString.lowercased()
+        let create = try NostrEvent.signed(
+            kind: .groupCreate, content: "",
+            tags: [["h", id], ["name", "design-crits"], ["visibility", "open"]],
+            with: key
+        )
+
+        let harness = try await Harness()
+        try await harness.connect()
+        try await harness.session.publish(create)
+
+        let sent = await harness.transport.sent(ofType: "EVENT")
+        let published = try #require(sent.first?.event)
+        #expect(published.firstValue(for: "h") == id)
+        #expect(published.firstValue(for: "name") == "design-crits")
+        #expect(published.firstValue(for: "visibility") == "open")
+        // Uppercase would be rejected by the relay's own h-tag grammar.
+        #expect(id == id.lowercased())
+        #expect(UUID(uuidString: id) != nil)
+    }
+
     @Test("refuses to publish relay-signed kinds")
     func refusesRelaySignedKinds() async throws {
         // The relay authors 39000 itself. Sending one is a programming error

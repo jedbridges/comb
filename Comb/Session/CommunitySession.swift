@@ -246,6 +246,57 @@ actor CommunitySession {
         case noChannelReturned
     }
 
+    /// Creates a channel and returns its id.
+    ///
+    /// Standard NIP-29 kind 9007. Any authenticated member may send one and
+    /// becomes the new channel's owner: unlike deleting or renaming, creation
+    /// carries no owner or admin requirement.
+    ///
+    /// Two things here look wrong and are not.
+    ///
+    /// **The id is generated here rather than read back.** A 9007 carries the
+    /// channel's UUID in its own `h` tag and the relay creates the channel with
+    /// it, so the client knows the answer before it asks. This is the opposite
+    /// of `openDirectMessage`, where the relay picks the id and returns it in
+    /// the OK, and copying that shape would fail every time: a 9007's OK has no
+    /// payload at all, so `CommandResponse.channelID` would always be nil.
+    ///
+    /// **The refetch is load-bearing, not defensive.** A channel only exists on
+    /// this device once its kind 39000 metadata is projected, and 39000 is
+    /// relay-signed and stored channel-scoped, so it never arrives on a live
+    /// subscription. Without the query the channel is created on the relay and
+    /// never appears here.
+    func createChannel(
+        name: String,
+        about: String = "",
+        isPrivate: Bool = false
+    ) async throws -> String {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { throw ChannelFailure.nameRequired }
+
+        // Lowercase v4, which is the grammar the relay advertises in its NIP-11
+        // document and enforces when it parses the tag.
+        let id = UUID().uuidString.lowercased()
+
+        var tags = [
+            ["h", id],
+            ["name", trimmed],
+            ["visibility", isPrivate ? "private" : "open"],
+        ]
+        let description = about.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !description.isEmpty { tags.append(["about", description]) }
+
+        let event = try await signer.sign(kind: .groupCreate, content: "", tags: tags)
+        try await relay.publish(event)
+
+        await refreshGroupState()
+        return id
+    }
+
+    enum ChannelFailure: Error, Equatable {
+        case nameRequired
+    }
+
     /// Leaves a channel, so the reader stops being a member of it.
     ///
     /// Standard NIP-29 kind 9022, which any member may send. Deliberately not a
