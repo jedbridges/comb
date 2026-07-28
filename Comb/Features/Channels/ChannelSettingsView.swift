@@ -79,6 +79,19 @@ struct ChannelSettingsView: View {
             }
             .combRows()
 
+            // Said only when it applies. Deleting is offered on a positively
+            // known ownership, so on a community that publishes no roles the
+            // option is simply absent, and an action that vanishes with no
+            // explanation is the shape of thing ETHOS point 5 forbids. On a
+            // community that does publish them this never renders.
+            if channel.myRole == nil {
+                Section {
+                    Text("This community does not say who owns a channel, so Comb cannot offer to delete one. Whoever runs the community can.")
+                        .textRole(.support)
+                }
+                .combRows()
+            }
+
             if channel.mayDeleteChannel {
                 Section {
                     Button(role: .destructive) {
@@ -145,8 +158,14 @@ struct ChannelSettingsView: View {
         isSaving = true
         saveFailure = nil
         do {
-            try await session.editChannel(channel.id, name: name, about: about)
-            dismiss()
+            // Dismissing unconditionally sent the reader back to a timeline
+            // still showing the old name, with nothing said, whenever the
+            // relay accepted the rename and the refetch afterwards timed out.
+            if try await session.editChannel(channel.id, name: name, about: about) {
+                dismiss()
+            } else {
+                saveFailure = "Saved, but the new name has not come back yet. It will appear once this community answers."
+            }
         } catch let error as RelayError {
             if case .publishRejected(let reason) = error, !reason.isEmpty {
                 saveFailure = reason
@@ -171,6 +190,17 @@ struct ChannelSettingsView: View {
         isDeletingNow = true
         do {
             try await session.deleteChannel(channel.id)
+            // Order matters, and the previous order did nothing at all. A
+            // parent's DismissAction is inert while a child is pushed on top of
+            // it, so calling the timeline's dismiss from here left the reader
+            // on the settings form of a channel that no longer existed, with
+            // Save still live. Popping this screen first makes the timeline
+            // topmost, and its own dismiss then works.
+            //
+            // Verified on device with a probe rather than reasoned about, which
+            // is how the previous version shipped broken under a comment
+            // asserting it worked.
+            dismiss()
             onDeleted()
         } catch let error as RelayError {
             if case .publishRejected(let reason) = error, !reason.isEmpty {

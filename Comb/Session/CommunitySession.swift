@@ -94,7 +94,7 @@ actor CommunitySession {
             )
         )
         membership.handler = { [weak self] in
-            Task { await self?.refreshGroupState() }
+            Task { _ = await self?.refreshGroupState() }
         }
         Task { [weak self] in
             for await events in readState.stream() {
@@ -327,7 +327,7 @@ actor CommunitySession {
         // The group's metadata is relay-signed and channel-scoped, so it never
         // arrives on the live subscription. Without this the conversation
         // exists but has no name, no roster, and no row in the list.
-        await refreshGroupState()
+        _ = await refreshGroupState()
         return channelID
     }
 
@@ -379,7 +379,7 @@ actor CommunitySession {
         let event = try await signer.sign(kind: .groupCreate, content: "", tags: tags)
         try await relay.publish(event)
 
-        await refreshGroupState()
+        _ = await refreshGroupState()
         return id
     }
 
@@ -409,7 +409,7 @@ actor CommunitySession {
             tags: [["h", channelID]]
         )
         try await relay.publish(event)
-        await refreshGroupState()
+        _ = await refreshGroupState()
     }
 
     // MARK: - Moderation
@@ -446,7 +446,8 @@ actor CommunitySession {
     /// Kind 9002. `name` and `about` are the owner-and-admin half of that kind;
     /// `topic` and `purpose` on the same kind are open to any member, which is a
     /// different affordance and deliberately not bundled in here.
-    func editChannel(_ channelID: String, name: String, about: String) async throws {
+    @discardableResult
+    func editChannel(_ channelID: String, name: String, about: String) async throws -> Bool {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw ChannelFailure.nameRequired }
 
@@ -458,8 +459,9 @@ actor CommunitySession {
 
         // The new name lives in a relay-signed 39000, which is channel-scoped
         // and never arrives on the live subscription. Without this the rename
-        // succeeds and the old name stays on screen.
-        await refreshGroupState()
+        // succeeds and the old name stays on screen, which is exactly what
+        // happened while this line's result was being thrown away.
+        return await refreshGroupState()
     }
 
     /// Removes somebody from a channel.
@@ -512,7 +514,9 @@ actor CommunitySession {
             tags: [["h", channelID]]
         )
         try await relay.publish(event)
-        await refreshGroupState()
+        // Discarded on purpose: the channel is gone either way, and the screen
+        // is about to be popped.
+        _ = await refreshGroupState()
     }
 
     /// Leaves a channel, so the reader stops being a member of it.
@@ -547,7 +551,10 @@ actor CommunitySession {
     /// it and a query is the only way to learn a new channel's name and roster.
     /// Failure is not surfaced: the next reconnect bootstraps the same state,
     /// and a toast about a refetch the user never asked for would be noise.
-    @discardableResult
+    /// Deliberately not `@discardableResult`. The one call site that needed to
+    /// check this discarded it silently, in a function whose own comment
+    /// predicted the consequence, and the compiler had nothing to say because
+    /// the attribute was there.
     private func refreshGroupState() async -> Bool {
         guard let events = try? await relay.query(
             [

@@ -515,3 +515,41 @@ struct ModerationGatingTests {
         #expect(!channel.mayDeleteChannel)
     }
 }
+
+/// The number in the destroy ceremony has to be the number the app would show.
+@Suite("Deletion blast radius")
+struct MessageCountTests {
+    @Test("the count excludes moderated, deleted and blocked messages")
+    func countsWhatWouldBeShown() async throws {
+        let store = try EventStore()
+        let relay = try Fixture(name: "relay")
+        let author = try Fixture(name: "Ada")
+        let nuisance = try Fixture(name: "Mallory")
+
+        let kept = try author.message("still here", at: 1_000)
+        let selfDeleted = try author.message("taken back", at: 1_010)
+        let moderated = try author.message("removed by a moderator", at: 1_020)
+        let blockedOne = try nuisance.message("from someone blocked", at: 1_030)
+
+        _ = try await store.ingest([
+            try relay.event(
+                .groupMetadata, #"{"name":"General"}"#, tags: [["d", "room-1"]], at: 900
+            ),
+            kept, selfDeleted, moderated, blockedOne,
+            // The author taking back their own.
+            try author.event(.deletion, tags: [["e", selfDeleted.id]], at: 1_040),
+            // A moderator removing somebody else's.
+            try relay.event(.groupDeleteEvent, tags: [["e", moderated.id]], at: 1_050),
+        ])
+        try await store.block(pubkey: nuisance.pubkey)
+
+        // One of four survives every filter the timeline applies.
+        #expect(try store.messageCount(in: "room-1") == 1)
+    }
+
+    @Test("an empty channel counts nothing")
+    func emptyChannel() async throws {
+        let store = try EventStore()
+        #expect(try store.messageCount(in: "room-1") == 0)
+    }
+}

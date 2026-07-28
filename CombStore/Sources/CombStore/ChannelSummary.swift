@@ -106,8 +106,16 @@ public extension EventStore {
     /// what is about to be lost.
     nonisolated func messageCount(in channel: String) throws -> Int {
         try reader.read { db in
+            // Filtered the same way every other count in this file is. An
+            // unfiltered COUNT put tombstoned and blocked messages into the one
+            // sentence whose job is to say truthfully what is about to be lost.
             try Int.fetchOne(db, sql: """
-                SELECT COUNT(*) FROM event WHERE h = ? AND kind = ?
+                SELECT COUNT(*) FROM event e
+                WHERE e.h = ? AND e.kind = ?
+                  AND NOT EXISTS (SELECT 1 FROM blocked b WHERE b.pubkey = e.pubkey)
+                  AND NOT EXISTS (SELECT 1 FROM deletion d
+                                   WHERE d.target_id = e.id
+                                     AND (d.kind = 9005 OR d.deleted_by = e.pubkey))
                 """, arguments: [channel, EventKind.groupChatMessage.rawValue]) ?? 0
         }
     }

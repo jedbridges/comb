@@ -318,7 +318,12 @@ struct ChannelTimelineView: View {
                     // would publish "Alice & Bob" as a real name tag and the
                     // conversation would stop tracking its own membership
                     // forever.
-                    if channel.mayModerate, !channel.isDirectMessage {
+                    // `isMember` rather than `channel.isMember`, so a join
+                    // updates it. Without this a non-member reading a public
+                    // channel got a rename form above the button asking them to
+                    // join, which is the defect the next item's comment
+                    // describes having already fixed once.
+                    if isMember, channel.mayModerate, !channel.isDirectMessage {
                         NavigationLink {
                             ChannelSettingsView(session: session, channel: channel) {
                                 // Pops the timeline too. Dismissing only the
