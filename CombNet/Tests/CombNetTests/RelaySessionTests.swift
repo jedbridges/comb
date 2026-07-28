@@ -387,6 +387,36 @@ struct PublishTests {
         }
     }
 
+    /// Leaving a channel is a published kind 9022, and the refusal that matters
+    /// is the relay's own: a channel's last owner cannot leave without handing
+    /// ownership on first. That sentence has to reach the reader intact, which
+    /// means it has to survive the publish path.
+    @Test("carries the relay's reason for a refused leave")
+    func surfacesLeaveRejection() async throws {
+        let key = try PrivateKey()
+        let leave = try NostrEvent.signed(
+            kind: .groupLeaveRequest, content: "",
+            tags: [["h", "a-channel"]], with: key
+        )
+        let reason = "cannot remove the last owner - transfer ownership first"
+
+        let harness = try await Harness(behaviour: { message, transport in
+            switch message {
+            case .auth(let event):
+                await transport.push("[\"OK\",\"\(event.id)\",true,\"\"]")
+            case .event(let event):
+                await transport.push("[\"OK\",\"\(event.id)\",false,\"\(reason)\"]")
+            default:
+                break
+            }
+        })
+        try await harness.connect()
+
+        await #expect(throws: RelayError.publishRejected(reason)) {
+            try await harness.session.publish(leave)
+        }
+    }
+
     @Test("refuses to publish relay-signed kinds")
     func refusesRelaySignedKinds() async throws {
         // The relay authors 39000 itself. Sending one is a programming error

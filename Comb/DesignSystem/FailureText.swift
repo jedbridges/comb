@@ -22,6 +22,12 @@ enum FailureText {
     static let deleteTitle = "That message could not be deleted"
     static let deleteBody = "It is still there, and people can still read it."
 
+    /// The fallback only. When the relay refuses a leave it says why, and its
+    /// reason is worth more than this: the one that matters tells a channel's
+    /// last owner to transfer ownership first, which is an action, not an
+    /// apology.
+    static let leave = "That did not work. You are still in this channel."
+
     static let reportSent = "Report sent."
     static let reportFailedButBlocked = "Blocked on this iPhone. The report could not be sent."
     /// No "try again" in the words: the button beside this notice says it.

@@ -50,6 +50,24 @@ struct EventSignerTests {
         }
     }
 
+    /// The other half of the same rule, and the one that was never pinned: the
+    /// channel lifecycle kinds are authored by the client, so they must stay
+    /// signable. A well-meant addition to `isRelaySigned` would silently make
+    /// leaving a channel impossible.
+    @Test("signs the channel lifecycle kinds the client authors")
+    func signsChannelLifecycleKinds() async throws {
+        let signer = try InMemorySigner()
+
+        for kind in [EventKind.groupCreate, .groupJoinRequest, .groupLeaveRequest] {
+            #expect(!kind.isRelaySigned)
+            let event = try await signer.sign(
+                kind: kind, content: "", tags: [["h", "a-channel"]]
+            )
+            #expect(event.kind == kind)
+            #expect(event.isValid)
+        }
+    }
+
     @Test("honours an explicit timestamp")
     func honoursTimestamp() async throws {
         let signer = try InMemorySigner()

@@ -1,4 +1,5 @@
 import CombCore
+import CombNet
 import CombStore
 import PhotosUI
 import SwiftUI
@@ -21,6 +22,7 @@ struct ChannelTimelineView: View {
     @State private var reactingTo: TimelineRow?
     @State private var reactorsOf: ReactorsTarget?
     @State private var zappersOf: ZappersTarget?
+    @State private var isLeaving = false
     @FocusState private var isComposing: Bool
     @State private var isAwayFromBottom = false
     @State private var arrivalsWhileAway = 0
@@ -269,6 +271,30 @@ struct ChannelTimelineView: View {
                     .accessibilityLabel("\(channel.memberCount) members")
                 }
             }
+            ToolbarItem(placement: .topBarTrailing) {
+                Menu {
+                    Button("Leave channel", systemImage: "rectangle.portrait.and.arrow.right", role: .destructive) {
+                        isLeaving = true
+                    }
+                } label: {
+                    Image(systemName: "ellipsis")
+                }
+                .accessibilityLabel("Channel actions")
+            }
+        }
+        .confirmationDialog(
+            "Leave \(channel.name)?",
+            isPresented: $isLeaving,
+            titleVisibility: .visible
+        ) {
+            Button("Leave channel", role: .destructive) {
+                Task { await attemptLeave() }
+            }
+        } message: {
+            // Stated rather than implied. Leaving is a change to the roster, not
+            // a local hide, so the relay stops delivering the channel and the
+            // way back in depends on whether anyone can add you.
+            Text("You stop receiving this channel. Rejoining depends on whether it is open or someone adds you back.")
         }
         .task { await model.activate() }
         .navigationDestination(item: $threadRoot) { root in
@@ -377,6 +403,31 @@ struct ChannelTimelineView: View {
     private func attemptDelete(_ row: TimelineRow) async {
         if await !model.deleteMessage(row.id) {
             deleteFailed = row
+        }
+    }
+
+    /// Leaves, then returns to the list.
+    ///
+    /// Deliberately does not wait for the channel to disappear. The row goes
+    /// when the relay's 44101 arrives and projects, which is a moment later and
+    /// out of this screen's hands; staying here until then would leave the
+    /// reader in a channel they just left, watching nothing happen.
+    ///
+    /// The relay's own sentence is shown on failure rather than a generic one.
+    /// The refusal that matters says the last owner cannot leave without
+    /// transferring ownership first, and that is a specific thing to go and do.
+    private func attemptLeave() async {
+        do {
+            try await session.leaveChannel(channel.id)
+            dismiss()
+        } catch let error as RelayError {
+            if case .publishRejected(let reason) = error, !reason.isEmpty {
+                toast = ToastMessage(reason, tone: .failure)
+            } else {
+                toast = ToastMessage(FailureText.leave, tone: .failure)
+            }
+        } catch {
+            toast = ToastMessage(FailureText.leave, tone: .failure)
         }
     }
 
