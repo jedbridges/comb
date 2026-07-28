@@ -11,6 +11,11 @@ import SwiftUI
 struct ProfileSheet: View {
     let session: CommunitySession
     let pubkey: String
+    /// Set when this sheet was opened from a channel's member list and that
+    /// channel may be moderated. Removing somebody is offered here as well as
+    /// on a swipe, because a gesture with no affordance is not an affordance.
+    var removableFrom: (channelID: String, channelName: String)?
+    var onRemoved: (() -> Void)?
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openChannel) private var openChannel
@@ -18,6 +23,7 @@ struct ProfileSheet: View {
     @State private var isZapping = false
     @State private var isOpeningDirectMessage = false
     @State private var directMessageFailure: String?
+    @State private var isRemoving = false
 
     /// Opens the conversation and goes to it.
     ///
@@ -66,6 +72,18 @@ struct ProfileSheet: View {
         .presentationDetents([.medium, .large])
         .task {
             profile = try? session.store.profile(pubkey: pubkey)
+        }
+        .confirmationDialog(
+            "Remove them from \(removableFrom?.channelName ?? "this channel")?",
+            isPresented: $isRemoving,
+            titleVisibility: .visible
+        ) {
+            Button("Remove", role: .destructive) {
+                dismiss()
+                onRemoved?()
+            }
+        } message: {
+            Text("They stop seeing this channel. Anyone who can add people can put them back.")
         }
         .sheet(isPresented: $isZapping) {
             ZapPresenter(
@@ -139,6 +157,14 @@ struct ProfileSheet: View {
                         Label("Send a zap", systemImage: "bolt.fill")
                     }
                 }
+
+                if let removableFrom, pubkey != session.me.hex {
+                    Button(role: .destructive) {
+                        isRemoving = true
+                    } label: {
+                        Label("Remove from \(removableFrom.channelName)", systemImage: "person.badge.minus")
+                    }
+                }
             } footer: {
                 if let directMessageFailure {
                     // Stated rather than swallowed. Opening a conversation is a
@@ -198,6 +224,18 @@ struct MemberListView: View {
                                 row(member)
                             }
                             .buttonStyle(.plain)
+                            // The accelerator, not the only way in. A swipe
+                            // with no affordance, on a screen visited perhaps
+                            // twice a year, is a memory test; the profile sheet
+                            // behind the tap carries the same action where it
+                            // can be seen and explained.
+                            .swipeActions(edge: .trailing) {
+                                if mayModerate, member.pubkey != session.me.hex {
+                                    Button("Remove", role: .destructive) {
+                                        removing = member
+                                    }
+                                }
+                            }
                         }
                     } header: {
                         Text("\(members.count) members")
@@ -213,24 +251,34 @@ struct MemberListView: View {
             members = (try? session.store.members(of: channelID)) ?? []
         }
         .sheet(item: $selected) { target in
-            ProfileSheet(session: session, pubkey: target.pubkey)
+            ProfileSheet(
+                session: session,
+                pubkey: target.pubkey,
+                removableFrom: mayModerate && target.pubkey != session.me.hex
+                    ? (channelID, channelName)
+                    : nil,
+                onRemoved: {
+                    if let member = members.first(where: { $0.pubkey == target.pubkey }) {
+                        Task { await remove(member) }
+                    }
+                }
+            )
         }
         .confirmationDialog(
-            "Remove \(removing?.name ?? "them") from \(channelName)?",
+            "Remove them from \(channelName)?",
             isPresented: Binding(
                 get: { removing != nil },
                 set: { if !$0 { removing = nil } }
             ),
-            titleVisibility: .visible
-        ) {
-            Button("Remove", role: .destructive) {
-                if let target = removing {
-                    Task { await remove(target) }
-                }
+            titleVisibility: .visible,
+            presenting: removing
+        ) { member in
+            Button("Remove \(member.name)", role: .destructive) {
+                Task { await remove(member) }
                 removing = nil
             }
-        } message: {
-            Text("They stop receiving this channel. Anyone who can add people can put them back.")
+        } message: { _ in
+            Text("They stop seeing this channel. Anyone who can add people can put them back.")
         }
         .alert(
             "Nothing changed",
@@ -250,11 +298,16 @@ struct MemberListView: View {
     /// failures are only logged, so an acknowledgement is not evidence.
     private func remove(_ member: ChannelMember) async {
         do {
-            let changed = try await session.removeMember(member.pubkey, from: channelID)
-            if changed {
+            switch try await session.removeMember(member.pubkey, from: channelID) {
+            case .removed:
                 members = (try? session.store.members(of: channelID)) ?? members
-            } else {
-                removeFailure = "\(member.name) is still in this channel. The community accepted the request and did not act on it, which usually means this account cannot remove people here."
+            case .unchanged:
+                removeFailure = "\(member.name) is still in \(channelName). The community did not say why, and this account may not be able to remove people here."
+            case .unverified:
+                // Said as not-knowing, because that is what happened: the
+                // roster query timed out and the removal may well have worked.
+                // The sentence this replaced named a cause instead.
+                removeFailure = "The member list did not come back, so whether \(member.name) was removed is not yet known. Open it again in a moment."
             }
         } catch let error as RelayError {
             if case .publishRejected(let reason) = error, !reason.isEmpty {

@@ -313,9 +313,20 @@ struct ChannelTimelineView: View {
             }
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
-                    if channel.mayModerate {
+                    // Not on a direct message. A DM's name is derived from
+                    // who is in it, so seeding a text field with it and saving
+                    // would publish "Alice & Bob" as a real name tag and the
+                    // conversation would stop tracking its own membership
+                    // forever.
+                    if channel.mayModerate, !channel.isDirectMessage {
                         NavigationLink {
-                            ChannelSettingsView(session: session, channel: channel)
+                            ChannelSettingsView(session: session, channel: channel) {
+                                // Pops the timeline too. Dismissing only the
+                                // settings screen landed the reader back inside
+                                // the channel they had just destroyed, with its
+                                // old title and a live compose bar.
+                                dismiss()
+                            }
                         } label: {
                             Label("Channel settings", systemImage: "gearshape")
                         }

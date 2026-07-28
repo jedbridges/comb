@@ -473,7 +473,7 @@ actor CommunitySession {
     /// dropped, so an OK is not evidence that anything happened. The roster is,
     /// and it is one query away.
     @discardableResult
-    func removeMember(_ pubkey: String, from channel: String) async throws -> Bool {
+    func removeMember(_ pubkey: String, from channel: String) async throws -> RemovalOutcome {
         let before = (try? store.members(of: channel))?.map(\.pubkey) ?? []
 
         let event = try await signer.sign(
@@ -482,13 +482,26 @@ actor CommunitySession {
             tags: [["h", channel], ["p", pubkey]]
         )
         try await relay.publish(event)
-        await refreshGroupState()
+
+        // Three answers, not two. The roster query has a fifteen second timeout
+        // and fails quietly, so a roster that still lists this person can mean
+        // the relay ignored the request or that Comb never managed to look. An
+        // earlier version collapsed both into "the community accepted the
+        // request and did not act on it", which is a cause stated as fact about
+        // a case where nothing is known at all.
+        guard await refreshGroupState() else { return .unverified }
 
         let after = (try? store.members(of: channel))?.map(\.pubkey) ?? []
-        // Unchanged rosters mean the relay took the event and did nothing with
-        // it. Reporting success there would be repeating a claim Comb has just
-        // watched fail.
-        return before.contains(pubkey) && !after.contains(pubkey)
+        return before.contains(pubkey) && !after.contains(pubkey) ? .removed : .unchanged
+    }
+
+    enum RemovalOutcome: Sendable, Equatable {
+        /// The roster no longer lists them.
+        case removed
+        /// The relay accepted the event and the roster is unchanged.
+        case unchanged
+        /// The roster could not be re-read, so nothing is known either way.
+        case unverified
     }
 
     /// Deletes a channel outright. Owner only, and there is no undoing it.
@@ -534,7 +547,8 @@ actor CommunitySession {
     /// it and a query is the only way to learn a new channel's name and roster.
     /// Failure is not surfaced: the next reconnect bootstraps the same state,
     /// and a toast about a refetch the user never asked for would be noise.
-    private func refreshGroupState() async {
+    @discardableResult
+    private func refreshGroupState() async -> Bool {
         guard let events = try? await relay.query(
             [
                 Filter(kinds: [.groupMetadata], limit: 200),
@@ -543,7 +557,7 @@ actor CommunitySession {
             timeout: .seconds(15)
         ) else {
             DiagnosticsBuffer.report("session", "membership refresh failed")
-            return
+            return false
         }
 
         let result = try? await store.ingest(events)
@@ -551,6 +565,7 @@ actor CommunitySession {
             "session",
             "membership changed: refreshed \(result?.inserted.count ?? 0) group events"
         )
+        return true
     }
 
     /// Connects without holding up the caller, retrying until it works or

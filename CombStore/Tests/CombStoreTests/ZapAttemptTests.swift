@@ -495,15 +495,23 @@ struct ModerationGatingTests {
         #expect(!channel.mayDeleteChannel)
     }
 
-    /// The case that decides whether Comb works against a plain NIP-29 relay.
-    /// A relay that publishes no roles must not cost every reader every action
-    /// they might be entitled to, so an unknown role offers and lets the relay
-    /// answer. Hidden only on a positive negative.
-    @Test("an unknown role is offered both, not denied both")
+    /// The case that decides whether Comb works against a plain NIP-29 relay,
+    /// and the one place the two gates deliberately disagree.
+    ///
+    /// Moderation is offered on silence: a relay that publishes no roles must
+    /// not cost every reader every action they might be entitled to, and being
+    /// wrong costs one refused tap.
+    ///
+    /// Deleting a channel is not. Offering an action is a claim about who the
+    /// reader is, and being wrong here puts an irreversible destroy-everything
+    /// ceremony in front of every member of every room, including their own
+    /// direct messages. A relay that says nothing about roles is one where
+    /// nobody can be shown to own anything, and that is the honest answer.
+    @Test("silence offers moderation but never offers deletion")
     func unknown() async throws {
         let channel = try await summary(role: nil)
         #expect(channel.myRole == nil)
         #expect(channel.mayModerate)
-        #expect(channel.mayDeleteChannel)
+        #expect(!channel.mayDeleteChannel)
     }
 }

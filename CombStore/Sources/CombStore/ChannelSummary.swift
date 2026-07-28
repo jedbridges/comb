@@ -82,8 +82,16 @@ public struct ChannelSummary: Sendable, Equatable, Hashable, Identifiable {
     /// certain to be refused.
     public var mayModerate: Bool { myRole.map(\.isElevated) ?? true }
 
-    /// Owner only, on the same terms.
-    public var mayDeleteChannel: Bool { myRole.map { $0 == .owner } ?? true }
+    /// Owner only, and unlike `mayModerate` this one requires a positive
+    /// answer rather than treating silence as permission.
+    ///
+    /// The asymmetry is the argument. Being wrong about moderation costs a
+    /// refused tap. Being wrong here puts an irreversible destroy-everything
+    /// ceremony in front of every member of every room, including their own
+    /// direct messages, on any relay that publishes no roles. Offering an
+    /// action is a claim about who the reader is, and a relay that says nothing
+    /// about roles is a relay where nobody can be shown to own anything.
+    public var mayDeleteChannel: Bool { myRole == .owner }
 
     public var hasUnread: Bool { unreadCount > 0 }
     public var hasMention: Bool { mentionCount > 0 }
@@ -94,6 +102,16 @@ public struct ChannelSummary: Sendable, Equatable, Hashable, Identifiable {
 }
 
 public extension EventStore {
+    /// How many messages this channel holds, for the one dialog that has to say
+    /// what is about to be lost.
+    nonisolated func messageCount(in channel: String) throws -> Int {
+        try reader.read { db in
+            try Int.fetchOne(db, sql: """
+                SELECT COUNT(*) FROM event WHERE h = ? AND kind = ?
+                """, arguments: [channel, EventKind.groupChatMessage.rawValue]) ?? 0
+        }
+    }
+
     /// Every known channel, most recently active first, silent ones after.
     nonisolated func channelSummaries(me: String = "") throws -> [ChannelSummary] {
         try reader.read { db in try Self.fetchChannelSummaries(db, me: me) }

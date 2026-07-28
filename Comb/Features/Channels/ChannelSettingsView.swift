@@ -13,6 +13,9 @@ import SwiftUI
 struct ChannelSettingsView: View {
     let session: CommunitySession
     let channel: ChannelSummary
+    /// Called instead of dismissing this screen, because after a delete there
+    /// is no channel to go back to.
+    let onDeleted: () -> Void
 
     @Environment(\.dismiss) private var dismiss
     @State private var name: String
@@ -22,10 +25,18 @@ struct ChannelSettingsView: View {
     @State private var isDeleting = false
     @State private var deleteConfirmation = ""
     @State private var deleteFailure: String?
+    @State private var isDeletingNow = false
+    /// What the channel is about to take with it.
+    @State private var messageCount = 0
 
-    init(session: CommunitySession, channel: ChannelSummary) {
+    init(
+        session: CommunitySession,
+        channel: ChannelSummary,
+        onDeleted: @escaping () -> Void
+    ) {
         self.session = session
         self.channel = channel
+        self.onDeleted = onDeleted
         _name = State(initialValue: channel.name)
         _about = State(initialValue: channel.about ?? "")
     }
@@ -73,19 +84,26 @@ struct ChannelSettingsView: View {
                     Button(role: .destructive) {
                         isDeleting = true
                     } label: {
-                        Label("Delete channel", systemImage: "trash")
+                        if isDeletingNow {
+                            Label { Text("Deleting…") } icon: { ProgressView().controlSize(.small) }
+                        } else {
+                            Label("Delete channel", systemImage: "trash")
+                        }
                     }
-                } header: {
-                    Text("Danger")
+                    .disabled(isDeletingNow)
                 } footer: {
-                    // Said before the dialog, not only inside it. Someone should
-                    // be able to decide not to tap the button in the first place.
-                    Text("The channel and its messages go for everyone. There is no undoing it.")
+                    // Said before the dialog, not only inside it, so the
+                    // decision not to tap is available. And said in terms of
+                    // what is lost and whose it is: a typed confirmation
+                    // protects the person tapping from a mis-tap, and nothing
+                    // in it is about the people whose conversation ends.
+                    Text(destructionSummary)
                 }
                 .combRows()
             }
         }
         .combForm()
+        .task { messageCount = (try? session.store.messageCount(in: channel.id)) ?? 0 }
         .navigationTitle("Channel settings")
         .navigationBarTitleDisplayMode(.inline)
         .animation(Motion.fast, value: saveFailure)
@@ -100,9 +118,15 @@ struct ChannelSettingsView: View {
             Button("Delete channel", role: .destructive) {
                 Task { await deleteChannel() }
             }
+            // Verified on iOS 26.5 with a standalone probe: `.disabled` inside
+            // an alert is honoured and re-evaluated while the alert is up. It
+            // is undocumented, so if this ever regresses the failure is an
+            // always-live delete button. Worth re-checking on a new OS.
             .disabled(deleteConfirmation != channel.name)
         } message: {
-            Text("This cannot be undone. Type \(channel.name) to confirm.")
+            // The footer already said it cannot be undone; repeating it here
+            // spends the reader's attention on a fact they just accepted.
+            Text("Type \(channel.name) to confirm.")
         }
         .alert(
             "That channel is still here",
@@ -127,27 +151,36 @@ struct ChannelSettingsView: View {
             if case .publishRejected(let reason) = error, !reason.isEmpty {
                 saveFailure = reason
             } else {
-                saveFailure = "Those changes did not save."
+                saveFailure = "The community did not accept those changes. The channel still says what it said."
             }
         } catch {
-            saveFailure = "Those changes did not save."
+            saveFailure = "The community did not accept those changes. The channel still says what it said."
         }
         isSaving = false
     }
 
+    /// What is about to be destroyed, in people and messages.
+    private var destructionSummary: String {
+        let people = channel.memberCount == 1 ? "1 person" : "\(channel.memberCount) people"
+        let messages = messageCount == 1 ? "1 message" : "\(messageCount.formatted()) messages"
+        return "Deleting this channel removes \(messages) for \(people), including everyone else's. It cannot be brought back."
+    }
+
     private func deleteChannel() async {
         deleteConfirmation = ""
+        isDeletingNow = true
         do {
             try await session.deleteChannel(channel.id)
-            dismiss()
+            onDeleted()
         } catch let error as RelayError {
             if case .publishRejected(let reason) = error, !reason.isEmpty {
                 deleteFailure = reason
             } else {
-                deleteFailure = "That channel could not be deleted."
+                deleteFailure = "The community did not delete it."
             }
         } catch {
-            deleteFailure = "That channel could not be deleted."
+            deleteFailure = "The community did not delete it."
         }
+        isDeletingNow = false
     }
 }
