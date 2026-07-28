@@ -41,14 +41,19 @@ struct NewChannelView: View {
 
                 Section {
                     Toggle("Invite only", isOn: $isPrivate)
+                } header: {
+                    // A header, because this is the one irreversible choice on
+                    // the screen and it read as a continuation of "Channel".
+                    Text("Who can join")
                 } footer: {
-                    // Said plainly because it is not reversible from here.
-                    // Editing a channel's settings afterwards is owner and
-                    // admin only, and Comb has no screen for it, so this choice
-                    // is made once.
+                    // Two sentences, one varying and one not. They used to be
+                    // welded together, so the invariant half appeared twice
+                    // word for word and read as boilerplate, and it made Comb's
+                    // limitation the point when the fact belongs to the channel.
                     Text(isPrivate
-                        ? "Only people an owner adds can join. Comb cannot change this later."
-                        : "Anyone in this community can join. Comb cannot change this later.")
+                        ? "Only people an owner adds can join."
+                        : "Anyone in this community can join.")
+                    Text("This is set when the channel is made and cannot be changed afterwards.")
                 }
                 .combRows()
 

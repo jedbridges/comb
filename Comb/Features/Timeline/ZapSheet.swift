@@ -138,7 +138,12 @@ struct ZapSheet: View {
             Text("\(zap.amountMillisats / 1000) sats to \(recipientName)")
                 .textRole(.control)
 
-            Text("Comb handed the invoice to your wallet. It cannot tell whether the payment went through. If \(recipientName)'s wallet publishes a receipt, the zap will appear on the message.")
+            // Leads with the fact Comb owns. It is certain the reader chose to
+            // send and that a wallet took the invoice; only settlement is
+            // unknowable. The old wording made Comb the subject of a negation
+            // ("it cannot tell"), so a 44pt bolt said yes while the paragraph
+            // under it said maybe, and the paragraph won.
+            Text("Your wallet has the invoice for \(zap.amountMillisats / 1000) sats. Pay it there. The zap appears on the message when \(recipientName)'s wallet publishes a receipt, which is the only way Comb learns a zap was paid.")
                 .textRole(.support)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)

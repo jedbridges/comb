@@ -66,10 +66,12 @@ struct ZappersSheet: View {
             } header: {
                 Text("\(totalSats.formatted()) sats from \(zappers.count == 1 ? "1 person" : "\(zappers.count) people")")
             } footer: {
-                // Three sentences, three separate limitations. None of them is
-                // fixable in a client, so all three are said plainly rather
-                // than softened into one vague caveat.
-                Text("Zaps are counted from receipts published by recipients' wallets. Comb only sees the receipts this relay sends it, so the real total can be higher. A receipt says a wallet issued an invoice for a signed request; it does not prove the invoice was paid.")
+                // Both limits survive: the count is partial, and a counted zap
+                // may not have been collected. The previous wording spent
+                // forty-seven words on it, said "relay" one tap from the
+                // timeline, and ended on "issued an invoice for a signed
+                // request", which is the protocol showing through.
+                Text("This counts the zaps Comb has been told about, so the real total can be higher. A wallet can also announce a zap that was never collected.")
             }
             .combRows()
         }

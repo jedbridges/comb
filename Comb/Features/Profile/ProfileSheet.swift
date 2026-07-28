@@ -223,9 +223,15 @@ struct MemberListView: View {
                     // member, and nothing at all when the relay publishes no
                     // roles: a badge reading "Member" on a relay that never said
                     // so would be Comb inventing the fact.
+                    // Owner takes the accent, Admin does not. This is the one
+                    // unbounded chartreuse in the app: a roster's owner count
+                    // is one in practice, but its admin count grows with the
+                    // community, and four accent chips on one screen is three
+                    // more than the budget allows. The words carry the meaning
+                    // either way.
                     if let role = member.role, role.isElevated {
                         Text(role == .owner ? "Owner" : "Admin")
-                            .textRole(.meta, .brand)
+                            .textRole(.meta, role == .owner ? .brand : .muted)
                             .combChip()
                     }
                 }

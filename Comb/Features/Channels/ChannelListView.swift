@@ -432,7 +432,11 @@ struct ChannelListView: View {
                 .textRole(.bodyStrong)
             // This used to say channels would appear once the community added
             // them, which stopped being true the moment anyone could make one.
-            Text("Make the first one, or wait to be added to a channel someone else makes.")
+            // Then it said "or wait to be added", which is an empty state
+            // telling the reader that doing nothing is one of their two
+            // options. If somebody adds you the list fills itself, and no copy
+            // was needed to arrange it.
+            Text("Make the first one.")
                 .textRole(.support)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, Space.xl)

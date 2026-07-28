@@ -510,7 +510,10 @@ extension View {
     /// total, and marks the reader's own with a brand-coloured glyph instead:
     /// a bubble can already carry a chartreuse reaction pill, and DESIGN.md's
     /// rule is that three accents on a screen means one of them is wrong.
-    func tallyChip(isMine: Bool) -> some View {
+    /// `isInteractive` is what tells a tally you can act on from one you can
+    /// only read. The hairline reads as an edge, and an edge reads as a
+    /// control, so a chip that does nothing on tap does not get one.
+    func tallyChip(isMine: Bool, isInteractive: Bool = true) -> some View {
         padding(.horizontal, Space.xs)
             .padding(.vertical, Space.xxs)
             .background(
@@ -520,7 +523,7 @@ extension View {
                 in: .capsule
             )
             .overlay {
-                if !isMine {
+                if !isMine, isInteractive {
                     Capsule().strokeBorder(Palette.glyphHairline, lineWidth: Stroke.hairline)
                 }
             }

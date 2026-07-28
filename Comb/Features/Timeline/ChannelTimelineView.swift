@@ -482,8 +482,10 @@ struct ChannelTimelineView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .transition(.opacity)
                 }
-                Text("You are not in this channel yet.")
+                Text("You are not in this channel yet, so Comb is not being shown its messages.")
                     .textRole(.meta)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: .infinity)
                 PrimaryButton(
                     title: isJoining ? "Joining\u{2026}" : "Join channel",
                     isBusy: isJoining,
@@ -679,12 +681,11 @@ struct ChannelTimelineView: View {
                 Text("Say the first thing.")
                     .textRole(.support)
             } else {
+                // Headline only. The explanation moved into the join bar, which
+                // owns the action it belongs to; said in both places it was one
+                // fact stated twice, forty points apart.
                 Text("Nothing to show")
                     .textRole(.bodyStrong)
-                Text("Comb only sees this channel's messages once you are in it.")
-                    .textRole(.support)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, Space.xl)
             }
         }
         .arrival(true)
@@ -1292,7 +1293,11 @@ private struct PendingZapChip: View {
                 .font(Typography.count)
                 .foregroundStyle(Palette.subtext)
         }
-        .tallyChip(isMine: false)
+        // No hairline, which is the row's tell for "this is not a control".
+        // Three identical capsules sat side by side where one toggled, one
+        // opened a sheet, and this one did nothing, and the only way to learn
+        // which was to tap the wrong one.
+        .tallyChip(isMine: false, isInteractive: false)
         .accessibilityLabel("Your zap is waiting for a receipt")
     }
 }
