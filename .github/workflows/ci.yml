@@ -76,6 +76,18 @@ jobs:
             -skipMacroValidation \
             CODE_SIGNING_ALLOWED=NO
 
+  # A feature once shipped whose control was never offered: it compiled, its
+  # view was correct, and 483 tests were green because nothing tests a view.
+  # This is the cheap half of the answer, and it needs neither Xcode nor a
+  # simulator, so it runs beside the build rather than behind it.
+  dead-ui:
+    name: Unreachable UI
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check for UI that cannot be reached
+        run: ./scripts/check-dead-ui.sh
+
   # Issue forms fail silently: GitHub hides an unusable template and redirects
   # its `?template=` link to the chooser without reporting anything. The app
   # links straight to one of these from its Browse screen, so a broken form

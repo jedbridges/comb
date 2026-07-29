@@ -1,4 +1,4 @@
-.PHONY: help project test test-core test-store test-net build-app test-app run archive export clean
+.PHONY: help project test test-core test-store test-net check-dead-ui build-app test-app run archive export clean
 
 SIMULATOR ?= platform=iOS Simulator,name=iPhone 17 Pro
 
@@ -11,7 +11,7 @@ help:
 	@echo "make project    regenerate Comb.xcodeproj from project.yml"
 	@echo "make test       run all Swift package tests (no simulator, seconds)"
 	@echo "make build-app  build the app for the simulator"
-	@echo "make test-app   run the app target's tests in a simulator"
+	@echo "make test-app   run the app target's tests in a simulator, and the dead-UI check"
 	@echo "make run        build, install, and launch on the booted simulator"
 	@echo "make archive    build a signed archive for the App Store (needs DEVELOPMENT_TEAM)"
 	@echo "make export     export the archive to a .ipa for upload (needs DEVELOPMENT_TEAM)"
@@ -48,7 +48,13 @@ build-app: project
 		-derivedDataPath DerivedData \
 		$(XCFLAGS)
 
-test-app: project
+# Two ways UI dies quietly: state nothing ever fills in, and a property every
+# caller passes that the view never reads. Neither costs a build, so this runs
+# ahead of the simulator rather than after it.
+check-dead-ui:
+	@scripts/check-dead-ui.sh
+
+test-app: project check-dead-ui
 	@$(Q) test-app xcodebuild test \
 		-project Comb.xcodeproj \
 		-scheme Comb \
