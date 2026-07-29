@@ -34,10 +34,13 @@ To other places, which is the part worth reading closely:
 - **Profile pictures and custom emoji can live anywhere.** Whoever set them
   chose the address, and Comb loads them as you scroll. That host sees your IP
   address. Nothing is signed and nothing identifies you beyond the request.
-- **Sending a zap contacts the recipient's wallet provider.** Paying a Lightning
-  address means asking their provider for an invoice, so that provider learns
-  your IP address and that somebody is paying this person. Comb never sees the
-  money and never holds a key to it.
+- **Zapping contacts the recipient's wallet provider.** Opening the zap sheet
+  asks their provider what amounts it accepts, and choosing one asks it for an
+  invoice, so that provider learns your IP address and that somebody is
+  interested in paying this person. It happens because you tapped Zap, never
+  because you scrolled. The requests carry no cookies and are not cached, so
+  the provider cannot link one zap to the next. Comb never sees the money and
+  never holds a key to it.
 
 ## What Comb does not do
 

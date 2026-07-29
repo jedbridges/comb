@@ -32,6 +32,14 @@ interesting attack surface is roughly:
 - **Media.** Blossom auth is scoped to the community's own host, and images are
   re-encoded and stripped of metadata before upload. A path that leaks EXIF, or
   that signs an authorization for a third-party host, is in scope.
+- **Zaps.** Comb holds no funds and no spend key: it builds a signed kind 9734,
+  asks the recipient's LNURL host for an invoice, and hands that invoice to a
+  wallet. A path that gets Comb to sign a zap request the reader did not ask
+  for, that sends the reader to an invoice for a different recipient or amount
+  than the sheet showed, or that lets a zap total be inflated without a valid
+  receipt, is in scope. Receipt verification is the load-bearing part: the
+  amount, sender and target are read from the kind 9734 embedded in a receipt
+  and signature-checked, never from the receipt's own tags.
 - **Injection through message content.** Message bodies are written by strangers
   and rendered. Comb deliberately does not interpret arbitrary Markdown. A way
   to get styling, a link, or code to execute from message content is in scope.
@@ -60,3 +68,14 @@ These are design choices, not vulnerabilities, but you should know them:
   recovery code.
 - **The community index is unsigned.** See
   [CONTRIBUTING.md](CONTRIBUTING.md#listing-a-community) for why.
+- **A zap crosses a host nobody in the community chose.** The recipient picked
+  their wallet provider, and paying them means asking it for an invoice. That
+  is the one place Comb talks to a host outside the community relay, it happens
+  only when you tap Zap, and the requests carry no cookies and are not cached.
+  See [PRIVACY.md](PRIVACY.md).
+- **A zap total is a floor, not a balance.** It counts the receipts this device
+  has seen. Membership-gated relays do not carry receipts from wallet providers,
+  so a total may be lower than what was actually sent, and a zap Comb handed to
+  a wallet is shown as waiting rather than paid, because Comb cannot observe a
+  payment. Where a receipt's issuer key has never been learned, the list of
+  zappers says so rather than presenting an unverified total as a verified one.
