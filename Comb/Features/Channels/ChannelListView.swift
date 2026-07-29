@@ -296,9 +296,6 @@ struct ChannelListView: View {
 
     private var channelList: some View {
         ScrollView {
-            // Identified on the scroll view rather than the stack: this is what
-            // a test waits for to know it is looking at the list of channels
-            // and not at an empty state or a spinner.
             LazyVStack(spacing: 0) {
                 ForEach(Array(model.channels.enumerated()), id: \.element.id) { index, channel in
                     NavigationLink(value: channel) {
@@ -318,6 +315,8 @@ struct ChannelListView: View {
             .padding(.vertical, Space.xxs)
             .glassEffect(in: .rect(cornerRadius: Radii.card))
             .padding(.horizontal, Space.md)
+            // What a test waits for to know it is looking at the list of
+            // channels rather than at the empty state.
             .a11y(A11y.channelList)
             .padding(.vertical, Space.sm)
         }

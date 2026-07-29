@@ -272,8 +272,10 @@ struct SettingsView: View {
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Done") { dismiss() }
+                        .a11y(A11y.settingsDone)
                 }
             }
+            .a11y(A11y.settingsScreen)
             .sheet(isPresented: $isReportingProblem) {
                 ReportProblemView()
             }

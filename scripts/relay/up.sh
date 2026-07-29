@@ -25,6 +25,14 @@ if ! command -v docker >/dev/null 2>&1; then
     exit 1
 fi
 
+# Everything below uses `docker compose`, the v2 plugin, which is a separate
+# thing from having docker at all.
+if ! docker compose version >/dev/null 2>&1; then
+    echo "docker is installed but the Compose v2 plugin is not."
+    echo "The fake half of the suite still runs: make test-net"
+    exit 1
+fi
+
 if [ -z "${BUZZ_RELAY_PRIVATE_KEY:-}" ]; then
     cat <<'MESSAGE'
 error: BUZZ_RELAY_PRIVATE_KEY is not set.
@@ -59,10 +67,23 @@ fi
 
 # Top-level `self`, as in the document a hosted Buzz relay actually serves.
 # That shape is not guessed: it is what
-# CombNet/Tests/CombNetTests/Fixtures-buzz-relay-nip11.json captured verbatim.
-self="$(printf '%s' "$document" | ruby -rjson -e '
-document = JSON.parse(STDIN.read) rescue {}
-print document.is_a?(Hash) ? document["self"].to_s : ""
+# CombNet/Tests/CombNetTests/Fixtures-buzz-relay-nip11.json captured verbatim,
+# and the relay omits the field entirely when it has no key.
+#
+# python3 rather than ruby: macOS ships ruby only as a deprecated 2.6 that is
+# scheduled to go away and is absent from Linux CI, and a missing interpreter
+# under `set -e` fails here with "command not found" instead of any of the
+# messages this script takes care to write.
+self="$(printf '%s' "$document" | python3 -c '
+import json, sys
+try:
+    document = json.load(sys.stdin)
+except ValueError:
+    document = {}
+# `or ""` rather than a default: the key can be present and null, and
+# .get("self", "") would then hand back the string "None", which is not empty
+# and would sail through the check below.
+print((document.get("self") or "") if isinstance(document, dict) else "", end="")
 ')"
 
 if [ -z "$self" ]; then
@@ -81,6 +102,21 @@ fi
 # check that actually matters is the one above.
 if [ -n "${BUZZ_RELAY_PUBLIC_KEY:-}" ] && [ "$self" != "$BUZZ_RELAY_PUBLIC_KEY" ]; then
     echo "error: the relay advertises $self, expected $BUZZ_RELAY_PUBLIC_KEY"
+    exit 1
+fi
+
+# `self` is not enough on its own, which was this script's own blind spot. The
+# NIP-11 document is built from configuration alone and is served to unmapped
+# hosts deliberately, so it answers correctly even when the database has no
+# schema and when no community is bound to this host. Both of those break every
+# case while leaving the assertion above green. Readiness is what notices.
+if ! curl -fsS "http://localhost:3031/_readiness" >/dev/null 2>&1; then
+    echo "error: the relay serves NIP-11 but does not report itself ready."
+    echo "       It is listening, so this is usually the database: an empty one"
+    echo "       with migrations skipped looks exactly like a healthy relay"
+    echo "       until the first query."
+    docker compose -f "$compose" logs --tail 40 relay
+    docker compose -f "$compose" down -v
     exit 1
 fi
 

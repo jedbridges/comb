@@ -10,6 +10,14 @@
 # Images are by digest, not tag. A conformance suite whose subject can be
 # swapped underneath it by someone else's `latest` push is not pinning
 # anything, and the failure would look like our bug.
+#
+# Several settings below were originally written from guesswork and were simply
+# wrong. They are now checked against the image itself, at the pinned digest:
+# its config blob for the entrypoint, exposed ports and installed tools, and
+# the buzz source at the revision the image records. Where a comment states a
+# default, that default is from that revision, not from memory.
+name: comb-contract
+
 services:
   postgres:
     image: postgres:16-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777
@@ -48,21 +56,51 @@ services:
     # server, which is the sort of confusion that costs an afternoon.
     ports:
       - "3030:3000"
+      # The health endpoints live on their own port, so up.sh can ask whether
+      # the relay is ready rather than only whether it is listening.
+      - "3031:8080"
     environment:
       DATABASE_URL: postgres://buzz:buzz@postgres:5432/buzz
       REDIS_URL: redis://redis:6379
+      # Opt-in upstream, and this stack bootstraps an empty database on every
+      # single run because Postgres is on tmpfs with no volume. Without it the
+      # relay starts happily, serves its NIP-11 document, and then every query
+      # hits a table that does not exist. That is a green rig testing nothing,
+      # which is the one failure this whole stage exists to prevent.
+      BUZZ_AUTO_MIGRATE: "true"
+      # Not cosmetic, and the reason the port remap is not free. The relay
+      # seeds its deployment community under the authority of this URL, and
+      # binds an incoming connection by the Host header it arrives with. Port
+      # is part of that key: only :80 and :443 are stripped. Left at the
+      # default ws://localhost:3000, a client connecting to 3030 sends
+      # Host: localhost:3030, matches no community, and is refused with an
+      # error that looks nothing like a tenancy problem.
+      RELAY_URL: ws://localhost:3030
       # Load-bearing, and the whole reason up.sh asserts before running
       # anything. Without a relay key, NIP-11 advertises no `self`, the
       # provenance check on relay-signed 39000/39002 takes its skipped branch,
       # and the rig reports a clean pass while proving nothing at all.
-      BUZZ_RELAY_PRIVATE_KEY: ${BUZZ_RELAY_PRIVATE_KEY:?set it, or the suite silently proves nothing}
-      # A test loop is not abuse. The stock 60 events a minute is well below
-      # what the contract cases send in a burst.
-      BUZZ_RATE_LIMIT_EVENTS_PER_MINUTE: "6000"
-      BUZZ_RATE_LIMIT_REQS_PER_MINUTE: "6000"
+      # Checked in up.sh rather than demanded here, because `docker compose`
+      # interpolates this file on the way down as well as up, and a `:?` guard
+      # would refuse to tear the stack down in a shell that no longer has the
+      # key exported.
+      BUZZ_RELAY_PRIVATE_KEY: ${BUZZ_RELAY_PRIVATE_KEY:-}
       RUST_LOG: info
+      # There is deliberately no rate-limit override here. Two plausible
+      # variable names were set for a while and neither exists: this image
+      # reads no rate-limit configuration from the environment at all, so the
+      # settings looked effective and did nothing. The limits are real, at 60
+      # human messages a minute and 10 websocket events a second, so a burst
+      # of cases can still be throttled. If that starts biting, the honest
+      # fixes are to pace the cases or to pin a newer image that exposes the
+      # knobs, not to add a name that is quietly ignored.
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:3000 --header='Accept: application/nostr+json' || exit 1"]
+      # curl, not wget: the runtime image has bash and curl and no wget at all,
+      # so the previous command exited 127 every time and the container could
+      # never become healthy. `up -d --wait` would have hung on first use, on
+      # any machine.
+      test: ["CMD-SHELL", "curl -fsS -H 'Accept: application/nostr+json' http://127.0.0.1:3000 >/dev/null"]
       interval: 1s
       timeout: 3s
       retries: 60
+      start_period: 20s

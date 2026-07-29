@@ -14,8 +14,8 @@ import XCTest
 /// target run on demand rather than part of the fast loop.
 ///
 /// Everything runs in `--demo`: an in-memory store seeded at launch, no relay,
-/// no network, no keychain identity. That makes the flows deterministic, and
-/// it is the reason these can assert on specific channel names at all.
+/// no network, no keychain identity. That is what makes the flows
+/// deterministic without a server to arrange.
 @MainActor
 final class NavigationFlows: XCTestCase {
     override func setUp() {
@@ -40,33 +40,48 @@ final class NavigationFlows: XCTestCase {
         )
     }
 
-    /// Settings is a sheet over the channel list. Dismissing it must land back
-    /// on the list, which is exactly the assertion that would have caught a
-    /// dismiss that did nothing.
+    /// Settings is a sheet over the channel list, and tapping Done must
+    /// actually take it away.
+    ///
+    /// The assertion that matters is that settings is gone. "The channel list
+    /// is there" sounds like the same claim and is not one at all, because the
+    /// list never leaves the tree while a sheet covers it.
     func testSettingsOpensAndClosesBackToTheChannelList() {
         let app = launch()
         XCTAssertTrue(app.otherElements[A11y.channelList].waitForExistence(timeout: 20))
 
         app.buttons[A11y.settingsButton].tap()
 
-        // Something only Settings shows, so this is evidence the screen
-        // changed rather than that a tap was accepted.
-        let settingsMarker = app.staticTexts["Notifications"]
+        // The screen's own identifier, not a section header. An earlier version
+        // matched the text "Notifications", which made a copy edit capable of
+        // turning the only load-bearing assertion in this suite red in a way
+        // that reads as a navigation regression.
+        let settings = app.descendants(matching: .any)
+            .matching(identifier: A11y.settingsScreen)
+            .firstMatch
         XCTAssertTrue(
-            settingsMarker.waitForExistence(timeout: 10),
+            settings.waitForExistence(timeout: 10),
             "tapping the gear should actually present settings"
         )
 
-        // A sheet dismisses by dragging down; using the gesture rather than a
-        // button means this does not depend on which chrome the sheet happens
-        // to carry.
-        app.swipeDown(velocity: .fast)
+        // Done, not a swipe. `dismiss()` is the exact mechanism the defect
+        // behind this suite was about, so exercising it is the point; the
+        // gesture was also starting inside a scrollable Form and only worked
+        // because the form happened to be at scroll top.
+        app.buttons[A11y.settingsDone].tap()
 
+        // The one assertion that can tell a working dismiss from an inert one.
+        //
+        // Deliberately not paired with "the channel list exists": a sheet does
+        // not remove what it covers from the accessibility tree, so that check
+        // passes with settings still fully on screen. It was in this test, and
+        // it was the assertion the commit message led with. A push does remove
+        // the previous screen, which is why the equivalent line in the
+        // channel-and-back flow below is real evidence and this one was not.
         XCTAssertTrue(
-            app.otherElements[A11y.channelList].waitForExistence(timeout: 10),
-            "closing settings should land back on the channel list, not on a blank screen"
+            settings.waitForNonExistence(timeout: 10),
+            "settings should be gone, not merely covered"
         )
-        XCTAssertFalse(settingsMarker.exists, "settings should be gone, not merely covered")
     }
 
     /// Opening a channel and coming back. The push and the pop are the two
@@ -89,7 +104,14 @@ final class NavigationFlows: XCTestCase {
             "opening a channel should show somewhere to type"
         )
 
-        app.navigationBars.buttons.element(boundBy: 0).tap()
+        // Named, not positional. `element(boundBy: 0)` happens to be the back
+        // button today and stops being it the moment a leading toolbar item is
+        // added to the channel screen.
+        app.navigationBars.buttons["BackButton"].tap()
+
+        // Real evidence here, unlike the sheet case above: a NavigationStack
+        // push takes the previous screen out of the tree, so the list existing
+        // again means the pop happened.
         XCTAssertTrue(
             list.waitForExistence(timeout: 10),
             "going back from a channel should land on the channel list"
@@ -117,7 +139,13 @@ final class NavigationFlows: XCTestCase {
 
         let send = app.buttons[A11y.sendButton]
         XCTAssertTrue(send.waitForExistence(timeout: 5))
-        XCTAssertTrue(send.isEnabled, "the send button should be live once there is something to send")
+        // Waited for rather than read straight after typing. `canSend` is
+        // SwiftUI state behind an animation, so an immediate read passes on
+        // timing rather than on the button being live.
+        XCTAssertTrue(
+            send.waitForEnabled(timeout: 5),
+            "the send button should be live once there is something to send"
+        )
         send.tap()
 
         // Matched on any element carrying the text rather than on a StaticText
@@ -132,5 +160,18 @@ final class NavigationFlows: XCTestCase {
             sent.waitForExistence(timeout: 10),
             "a sent message should appear in the timeline"
         )
+    }
+}
+
+extension XCUIElement {
+    /// XCTest has `waitForExistence` and no equivalent for enablement, so a
+    /// test that wants to know a control became live has to poll for it rather
+    /// than read the property and hope the state has settled.
+    func waitForEnabled(timeout: TimeInterval) -> Bool {
+        let becameEnabled = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "isEnabled == true"),
+            object: self
+        )
+        return XCTWaiter().wait(for: [becameEnabled], timeout: timeout) == .completed
     }
 }

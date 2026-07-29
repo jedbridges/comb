@@ -52,7 +52,12 @@ relay-up:
 relay-down:
 	@scripts/relay/down.sh
 
+# The precheck is not politeness. Without it, running this against a stopped
+# relay produces a dozen identical connection timeouts that read like a
+# protocol disagreement rather than like nothing being there.
 test-live:
+	@curl -fsS -H 'Accept: application/nostr+json' http://localhost:3030 >/dev/null 2>&1 \
+		|| { echo "no relay on localhost:3030. Start one with: make relay-up"; exit 1; }
 	@COMB_LIVE_RELAY=ws://localhost:3030 $(Q) test-live swift test --package-path CombNet
 
 # swift-secp256k1 ships a build plugin, which Xcode refuses to run unless trust
