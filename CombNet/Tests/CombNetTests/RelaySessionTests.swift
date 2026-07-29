@@ -2,6 +2,7 @@ import CombCore
 import Foundation
 import Testing
 @testable import CombNet
+import CombNetTesting
 
 @Suite("NIP-42 authentication", .timeLimit(.minutes(1)))
 struct AuthenticationTests {

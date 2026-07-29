@@ -95,6 +95,11 @@ targets:
       - path: CombTests
     dependencies:
       - target: Comb
+      # The scripted relay, so a session test never opens a socket. It is a
+      # shipped product of CombNet rather than something vendored here, which
+      # is what lets the same fake serve the package suites and the app.
+      - package: CombNet
+        product: CombNetTesting
 
 schemes:
   Comb:

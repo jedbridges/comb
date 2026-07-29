@@ -42,7 +42,7 @@ jobs:
         run: swift test --package-path ${{ matrix.package }}
 
   app:
-    name: App build
+    name: App build and tests
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -58,19 +58,34 @@ jobs:
       - name: Generate project
         run: xcodegen generate
 
-      # A generic simulator destination avoids depending on which device names
-      # the runner image happens to ship. The app target's own tests are thin by
-      # design and run locally with `make test-app`; the package suites above are
-      # what actually gate correctness.
-      #
+      # Running the app target's tests needs a real device, not the generic
+      # destination a build accepts, and the runner images change which devices
+      # they ship without notice. So ask for the newest iOS runtime present and
+      # take an iPhone from it, rather than pinning a name that will rot.
+      - name: Pick a simulator
+        id: simulator
+        run: |
+          udid=$(xcrun simctl list devices available -j | jq -r '
+            .devices | to_entries
+            | map(select(.key | test("iOS")))
+            | sort_by(.key) | last | .value
+            | map(select(.name | startswith("iPhone"))) | last | .udid
+          ')
+          test -n "$udid" && test "$udid" != "null" || { echo "no iOS simulator on this runner"; exit 1; }
+          echo "udid=$udid" >> "$GITHUB_OUTPUT"
+
       # swift-secp256k1 ships a build plugin that Xcode will not run without
       # interactive trust, hence the skip flags.
-      - name: Build
+      #
+      # `test` rather than `build`, because the app target's own suite now
+      # covers the session: the join between socket and store, which the
+      # package suites cannot reach and nothing ran until this step existed.
+      - name: Build and test
         run: |
-          xcodebuild build \
+          xcodebuild test \
             -project Comb.xcodeproj \
             -scheme Comb \
-            -destination 'generic/platform=iOS Simulator' \
+            -destination "id=${{ steps.simulator.outputs.udid }}" \
             -derivedDataPath DerivedData \
             -skipPackagePluginValidation \
             -skipMacroValidation \

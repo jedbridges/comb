@@ -2,6 +2,7 @@ import CombCore
 import Foundation
 import Testing
 @testable import CombNet
+import CombNetTesting
 
 @Suite("Invite links", .timeLimit(.minutes(1)))
 struct InviteLinkTests {

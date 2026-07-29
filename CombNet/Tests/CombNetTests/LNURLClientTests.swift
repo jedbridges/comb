@@ -2,6 +2,7 @@ import CombCore
 import Foundation
 import Testing
 @testable import CombNet
+import CombNetTesting
 
 @Suite("LNURL client", .timeLimit(.minutes(1)), .serialized)
 struct LNURLClientTests {

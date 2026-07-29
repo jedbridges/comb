@@ -3,6 +3,7 @@ import CryptoKit
 import Foundation
 import Testing
 @testable import CombNet
+import CombNetTesting
 
 @Suite("Blossom client", .timeLimit(.minutes(1)), .serialized)
 struct BlossomClientTests {

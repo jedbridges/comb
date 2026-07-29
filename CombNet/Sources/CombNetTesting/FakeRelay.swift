@@ -1,6 +1,6 @@
 import CombCore
 import Foundation
-@testable import CombNet
+import CombNet
 
 /// A scripted websocket standing in for a relay.
 ///
@@ -8,27 +8,29 @@ import Foundation
 /// server, no timing flakiness. Frames the client sends are recorded and can be
 /// answered by a behaviour closure, which is what lets a test express "a relay
 /// that rejects this publish" in one line.
-actor MockTransport: WebSocketTransport {
+public actor MockTransport: WebSocketTransport {
     private var inbox: [Data] = []
     private var waiters: [CheckedContinuation<Data, Error>] = []
     private var failure: Error?
 
-    private(set) var sentFrames: [Data] = []
-    private(set) var openCount = 0
-    private(set) var isClosed = false
+    public private(set) var sentFrames: [Data] = []
+    public private(set) var openCount = 0
+    public private(set) var isClosed = false
 
     /// Answers a frame from the client with zero or more frames back.
-    var behaviour: (@Sendable (RelayRequest, MockTransport) async -> Void)?
+    public var behaviour: (@Sendable (RelayRequest, MockTransport) async -> Void)?
+
+    public init() {}
 
     // MARK: - WebSocketTransport
 
-    func open(url: URL) async throws {
+    public func open(url: URL) async throws {
         openCount += 1
         isClosed = false
         failure = nil
     }
 
-    func send(_ frame: Data) async throws {
+    public func send(_ frame: Data) async throws {
         if let failure { throw failure }
         sentFrames.append(frame)
 
@@ -37,7 +39,7 @@ actor MockTransport: WebSocketTransport {
         }
     }
 
-    func receive() async throws -> Data {
+    public func receive() async throws -> Data {
         if let failure, inbox.isEmpty { throw failure }
         if !inbox.isEmpty { return inbox.removeFirst() }
 
@@ -46,14 +48,14 @@ actor MockTransport: WebSocketTransport {
         }
     }
 
-    func close() async {
+    public func close() async {
         isClosed = true
     }
 
     // MARK: - Test control
 
     /// Delivers a frame to the client.
-    func push(_ text: String) {
+    public func push(_ text: String) {
         let data = Data(text.utf8)
         if waiters.isEmpty {
             inbox.append(data)
@@ -62,13 +64,13 @@ actor MockTransport: WebSocketTransport {
         }
     }
 
-    func push(event: NostrEvent, subscription: String) throws {
+    public func push(event: NostrEvent, subscription: String) throws {
         let json = String(decoding: try JSONEncoder().encode(event), as: UTF8.self)
         push("[\"EVENT\",\"\(subscription)\",\(json)]")
     }
 
     /// Simulates the connection dropping.
-    func drop(_ error: Error = TransportError.notOpen) {
+    public func drop(_ error: Error = TransportError.notOpen) {
         failure = error
         let pending = waiters
         waiters.removeAll()
@@ -81,27 +83,27 @@ actor MockTransport: WebSocketTransport {
     /// actor boundary under strict concurrency, and because asserting on
     /// `frame.filters.first?.since` reads better than subscripting into
     /// dictionaries.
-    func sent() -> [SentFrame] {
+    public func sent() -> [SentFrame] {
         sentFrames.compactMap(SentFrame.init(frame:))
     }
 
-    func sent(ofType type: String) -> [SentFrame] {
+    public func sent(ofType type: String) -> [SentFrame] {
         sent().filter { $0.type == type }
     }
 
-    func reset() {
+    public func reset() {
         sentFrames.removeAll()
     }
 }
 
 /// A frame the client sent, in a form tests can assert against.
-struct SentFrame: Sendable {
-    let type: String
-    let subscriptionID: String?
-    let event: NostrEvent?
-    let filters: [Filter]
+public struct SentFrame: Sendable {
+    public let type: String
+    public let subscriptionID: String?
+    public let event: NostrEvent?
+    public let filters: [Filter]
 
-    init?(frame: Data) {
+    public init?(frame: Data) {
         guard let array = try? JSONSerialization.jsonObject(with: frame) as? [Any],
               let type = array.first as? String
         else { return nil }
@@ -133,13 +135,13 @@ struct SentFrame: Sendable {
 }
 
 /// A frame the client sent, decoded enough for a fake relay to respond to.
-enum RelayRequest {
+public enum RelayRequest {
     case auth(NostrEvent)
     case event(NostrEvent)
     case req(id: String, filters: [[String: Any]])
     case close(id: String)
 
-    init?(frame: Data) {
+    public init?(frame: Data) {
         guard let array = try? JSONSerialization.jsonObject(with: frame) as? [Any],
               let type = array.first as? String
         else { return nil }
@@ -171,25 +173,27 @@ enum RelayRequest {
 }
 
 /// Collects everything the session ingests.
-actor RecordingSink: EventSink {
-    private(set) var events: [NostrEvent] = []
-    private(set) var eoseSubscriptions: [String] = []
+public actor RecordingSink: EventSink {
+    public private(set) var events: [NostrEvent] = []
+    public private(set) var eoseSubscriptions: [String] = []
 
-    func ingest(_ events: [NostrEvent], subscription: String) async {
+    public init() {}
+
+    public func ingest(_ events: [NostrEvent], subscription: String) async {
         self.events.append(contentsOf: events)
     }
 
-    func endOfStoredEvents(subscription: String) async {
+    public func endOfStoredEvents(subscription: String) async {
         eoseSubscriptions.append(subscription)
     }
 }
 
 // MARK: - Behaviours
 
-enum Behaviour {
+public enum Behaviour {
     /// A relay that authenticates anyone and answers every REQ with an
     /// immediate EOSE. The common case.
-    static func cooperative(
+    public static func cooperative(
         onReq: (@Sendable (String, MockTransport) async -> Void)? = nil
     ) -> @Sendable (RelayRequest, MockTransport) async -> Void {
         { request, transport in
@@ -214,7 +218,7 @@ enum Behaviour {
 // MARK: - Async helpers
 
 /// Polls until a condition holds, so tests never depend on a fixed sleep.
-func waitUntil(
+public func waitUntil(
     _ description: String = "condition",
     timeout: Duration = .seconds(2),
     _ condition: @Sendable () async -> Bool
@@ -227,10 +231,10 @@ func waitUntil(
     throw WaitError.timedOut(description)
 }
 
-enum WaitError: Error, CustomStringConvertible {
+public enum WaitError: Error, CustomStringConvertible {
     case timedOut(String)
 
-    var description: String {
+    public var description: String {
         switch self {
         case .timedOut(let what): "timed out waiting for \(what)"
         }
@@ -238,14 +242,14 @@ enum WaitError: Error, CustomStringConvertible {
 }
 
 /// A session wired to a mock, with the pieces a test needs to poke at.
-struct Harness {
-    let session: RelaySession
-    let transport: MockTransport
-    let sink: RecordingSink
-    let signer: InMemorySigner
-    let url = URL(string: "wss://designers.communities.buzz.xyz")!
+public struct Harness: Sendable {
+    public let session: RelaySession
+    public let transport: MockTransport
+    public let sink: RecordingSink
+    public let signer: InMemorySigner
+    public let url = URL(string: "wss://designers.communities.buzz.xyz")!
 
-    init(
+    public init(
         behaviour: (@Sendable (RelayRequest, MockTransport) async -> Void)? = Behaviour.cooperative(),
         policy: ReconnectPolicy = ReconnectPolicy(base: .milliseconds(1), cap: .milliseconds(1))
     ) async throws {
@@ -267,7 +271,7 @@ struct Harness {
     }
 
     /// Starts the session and completes the NIP-42 handshake.
-    func connect() async throws {
+    public func connect() async throws {
         try await session.start()
         await transport.push("[\"AUTH\",\"challenge-abc\"]")
         try await waitUntil("authentication") { await session.state == .ready }
@@ -275,7 +279,7 @@ struct Harness {
 }
 
 extension MockTransport {
-    func setBehaviour(_ behaviour: (@Sendable (RelayRequest, MockTransport) async -> Void)?) {
+    public func setBehaviour(_ behaviour: (@Sendable (RelayRequest, MockTransport) async -> Void)?) {
         self.behaviour = behaviour
     }
 }

@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import CombNet
+import CombNetTesting
 
 @Suite("NIP-11 relay info", .timeLimit(.minutes(1)))
 struct RelayInfoTests {

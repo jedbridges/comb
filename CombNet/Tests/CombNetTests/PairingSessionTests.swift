@@ -2,6 +2,7 @@ import CombCore
 import Foundation
 import Testing
 @testable import CombNet
+import CombNetTesting
 
 /// A scripted Buzz desktop: the source side of NIP-AB, built from the same
 /// CombCore primitives, driving a PairingSession through the mock transport.

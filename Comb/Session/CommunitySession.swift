@@ -58,7 +58,17 @@ actor CommunitySession {
     /// `store` is injectable for the debug demo, which needs an in-memory
     /// store: the demo seeds fresh random identities every launch, so a
     /// persistent store would accumulate a duplicate cast each time.
-    init(url: URL, key: PrivateKey, store: EventStore? = nil) throws {
+    ///
+    /// `transport` is injectable for tests. `RelaySession` has always taken
+    /// one; this was the layer that never forwarded it, and that omission is
+    /// the whole reason the join between relay and store had no test. The
+    /// default is the real socket, so no call site in the app changes.
+    init(
+        url: URL,
+        key: PrivateKey,
+        store: EventStore? = nil,
+        transport: any WebSocketTransport = URLSessionTransport()
+    ) throws {
         self.relayURL = url
         self.me = key.publicKey
         let resolvedStore = try store ?? Self.openStore(host: url.host ?? "unknown")
@@ -81,12 +91,27 @@ actor CommunitySession {
                 onEphemeral: { box.emit($0) },
                 onMembershipChange: { membership.fire() },
                 onReadState: { readState.emit($0) }
-            )
+            ),
+            transport: transport
         )
         membership.handler = { [weak self] in
             Task { await self?.refreshGroupState() }
         }
-        Task { [weak self] in
+    }
+
+    /// The long-lived work this session owns, started with it and stopped with
+    /// it.
+    ///
+    /// This used to be an unstructured `Task` spawned in `init`, which meant a
+    /// session that was never started still had a loop running, and `stop()`
+    /// did not stop it. Held here instead, so the lifecycle is one the caller
+    /// can see.
+    private var readStateTask: Task<Void, Never>?
+
+    private func activate() {
+        guard readStateTask == nil else { return }
+        let readState = readStateBox
+        readStateTask = Task { [weak self] in
             for await events in readState.stream() {
                 await self?.receiveReadState(events)
             }
@@ -146,6 +171,8 @@ actor CommunitySession {
     // MARK: - Lifecycle
 
     func start() async throws {
+        activate()
+
         // Read here rather than at init, so every entry point (launch, join,
         // pair, community switch) picks it up without each remembering to.
         syncsReadState = await MainActor.run { SyncSettings.syncsReadState }
@@ -332,6 +359,8 @@ actor CommunitySession {
     func stop() async {
         connectTask?.cancel()
         connectTask = nil
+        readStateTask?.cancel()
+        readStateTask = nil
         await relay.stop()
     }
 
@@ -897,7 +926,9 @@ struct ReplyContext: Sendable, Equatable {
 /// indicator is false ten seconds later, and storing it would grow the log
 /// forever with facts nobody can use. Ingest returns them so they can be
 /// broadcast to live listeners and then forgotten.
-private struct StoreSink: EventSink {
+/// Not private: this is the join between the socket and the store, so it is
+/// the piece a test of that join has to be able to hold.
+struct StoreSink: EventSink {
     let store: EventStore
     let onEphemeral: @Sendable ([NostrEvent]) -> Void
     let onMembershipChange: @Sendable () -> Void
