@@ -37,6 +37,7 @@ struct SettingsView: View {
     @State private var displayName = ""
     @State private var notifyMentions = NotificationSettings.isEnabled
     @State private var syncsReadState = SyncSettings.syncsReadState
+    @State private var loadsRemoteImages = SyncSettings.loadsRemoteImages
     @State private var systemDenied = false
     /// Set when a name change could not be published, so the footer can say so
     /// instead of the field quietly looking saved.
@@ -190,6 +191,21 @@ struct SettingsView: View {
                         // promising more than that would be dishonest.
                         Text("Comb has no notification server, so it checks in the background every so often. A mention can arrive a while after it was sent.")
                     }
+                }
+                .combRows()
+
+                Section {
+                    Toggle("Load pictures from other sites", isOn: $loadsRemoteImages)
+                        .tint(Palette.chartreuse)
+                        .onChange(of: loadsRemoteImages) { _, enabled in
+                            SyncSettings.loadsRemoteImages = enabled
+                        }
+                } header: {
+                    Text("Pictures")
+                } footer: {
+                    // Off by default, so this explains a thing the reader may
+                    // have already noticed rather than offering a new risk.
+                    Text("Most pictures live on your community's own server and always load. A few people point theirs somewhere else, and fetching those tells that site you are here. Their initials show instead.")
                 }
                 .combRows()
 

@@ -96,8 +96,15 @@ actor MediaLoader {
             data = try Self.decodeDataURI(url)
         } else if let attachment = blossomAttachment(for: url) {
             data = try await self.data(for: attachment)
-        } else {
+        } else if await MainActor.run(body: { SyncSettings.loadsRemoteImages }) {
             data = try await publicData(at: url, key: key)
+        } else {
+            // Off by default. A picture on somebody else's host is a request
+            // this reader never asked to make, fired as a row scrolls past, and
+            // one hostile profile is a tracking pixel that reports everyone who
+            // ever sees it. Throwing renders the initial instead, which is
+            // already the app's answer for a profile with no picture at all.
+            throw BlossomClient.Failure.foreignHost
         }
 
         // 256px covers the largest avatar the app draws on a 3x display. The
