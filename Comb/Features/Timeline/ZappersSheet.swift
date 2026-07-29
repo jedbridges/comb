@@ -51,6 +51,15 @@ struct ZappersSheet: View {
         }
     }
 
+    /// What this number does and does not mean, in the reader's words.
+    private var caveat: String {
+        let partial = "This counts the zaps Comb has been told about, so the real total can be higher."
+        guard zappers.allSatisfy(\.isProven) else {
+            return partial + " A wallet can also announce a zap that was never collected."
+        }
+        return partial + " Every zap here came with proof that it was paid."
+    }
+
     private var list: some View {
         Form {
             Section {
@@ -66,12 +75,13 @@ struct ZappersSheet: View {
             } header: {
                 Text("\(totalSats.formatted()) sats from \(zappers.count == 1 ? "1 person" : "\(zappers.count) people")")
             } footer: {
-                // Both limits survive: the count is partial, and a counted zap
-                // may not have been collected. The previous wording spent
-                // forty-seven words on it, said "relay" one tap from the
-                // timeline, and ended on "issued an invoice for a signed
-                // request", which is the protocol showing through.
-                Text("This counts the zaps Comb has been told about, so the real total can be higher. A wallet can also announce a zap that was never collected.")
+                // Two different limits, and only one of them always applies.
+                // The count is partial either way. Whether a counted zap was
+                // actually collected depends on how it was evidenced, and
+                // saying it might not have been when every one of them carries
+                // proof of payment would be underclaiming, which is its own
+                // kind of dishonesty.
+                Text(caveat)
             }
             .combRows()
         }

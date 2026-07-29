@@ -149,26 +149,30 @@ public struct ZapSummary: Sendable, Equatable {
     public let count: Int
     /// Whether one of them is the reader's own.
     public let includesMe: Bool
-    /// Whether every receipt in this total was signed by the key the
-    /// recipient's own endpoint advertises.
+    /// Whether every zap in this total is one this device can stand behind.
     ///
-    /// False does not mean forged. It means Comb has no cached endpoint key for
-    /// this recipient, which is the normal case for anyone the reader has never
-    /// zapped, because learning it would take a request to a third-party host
-    /// triggered by scrolling. It exists so the UI can be honest about which
-    /// kind of number it is showing without a second query.
-    public let issuersKnown: Bool
+    /// True for an attestation always, since it carries the preimage of the
+    /// invoice it paid and needs nothing else. True for a receipt only when
+    /// Comb holds the key the recipient's endpoint advertises, which is the
+    /// case exactly when this reader has zapped them before: learning it
+    /// otherwise would mean a request to a third-party host triggered by
+    /// scrolling.
+    ///
+    /// False does not mean forged. It means unverified, and it exists so the UI
+    /// can be honest about which kind of number it is showing without a second
+    /// query.
+    public let isProven: Bool
 
     public init(
         totalMillisats: Int64,
         count: Int,
         includesMe: Bool,
-        issuersKnown: Bool
+        isProven: Bool
     ) {
         self.totalMillisats = totalMillisats
         self.count = count
         self.includesMe = includesMe
-        self.issuersKnown = issuersKnown
+        self.isProven = isProven
     }
 
     public var totalSats: Int64 { totalMillisats / 1000 }
@@ -181,10 +185,10 @@ public struct Zapper: Sendable, Equatable, Identifiable {
     public let picture: String?
     public let amountMillisats: Int64
     public let comment: String
-    /// Whether this receipt was signed by the key the recipient's own endpoint
-    /// advertises. See `ZapSummary.issuersKnown`: false usually means Comb has
-    /// never had reason to learn that key, not that anything is wrong.
-    public let issuerKnown: Bool
+    /// Whether this one zap is checkable by this device. See
+    /// `ZapSummary.isProven`: false usually means Comb has never had reason to
+    /// learn the recipient's endpoint key, not that anything is wrong.
+    public let isProven: Bool
 
     public var id: String { pubkey + String(amountMillisats) }
     public var amountSats: Int64 { amountMillisats / 1000 }
@@ -560,7 +564,7 @@ public extension EventStore {
                    MIN(zap.proof = 'attestation'
                        OR issuer = (SELECT i.issuer_pubkey FROM lnurl_issuer i
                                      WHERE i.pubkey = zap.recipient))
-                                     AS issuers_known
+                                     AS is_proven
             FROM zap
             WHERE target_id IN (\(placeholders))
               AND \(Self.notBlocked("zap.sender"))
@@ -580,7 +584,7 @@ public extension EventStore {
                 totalMillisats: row["total"] ?? 0,
                 count: row["n"] ?? 0,
                 includesMe: row["mine"] ?? false,
-                issuersKnown: row["issuers_known"] ?? false
+                isProven: row["is_proven"] ?? false
             )
         }
         return out
@@ -598,7 +602,7 @@ public extension EventStore {
                        p.picture AS picture,
                        (z.proof = 'attestation'
                         OR z.issuer = (SELECT i.issuer_pubkey FROM lnurl_issuer i
-                                        WHERE i.pubkey = z.recipient)) AS issuer_known
+                                        WHERE i.pubkey = z.recipient)) AS is_proven
                 FROM zap z
                 LEFT JOIN profile p ON p.pubkey = z.sender
                 WHERE z.target_id = :target
@@ -613,7 +617,7 @@ public extension EventStore {
                     picture: row["picture"],
                     amountMillisats: row["amount"] ?? 0,
                     comment: row["comment"] ?? "",
-                    issuerKnown: row["issuer_known"] ?? false
+                    isProven: row["is_proven"] ?? false
                 )
             }
         }

@@ -181,7 +181,7 @@ struct ZapReceiptTests {
     /// Without a cached endpoint key there is no way to tell a genuine receipt
     /// from one someone minted for themselves, and the UI has to be able to say
     /// so rather than presenting both as the same number.
-    @Test("issuersKnown is false until the reader has zapped that recipient")
+    @Test("isProven is false until the reader has zapped that recipient")
     func reportsWhetherIssuersAreKnown() async throws {
         let store = try EventStore()
         let author = try Fixture(name: "Ada")
@@ -193,7 +193,7 @@ struct ZapReceiptTests {
             try receipt(sender: sender, recipient: author, issuer: wallet, target: message.id),
         ])
 
-        #expect(try store.zapTotals(for: [message.id])[message.id]?.issuersKnown == false)
+        #expect(try store.zapTotals(for: [message.id])[message.id]?.isProven == false)
 
         // Sending a zap to the same person is what teaches Comb that key.
         try await store.recordZapAttempt(
@@ -201,7 +201,7 @@ struct ZapReceiptTests {
             issuer: wallet.pubkey, amountMillisats: 1_000
         )
 
-        #expect(try store.zapTotals(for: [message.id])[message.id]?.issuersKnown == true)
+        #expect(try store.zapTotals(for: [message.id])[message.id]?.isProven == true)
     }
 
     @Test("zaps survive a projection rebuild unchanged")
@@ -453,8 +453,8 @@ struct ZapAttestationProjectionTests {
         #expect(try store.cachedIssuer(for: author.pubkey) == nil)
 
         let zaps = try store.zapTotals(for: [message.id], me: payer.pubkey)
-        #expect(try #require(zaps[message.id]).issuersKnown)
-        #expect(try store.zappers(for: message.id).first?.issuerKnown == true)
+        #expect(try #require(zaps[message.id]).isProven)
+        #expect(try store.zappers(for: message.id).first?.isProven == true)
     }
 
     @Test("a forged attestation is stored but never counted")
