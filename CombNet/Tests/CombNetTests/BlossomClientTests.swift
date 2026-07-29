@@ -277,6 +277,78 @@ struct BlossomProvenanceTests {
         #expect(Stub.requested.isEmpty)
     }
 
+    /// Userinfo. The likeliest trick, and the one that would silently start
+    /// passing if anyone rewrote the check in terms of the URL string.
+    @Test("a community host in the userinfo is not the host")
+    func userinfoIsNotTheHost() async throws {
+        let client = makeClient()
+        let signer = try InMemorySigner()
+
+        await #expect(throws: BlossomClient.Failure.foreignHost) {
+            try await client.data(
+                for: attachment("https://designers.communities.buzz.xyz@attacker.example/\(String(repeating: "a", count: 64))"),
+                servedBy: community,
+                signer: signer
+            )
+        }
+        #expect(Stub.requested.isEmpty)
+    }
+
+    /// The mappings the comparison rests on, pinned as deliberate rather than
+    /// incidental: wss means 443, and hosts fold case.
+    @Test("an explicit default port and an uppercase host both still match")
+    func defaultPortAndCaseMatch() async throws {
+        let blob = String(repeating: "a", count: 64)
+
+        for url in [
+            "https://designers.communities.buzz.xyz:443/\(blob)",
+            "https://DESIGNERS.COMMUNITIES.BUZZ.XYZ/\(blob)",
+        ] {
+            let client = makeClient()
+            _ = try? await client.data(
+                for: attachment(url), servedBy: community, signer: try InMemorySigner()
+            )
+            #expect(Stub.requested.count == 1, "expected \(url) to be fetched")
+        }
+    }
+
+    /// The other way out of the function, before either guard. Nothing may be
+    /// sent on that path either.
+    @Test("an unparseable origin sends nothing")
+    func unparseableOriginSendsNothing() async throws {
+        let client = makeClient()
+        let signer = try InMemorySigner()
+
+        await #expect(throws: BlossomClient.Failure.badRelayURL) {
+            try await client.data(
+                for: attachment("ftp://designers.communities.buzz.xyz/\(String(repeating: "a", count: 64))"),
+                servedBy: community,
+                signer: signer
+            )
+        }
+        #expect(Stub.requested.isEmpty)
+    }
+
+    /// The invariant that would break first under a refactor: the signature is
+    /// bound to the community, never to whatever the attachment named.
+    @Test("the authorization names the community, not the attachment's host")
+    func authorizationNamesTheCommunity() async throws {
+        let client = makeClient()
+        _ = try? await client.data(
+            for: attachment("https://designers.communities.buzz.xyz/\(String(repeating: "a", count: 64))"),
+            servedBy: community,
+            signer: try InMemorySigner()
+        )
+
+        let header = try #require(Stub.requested.first?.value(forHTTPHeaderField: "Authorization"))
+        let encoded = header.replacingOccurrences(of: "Nostr ", with: "")
+        let decoded = try #require(Data(base64Encoded: encoded))
+        let event = try #require(try? JSONDecoder().decode(NostrEvent.self, from: decoded))
+
+        #expect(event.firstValue(for: "server")?.contains("designers.communities.buzz.xyz") == true)
+        #expect(event.firstValue(for: "server")?.contains("attacker") != true)
+    }
+
     /// The right host over plain HTTP would put the signed header on the wire
     /// in clear. Only loopback is exempt, where the traffic never leaves.
     @Test("the right host without TLS is still refused")

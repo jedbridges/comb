@@ -60,6 +60,14 @@ public struct BlossomClient: Sendable {
         }
 
         guard let origin = Self.httpOrigin(of: relayURL) else { throw Failure.badRelayURL }
+        // The same rule the download path applies. An upload's authorization is
+        // signed with the account key too, and an invite link may name a `ws://`
+        // host, so without this a hostile invite produced a community whose
+        // uploads shipped that signature in clear while its downloads were
+        // refused. One asymmetry is one too many.
+        guard origin.scheme == "https" || Self.isLoopback(origin) else {
+            throw Failure.foreignHost
+        }
         let hash = Data(SHA256.hash(data: data)).hex
 
         do {
@@ -162,7 +170,14 @@ public struct BlossomClient: Sendable {
             forHTTPHeaderField: "Authorization"
         )
 
-        let (data, response) = try await session.data(for: request)
+        // Pinning the first request's host is not enough on its own. URLSession
+        // follows redirects and carries a manually-set Authorization header
+        // across them, so a hostile relay, or an honest one with an open
+        // redirect, could bounce the signed event anywhere. The header stays
+        // replayable for its ten minute lifetime, so this is worth stopping
+        // rather than tolerating.
+        let redirects = SameHostRedirectGuard(expected: host)
+        let (data, response) = try await session.data(for: request, delegate: redirects)
         guard let http = response as? HTTPURLResponse else { throw Failure.malformedResponse }
         guard (200..<300).contains(http.statusCode) else {
             throw Failure.rejected(status: http.statusCode)
@@ -216,5 +231,33 @@ public struct BlossomClient: Sendable {
         components.host = host
         components.port = url.port
         return components.url
+    }
+}
+
+/// Refuses a redirect that leaves the host the request was pinned to.
+///
+/// URLSession keeps a manually-set `Authorization` header across a cross-host
+/// redirect, so without this the host check on the original URL could be undone
+/// by the response to it.
+private final class SameHostRedirectGuard: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+    private let expected: URL
+
+    init(expected: URL) { self.expected = expected }
+
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        willPerformHTTPRedirection response: HTTPURLResponse,
+        newRequest request: URLRequest,
+        completionHandler: @escaping (URLRequest?) -> Void
+    ) {
+        guard let url = request.url, BlossomClient.isSameHost(url, as: expected) else {
+            // Nil cancels the redirect and hands the 3xx back, which fails the
+            // status check. Stripping the header and following would still tell
+            // the new host that this reader is here, for nothing.
+            completionHandler(nil)
+            return
+        }
+        completionHandler(request)
     }
 }

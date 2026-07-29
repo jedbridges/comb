@@ -16,7 +16,23 @@ import UIKit
 /// images work offline, which is the same promise the message history makes.
 actor MediaLoader {
     private let session: CommunitySession
-    private let client = BlossomClient()
+
+    /// Third-party pictures are fetched on a session that keeps nothing.
+    ///
+    /// `URLSession.shared` accepts cookies into the shared persistent store and
+    /// caches by ETag, so a picture on somebody else's host could set one and
+    /// have it handed back on every later request to that host, across launches
+    /// and across communities. That turns a per-view IP leak into a durable
+    /// device identifier, which is a different and worse thing.
+    private static let anonymous: URLSession = {
+        let config = URLSessionConfiguration.ephemeral
+        config.httpShouldSetCookies = false
+        config.httpCookieAcceptPolicy = .never
+        config.httpCookieStorage = nil
+        config.urlCache = nil
+        config.requestCachePolicy = .reloadIgnoringLocalAndRemoteCacheData
+        return URLSession(configuration: config)
+    }()
 
     /// In-flight fetches, keyed by hash, so ten rows showing the same image
     /// cause one download rather than ten.
@@ -149,7 +165,7 @@ actor MediaLoader {
         let task = Task<Data, Error> {
             var request = URLRequest(url: url)
             request.timeoutInterval = 15
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await Self.anonymous.data(for: request)
             guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
                 throw BlossomClient.Failure.malformedResponse
             }
