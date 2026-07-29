@@ -82,6 +82,37 @@ same questions repeatedly:
 >
 > Found a bug? Settings → Report a problem attaches a local log you can send.
 
+## What to test, per build
+
+The notes above are standing copy and rarely change. "What to Test" is
+per-build, and the useful version names the symptom a tester would have
+noticed rather than the fix. Nobody experiences a SIGTRAP on a background
+queue; they experience notifications that stop arriving.
+
+Say when something is unverified. A tester who knows a feature has never met a
+real relay reports a discrepancy instead of assuming they misread the screen.
+
+Build 11 (0.1.2):
+
+> Two things to try.
+>
+> Notifications should stop killing the app. Earlier builds could be shut down
+> by iOS while checking for mentions in the background. Turn notifications on
+> in Settings, leave Comb closed a few hours, and tell me if a mention arrives.
+>
+> Read state can now sync. Settings has a switch, "Sync what I have read", off
+> by default. Turn it on everywhere you read, including Buzz on desktop. Read a
+> channel in one place, check the other. Badges should agree.
+>
+> That second one has never run against a real relay. If badges disagree or go
+> backwards, tell me what you did and send the log from Settings, Report a
+> problem.
+>
+> Not a bug: marking something unread only travels between Comb devices. Buzz
+> cannot see it.
+>
+> Everything else is groundwork. If anything else feels different, tell me.
+
 ## Before the first external submission
 
 - [ ] Walk the join flow on a clean install with a real, unexpired invite, and
