@@ -210,3 +210,95 @@ struct ZapReceiptTests {
         }
     }
 }
+
+/// The line between what a receipt proves on its own and what needs the
+/// recipient's endpoint. `decodeReceipt` runs in the projector, where there is
+/// no network; `verifyReceipt` runs at read time, where there is a cached key.
+@Suite("Zap receipt decoding")
+struct ZapDecodeTests {
+    private func makeReceipt(
+        sender: PrivateKey,
+        recipient: PublicKey,
+        issuer: PrivateKey,
+        amount: Int64 = 21000,
+        bolt11: String = "lnbc210n1..."
+    ) throws -> NostrEvent {
+        let request = try Zap.request(
+            amountMillisats: amount,
+            recipient: recipient,
+            relays: [URL(string: "wss://relay.example")!],
+            comment: "nice",
+            eventID: "target-event",
+            with: sender
+        )
+        let requestJSON = String(decoding: try JSONEncoder().encode(request), as: UTF8.self)
+
+        return try NostrEvent.signed(
+            kind: .zapReceipt,
+            content: "",
+            tags: [
+                ["p", recipient.hex],
+                ["bolt11", bolt11],
+                ["description", requestJSON],
+            ],
+            with: issuer
+        )
+    }
+
+    @Test("decoding carries the issuer and the payment string out")
+    func carriesIssuerAndBolt11() throws {
+        let sender = try PrivateKey(), recipient = try PrivateKey(), wallet = try PrivateKey()
+        let event = try makeReceipt(
+            sender: sender, recipient: recipient.publicKey, issuer: wallet
+        )
+
+        let decoded = try Zap.decodeReceipt(event)
+        #expect(decoded.issuer == wallet.publicKey.hex)
+        #expect(decoded.bolt11 == "lnbc210n1...")
+        #expect(decoded.sender == sender.publicKey)
+    }
+
+    /// The boundary that matters, stated as a test so it cannot be forgotten:
+    /// a receipt someone minted and signed themselves decodes perfectly well.
+    /// Nothing inside it is inconsistent. Only the issuer check catches it, and
+    /// that check needs a key the projector cannot fetch.
+    @Test("a self-issued receipt decodes but does not verify")
+    func selfIssuedDecodesButFailsVerification() throws {
+        let attacker = try PrivateKey()
+        let victim = try PrivateKey()
+        let realWallet = try PrivateKey()
+
+        // The attacker signs both halves: a request from a key they own, and
+        // the receipt attesting to it. No payment ever happened.
+        let forged = try makeReceipt(
+            sender: attacker, recipient: victim.publicKey, issuer: attacker,
+            amount: 1_000_000_000
+        )
+
+        #expect(throws: Never.self) { try Zap.decodeReceipt(forged) }
+        #expect(throws: Zap.ReceiptError.wrongIssuer) {
+            try Zap.verifyReceipt(forged, expectedIssuer: realWallet.publicKey)
+        }
+    }
+
+    @Test("decoding still rejects a receipt whose own signature is broken")
+    func rejectsTamperedReceipt() throws {
+        let sender = try PrivateKey(), recipient = try PrivateKey(), wallet = try PrivateKey()
+        let event = try makeReceipt(
+            sender: sender, recipient: recipient.publicKey, issuer: wallet
+        )
+
+        // Same signature, different content: the id no longer matches.
+        let tampered = NostrEvent(
+            id: event.id,
+            pubkey: event.pubkey,
+            createdAt: event.createdAt,
+            kind: event.kind,
+            tags: event.tags,
+            content: "tampered",
+            sig: event.sig
+        )
+
+        #expect(throws: Zap.ReceiptError.wrongIssuer) { try Zap.decodeReceipt(tampered) }
+    }
+}

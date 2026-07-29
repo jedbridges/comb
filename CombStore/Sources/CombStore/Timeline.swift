@@ -18,6 +18,10 @@ public struct TimelineRow: Sendable, Hashable, Identifiable {
     /// The author's Lightning address (lud16), when their profile carries one.
     /// Present is what makes zapping this message possible.
     public let authorLightningAddress: String?
+    /// Whether the log holds the author's kind 0 at all. Without it, a profile
+    /// Comb has simply never fetched is indistinguishable from one that says
+    /// this person takes no zaps.
+    public let authorHasProfile: Bool
     /// The message this one replies to directly, when it is a reply.
     public let parentID: String?
     /// The message that opened this reply's thread.
@@ -50,6 +54,13 @@ public struct TimelineRow: Sendable, Hashable, Identifiable {
     /// attachment itself, so showing the markdown too would put a wall of
     /// relay URL in the middle of the conversation.
     public var displayContent: String { MessageText.display(content) }
+
+    /// Whether this message's author can be zapped, including the case where
+    /// Comb has never seen their profile and so cannot yet say.
+    public var zapCapability: ProfileSummary.ZapCapability {
+        if authorLightningAddress?.isEmpty == false { return .yes }
+        return authorHasProfile ? .no : .unknown
+    }
 
     /// Whether this message opens a thread worth offering a way into.
     public var hasThread: Bool { replyCount > 0 }
@@ -127,6 +138,56 @@ public struct ReactionGroup: Sendable, Equatable, Identifiable {
     public let reactors: [Reactor]
 
     public var id: String { emoji }
+}
+
+/// The zaps one message has been seen to receive.
+///
+/// One summary per message, unlike reactions, which produce a list grouped by
+/// emoji. A zap tally is a single number and the people behind it.
+public struct ZapSummary: Sendable, Equatable {
+    public let totalMillisats: Int64
+    public let count: Int
+    /// Whether one of them is the reader's own.
+    public let includesMe: Bool
+    /// Whether every receipt in this total was signed by the key the
+    /// recipient's own endpoint advertises.
+    ///
+    /// False does not mean forged. It means Comb has no cached endpoint key for
+    /// this recipient, which is the normal case for anyone the reader has never
+    /// zapped, because learning it would take a request to a third-party host
+    /// triggered by scrolling. It exists so the UI can be honest about which
+    /// kind of number it is showing without a second query.
+    public let issuersKnown: Bool
+
+    public init(
+        totalMillisats: Int64,
+        count: Int,
+        includesMe: Bool,
+        issuersKnown: Bool
+    ) {
+        self.totalMillisats = totalMillisats
+        self.count = count
+        self.includesMe = includesMe
+        self.issuersKnown = issuersKnown
+    }
+
+    public var totalSats: Int64 { totalMillisats / 1000 }
+}
+
+/// One person's zap of a message.
+public struct Zapper: Sendable, Equatable, Identifiable {
+    public let pubkey: String
+    public let name: String
+    public let picture: String?
+    public let amountMillisats: Int64
+    public let comment: String
+    /// Whether this receipt was signed by the key the recipient's own endpoint
+    /// advertises. See `ZapSummary.issuersKnown`: false usually means Comb has
+    /// never had reason to learn that key, not that anything is wrong.
+    public let issuerKnown: Bool
+
+    public var id: String { pubkey + String(amountMillisats) }
+    public var amountSats: Int64 { amountMillisats / 1000 }
 }
 
 /// A reaction tally for one message.
@@ -258,7 +319,7 @@ public extension EventStore {
     /// One column list, so the branches below and their callers cannot drift.
     private static let timelineColumns = """
         id, pubkey, created_at, content, edited, deleted, rich,
-        display_name, picture, lud16, parent_id, root_id,
+        display_name, picture, lud16, has_profile, parent_id, root_id,
         reply_count, last_reply_at, tags, state, last_error
         """
 
@@ -293,6 +354,7 @@ public extension EventStore {
                p.display_name      AS display_name,
                p.picture           AS picture,
                p.lud16             AS lud16,
+               (p.pubkey IS NOT NULL) AS has_profile,
                t.parent_id         AS parent_id,
                t.root_id           AS root_id,
                (SELECT COUNT(*) FROM thread tc
@@ -341,7 +403,7 @@ public extension EventStore {
         """
         SELECT o.event_id, o.pubkey, o.created_at, o.content,
                NULL, 0, NULL,
-               p.display_name, p.picture, p.lud16,
+               p.display_name, p.picture, p.lud16, (p.pubkey IS NOT NULL),
                o.parent_id, o.root_id, 0, NULL,
                o.tags, o.state, o.last_error
         FROM outbox o
@@ -391,6 +453,7 @@ public extension EventStore {
             authorName: row["display_name"],
             authorPicture: row["picture"],
             authorLightningAddress: row["lud16"],
+            authorHasProfile: row["has_profile"] ?? false,
             parentID: row["parent_id"],
             rootID: row["root_id"],
             replyCount: row["reply_count"] ?? 0,
@@ -463,6 +526,91 @@ public extension EventStore {
             )
         }
         return out
+    }
+
+    /// Zap totals for a page of messages, one query.
+    ///
+    /// Deliberately not filtered by deletion, unlike reactions. A 9735 is signed
+    /// by the recipient's wallet, so its sender cannot delete it, and honouring
+    /// a kind 5 from anyone else would hand any member of the relay a way to
+    /// erase other people's zaps. The absence is the decision, not an oversight.
+    ///
+    /// Blocked senders are excluded, for the same reason their reactions are:
+    /// someone the reader asked never to see again should not reappear as a
+    /// number on a message.
+    static func fetchZaps(
+        _ db: Database,
+        for eventIDs: [String],
+        me: String?
+    ) throws -> [String: ZapSummary] {
+        guard !eventIDs.isEmpty else { return [:] }
+
+        let placeholders = databaseQuestionMarks(count: eventIDs.count)
+        let sql = """
+            SELECT target_id,
+                   SUM(amount_msats) AS total,
+                   COUNT(*)          AS n,
+                   MAX(sender = ?)   AS mine,
+                   -- MIN over a boolean: true only when every receipt in the
+                   -- tally was signed by a key we hold for its recipient.
+                   MIN(issuer = (SELECT i.issuer_pubkey FROM lnurl_issuer i
+                                  WHERE i.pubkey = zap.recipient))
+                                     AS issuers_known
+            FROM zap
+            WHERE target_id IN (\(placeholders))
+              AND \(Self.notBlocked("zap.sender"))
+            GROUP BY target_id
+            """
+
+        let rows = try Row.fetchAll(
+            db,
+            sql: sql,
+            arguments: StatementArguments([me ?? ""] + eventIDs)
+        )
+
+        var out: [String: ZapSummary] = [:]
+        for row in rows {
+            let target: String = row["target_id"]
+            out[target] = ZapSummary(
+                totalMillisats: row["total"] ?? 0,
+                count: row["n"] ?? 0,
+                includesMe: row["mine"] ?? false,
+                issuersKnown: row["issuers_known"] ?? false
+            )
+        }
+        return out
+    }
+
+    /// Everyone whose zap of a message Comb has seen, biggest first.
+    nonisolated func zappers(for targetID: String) throws -> [Zapper] {
+        try reader.read { db in
+            try Row.fetchAll(db, sql: """
+                SELECT z.sender AS pubkey,
+                       z.amount_msats AS amount,
+                       z.comment AS comment,
+                       z.created_at AS created_at,
+                       p.display_name AS display_name,
+                       p.picture AS picture,
+                       (z.issuer = (SELECT i.issuer_pubkey FROM lnurl_issuer i
+                                     WHERE i.pubkey = z.recipient)) AS issuer_known
+                FROM zap z
+                LEFT JOIN profile p ON p.pubkey = z.sender
+                WHERE z.target_id = :target
+                  AND \(Self.notBlocked("z.sender"))
+                ORDER BY z.amount_msats DESC, z.created_at ASC
+                """, arguments: ["target": targetID]).map { row in
+                let name: String? = row["display_name"]
+                let pubkey: String = row["pubkey"]
+                return Zapper(
+                    pubkey: pubkey,
+                    name: name?.isEmpty == false ? name! : String(pubkey.prefix(8)),
+                    picture: row["picture"],
+                    amountMillisats: row["amount"] ?? 0,
+                    comment: row["comment"] ?? "",
+                    issuerKnown: row["issuer_known"] ?? false
+                )
+            }
+        }
     }
 
     /// Everyone who reacted to a message, grouped by emoji.
