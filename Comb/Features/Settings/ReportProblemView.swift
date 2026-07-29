@@ -53,7 +53,12 @@ struct ReportProblemView: View {
                     }
                     .disabled(!includesLog)
                 } footer: {
-                    Text("The log records connection events and errors. It never contains your key, your messages, or anyone's name.")
+                    // Names what is in there rather than only what is not. All
+                    // three nouns were true and the sentence still read as more
+                    // absolute than the log is: it records relay hostnames, so
+                    // it says which communities you belong to. Someone deciding
+                    // where to send this should know that before they send it.
+                    Text("The log records connection events and errors, including the addresses of the communities you have joined. It never contains your key, your messages, or anyone's name.")
                 }
                 .combRows()
 
