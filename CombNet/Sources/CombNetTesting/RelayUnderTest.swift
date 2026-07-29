@@ -13,6 +13,49 @@ import Foundation
 /// So the cases below never reach for the fake's internals to set something up.
 /// A group is created by publishing 9007 and joined by publishing 9021, exactly
 /// as the app does, because those are the only moves that work against both.
+/// Which relays the contract suite runs against on this machine.
+///
+/// A description rather than an instance, because every case needs its own
+/// relay: a fake shared between cases accumulates the last one's events, and
+/// two cases creating the same group on one live relay would collide.
+public enum RelayTarget: Sendable, CustomStringConvertible {
+    case fake
+    case live(URL)
+
+    /// The fake always. A real relay only when `COMB_LIVE_RELAY` names one, so
+    /// a machine without Docker still runs the half of the suite that needs
+    /// nothing, rather than reporting a failure that means "not installed".
+    public static var available: [RelayTarget] {
+        var targets: [RelayTarget] = [.fake]
+        if let raw = ProcessInfo.processInfo.environment["COMB_LIVE_RELAY"],
+           let url = URL(string: raw) {
+            targets.append(.live(url))
+        }
+        return targets
+    }
+
+    public var isLive: Bool {
+        if case .live = self { return true }
+        return false
+    }
+
+    public var description: String {
+        switch self {
+        case .fake: "fake"
+        case .live(let url): "live \(url.absoluteString)"
+        }
+    }
+
+    public func relay(_ rules: BuzzFake.Rules = BuzzFake.Rules()) throws -> RelayUnderTest {
+        switch self {
+        case .fake:
+            return try .fake(rules)
+        case .live(let url):
+            return .live(url: url)
+        }
+    }
+}
+
 public struct RelayUnderTest: Sendable {
     public let name: String
     public let url: URL

@@ -10,23 +10,38 @@ import CombNetTesting
 /// `MockTransport` answers OK to everything and evaluates no filters, so every
 /// existing session test would pass against a relay that had changed its rules
 /// underneath us. These cases run against `BuzzFake`, which enforces them, and
-/// are written through the client's own API so the same cases can be pointed at
-/// a real relay in Docker without being rewritten.
+/// against a real Buzz relay in Docker when `COMB_LIVE_RELAY` names one.
 ///
-/// Each case that asserts a refusal is followed by its own falsification: the
-/// same case against a relay with that one rule switched off, expecting the
-/// opposite outcome. A conformance suite that cannot fail is decoration, and
-/// the only proof that a case tests the rule it names is watching it change
-/// answer when the rule goes away.
+/// Running against both is the entire point. The fake pins our *model* of the
+/// relay; only the real thing can tell us the model is wrong. So no case
+/// reaches into the fake to set something up: a group is created by publishing
+/// 9007 and joined by publishing 9021, exactly as the app does, because those
+/// are the only moves that work against both.
+///
+/// Two consequences of that discipline are worth naming, because they look
+/// like fussiness until you run against a live relay. Every case makes its own
+/// group id, since a real relay remembers the last case's. And every case
+/// makes its own keys, since a real relay remembers those too.
+///
+/// The cases that assert a refusal are each followed by a falsification: the
+/// same case with that one rule switched off in the fake, expecting the
+/// opposite answer. A conformance suite that cannot fail is decoration, and
+/// the only proof a case tests the rule it names is watching it change answer
+/// when the rule goes away. Those are fake-only by nature; you cannot ask a
+/// real relay to stop enforcing something.
 @Suite("Relay contract")
 struct RelayContractTests {
-    static let channel = "channel-under-contract"
+    /// A group id nothing else will use, so cases stay independent against a
+    /// relay with a memory.
+    static func newChannel() -> String {
+        "contract-\(UUID().uuidString.prefix(8))"
+    }
 
     // MARK: - NIP-42
 
-    @Test("a session authenticates against a relay that checks the challenge, the URL and the clock")
-    func authenticates() async throws {
-        let relay = try RelayUnderTest.fake()
+    @Test("a session authenticates", arguments: RelayTarget.available)
+    func authenticates(_ target: RelayTarget) async throws {
+        let relay = try target.relay()
         let (session, _) = try await relay.connect(as: try PrivateKey())
         #expect(await session.state == .ready)
         await session.stop()
@@ -76,26 +91,20 @@ struct RelayContractTests {
 
     // MARK: - Group scoping
 
-    @Test("publishing into a group you do not belong to is refused")
-    func publishRequiresMembership() async throws {
-        let relay = try RelayUnderTest.fake()
+    @Test("publishing into a group you do not belong to is refused", arguments: RelayTarget.available)
+    func publishRequiresMembership(_ target: RelayTarget) async throws {
+        let relay = try target.relay()
+        let channel = Self.newChannel()
         let owner = try PrivateKey()
         let stranger = try PrivateKey()
 
         let (ownerSession, _) = try await relay.connect(as: owner)
-        try await create(Self.channel, with: ownerSession, by: owner)
+        try await create(channel, with: ownerSession, by: owner)
         await ownerSession.stop()
 
         let (session, _) = try await relay.connect(as: stranger)
-        let message = try NostrEvent.signed(
-            kind: .groupChatMessage,
-            content: "let me in",
-            tags: [["h", Self.channel]],
-            with: stranger
-        )
-
         await #expect(throws: RelayError.self) {
-            _ = try await session.publish(message)
+            _ = try await session.publish(try message("let me in", in: channel, from: stranger))
         }
         await session.stop()
     }
@@ -105,30 +114,24 @@ struct RelayContractTests {
         var loosened = BuzzFake.Rules()
         loosened.scopesToGroupMembership = false
         let relay = try RelayUnderTest.fake(loosened)
+        let channel = Self.newChannel()
 
         let owner = try PrivateKey()
         let stranger = try PrivateKey()
         let (ownerSession, _) = try await relay.connect(as: owner)
-        try await create(Self.channel, with: ownerSession, by: owner)
+        try await create(channel, with: ownerSession, by: owner)
         await ownerSession.stop()
-
-        let (session, _) = try await relay.connect(as: stranger)
-        let message = try NostrEvent.signed(
-            kind: .groupChatMessage,
-            content: "let me in",
-            tags: [["h", Self.channel]],
-            with: stranger
-        )
 
         // Accepted, because nothing is checking. If this succeeded with the
         // rule on, the case above would be asserting nothing.
-        _ = try await session.publish(message)
+        let (session, _) = try await relay.connect(as: stranger)
+        _ = try await session.publish(try message("let me in", in: channel, from: stranger))
         await session.stop()
     }
 
-    @Test("a message with no h tag is refused")
-    func publishRequiresGroupTag() async throws {
-        let relay = try RelayUnderTest.fake()
+    @Test("a message with no h tag is refused", arguments: RelayTarget.available)
+    func publishRequiresGroupTag(_ target: RelayTarget) async throws {
+        let relay = try target.relay()
         let key = try PrivateKey()
         let (session, _) = try await relay.connect(as: key)
 
@@ -143,16 +146,16 @@ struct RelayContractTests {
         await session.stop()
     }
 
-    @Test("a kind the relay signs itself cannot be published")
-    func relaySignedKindsAreRefused() async throws {
-        let relay = try RelayUnderTest.fake()
+    @Test("a kind the relay signs itself cannot be published", arguments: RelayTarget.available)
+    func relaySignedKindsAreRefused(_ target: RelayTarget) async throws {
+        let relay = try target.relay()
         let key = try PrivateKey()
         let (session, _) = try await relay.connect(as: key)
 
         let forgedRoster = try NostrEvent.signed(
             kind: .groupMembers,
             content: "",
-            tags: [["d", Self.channel], ["p", key.publicKey.hex]],
+            tags: [["d", Self.newChannel()], ["p", key.publicKey.hex]],
             with: key
         )
         await #expect(throws: RelayError.self) {
@@ -163,20 +166,22 @@ struct RelayContractTests {
 
     // MARK: - Filters
 
-    @Test("a query answers with what the filter asked for and nothing else")
-    func filtersAreEvaluated() async throws {
-        let relay = try RelayUnderTest.fake()
+    @Test("a query answers with what the filter asked for and nothing else", arguments: RelayTarget.available)
+    func filtersAreEvaluated(_ target: RelayTarget) async throws {
+        let relay = try target.relay()
+        let here = Self.newChannel()
+        let elsewhere = Self.newChannel()
         let key = try PrivateKey()
         let (session, _) = try await relay.connect(as: key)
 
-        try await create(Self.channel, with: session, by: key)
-        try await create("another-channel", with: session, by: key)
-        _ = try await session.publish(try message("here", in: Self.channel, from: key))
-        _ = try await session.publish(try message("elsewhere", in: "another-channel", from: key))
+        try await create(here, with: session, by: key)
+        try await create(elsewhere, with: session, by: key)
+        _ = try await session.publish(try message("here", in: here, from: key))
+        _ = try await session.publish(try message("elsewhere", in: elsewhere, from: key))
 
         let hits = try await session.query(
-            [Filter(kinds: [.groupChatMessage]).inGroup(Self.channel)],
-            timeout: .seconds(2)
+            [Filter(kinds: [.groupChatMessage]).inGroup(here)],
+            timeout: .seconds(5)
         )
         #expect(hits.map(\.content) == ["here"])
         await session.stop()
@@ -187,16 +192,18 @@ struct RelayContractTests {
         var loosened = BuzzFake.Rules()
         loosened.evaluatesFilters = false
         let relay = try RelayUnderTest.fake(loosened)
+        let here = Self.newChannel()
+        let elsewhere = Self.newChannel()
         let key = try PrivateKey()
         let (session, _) = try await relay.connect(as: key)
 
-        try await create(Self.channel, with: session, by: key)
-        try await create("another-channel", with: session, by: key)
-        _ = try await session.publish(try message("here", in: Self.channel, from: key))
-        _ = try await session.publish(try message("elsewhere", in: "another-channel", from: key))
+        try await create(here, with: session, by: key)
+        try await create(elsewhere, with: session, by: key)
+        _ = try await session.publish(try message("here", in: here, from: key))
+        _ = try await session.publish(try message("elsewhere", in: elsewhere, from: key))
 
         let hits = try await session.query(
-            [Filter(kinds: [.groupChatMessage]).inGroup(Self.channel)],
+            [Filter(kinds: [.groupChatMessage]).inGroup(here)],
             timeout: .seconds(2)
         )
         #expect(hits.count > 1, "a relay ignoring filters hands back everything")
@@ -205,9 +212,10 @@ struct RelayContractTests {
 
     // MARK: - The 9007 quirk
 
-    @Test("group state never arrives on a live subscription, only on a later query")
-    func groupStateIsQueryOnly() async throws {
-        let relay = try RelayUnderTest.fake()
+    @Test("group state never arrives live, only on a later query", arguments: RelayTarget.available)
+    func groupStateIsQueryOnly(_ target: RelayTarget) async throws {
+        let relay = try target.relay()
+        let channel = Self.newChannel()
         let key = try PrivateKey()
         let (session, sink) = try await relay.connect(as: key)
 
@@ -215,10 +223,10 @@ struct RelayContractTests {
             Filter(kinds: [.groupMetadata, .groupMembers, .groupChatMessage]),
         ], label: "live")
 
-        try await create(Self.channel, with: session, by: key)
+        try await create(channel, with: session, by: key)
         // Something that does travel live, so the wait below is anchored to an
         // observable event rather than to a sleep.
-        _ = try await session.publish(try message("hello", in: Self.channel, from: key))
+        _ = try await session.publish(try message("hello", in: channel, from: key))
         try await waitUntil("the chat message") { await sink.events.contains { $0.content == "hello" } }
 
         let live = await sink.events.map(\.kind)
@@ -229,7 +237,7 @@ struct RelayContractTests {
         // client refetches group state when it hears its membership changed.
         let queried = try await session.query(
             [Filter(kinds: [.groupMetadata, .groupMembers])],
-            timeout: .seconds(2)
+            timeout: .seconds(5)
         )
         #expect(queried.contains { $0.kind == .groupMetadata })
         #expect(queried.contains { $0.kind == .groupMembers })
@@ -241,11 +249,12 @@ struct RelayContractTests {
         var loosened = BuzzFake.Rules()
         loosened.withholdsGroupStateFromLiveSubscriptions = false
         let relay = try RelayUnderTest.fake(loosened)
+        let channel = Self.newChannel()
         let key = try PrivateKey()
         let (session, sink) = try await relay.connect(as: key)
 
         _ = try await session.subscribe([Filter(kinds: [.groupMetadata, .groupMembers])], label: "live")
-        try await create(Self.channel, with: session, by: key)
+        try await create(channel, with: session, by: key)
 
         try await waitUntil("group state on the live subscription") {
             await sink.events.contains { $0.kind == .groupMetadata }
@@ -255,14 +264,15 @@ struct RelayContractTests {
 
     // MARK: - Roster notices
 
-    @Test("a membership change arrives as a relay-signed notice on the live subscription")
-    func rosterChangesAreAnnounced() async throws {
-        let relay = try RelayUnderTest.fake()
+    @Test("a membership change is announced by the relay", arguments: RelayTarget.available)
+    func rosterChangesAreAnnounced(_ target: RelayTarget) async throws {
+        let relay = try target.relay()
+        let channel = Self.newChannel()
         let owner = try PrivateKey()
         let joiner = try PrivateKey()
 
         let (ownerSession, _) = try await relay.connect(as: owner)
-        try await create(Self.channel, with: ownerSession, by: owner)
+        try await create(channel, with: ownerSession, by: owner)
         await ownerSession.stop()
 
         let (session, sink) = try await relay.connect(as: joiner)
@@ -274,7 +284,7 @@ struct RelayContractTests {
         let join = try NostrEvent.signed(
             kind: .groupJoinRequest,
             content: "",
-            tags: [["h", Self.channel]],
+            tags: [["h", channel]],
             with: joiner
         )
         _ = try await session.publish(join)
@@ -285,15 +295,18 @@ struct RelayContractTests {
         let notice = try #require(await sink.events.first { $0.kind == .buzzMemberAdded })
         // Signed by the relay, not by the joiner. A client that accepted this
         // from anyone would let a member forge somebody else's arrival.
-        #expect(notice.pubkey == relay.fake?.relayKey.publicKey.hex)
+        #expect(notice.pubkey != joiner.publicKey.hex)
+        if let fake = relay.fake {
+            #expect(notice.pubkey == fake.relayKey.publicKey.hex)
+        }
         await session.stop()
     }
 
     // MARK: - The 41010 command
 
-    @Test("opening a direct message answers with the channel it made")
-    func directMessageOpenReturnsAChannel() async throws {
-        let relay = try RelayUnderTest.fake()
+    @Test("opening a direct message answers with the channel it made", arguments: RelayTarget.available)
+    func directMessageOpenReturnsAChannel(_ target: RelayTarget) async throws {
+        let relay = try target.relay()
         let me = try PrivateKey()
         let them = try PrivateKey()
         let (session, _) = try await relay.connect(as: me)
@@ -317,15 +330,15 @@ struct RelayContractTests {
         // than waiting for it to arrive.
         let state = try await session.query(
             [Filter(kinds: [.groupMetadata])],
-            timeout: .seconds(2)
+            timeout: .seconds(5)
         )
         #expect(state.contains { $0.tags.contains { $0 == ["d", channel] } })
         await session.stop()
     }
 
-    @Test("opening the same conversation twice returns the same channel")
-    func directMessageOpenIsIdempotent() async throws {
-        let relay = try RelayUnderTest.fake()
+    @Test("opening the same conversation twice returns the same channel", arguments: RelayTarget.available)
+    func directMessageOpenIsIdempotent(_ target: RelayTarget) async throws {
+        let relay = try target.relay()
         let me = try PrivateKey()
         let them = try PrivateKey()
         let (session, _) = try await relay.connect(as: me)
@@ -334,9 +347,9 @@ struct RelayContractTests {
             let event = try NostrEvent.signed(
                 kind: .buzzOpenDirectMessage,
                 content: "",
-                // A fresh timestamp each time, so the two events differ and the
-                // relay cannot be answering the same id twice.
                 tags: [["p", them.publicKey.hex]],
+                // A different timestamp each time, so the two events have
+                // different ids and the relay cannot be answering a duplicate.
                 createdAt: Date(timeIntervalSinceNow: Double.random(in: -30 ... -1)),
                 with: me
             )
@@ -352,18 +365,19 @@ struct RelayContractTests {
 
     // MARK: - Storage classes
 
-    @Test("typing reaches a live subscriber and is never stored")
-    func ephemeralsAreNotKept() async throws {
-        let relay = try RelayUnderTest.fake()
+    @Test("typing reaches a live subscriber and is never stored", arguments: RelayTarget.available)
+    func ephemeralsAreNotKept(_ target: RelayTarget) async throws {
+        let relay = try target.relay()
+        let channel = Self.newChannel()
         let key = try PrivateKey()
         let (session, sink) = try await relay.connect(as: key)
-        try await create(Self.channel, with: session, by: key)
+        try await create(channel, with: session, by: key)
 
         _ = try await session.subscribe([Filter(kinds: [.buzzTyping])], label: "typing")
         let typing = try NostrEvent.signed(
             kind: .buzzTyping,
             content: "",
-            tags: [["h", Self.channel]],
+            tags: [["h", channel]],
             with: key
         )
         _ = try await session.publish(typing)
@@ -374,22 +388,23 @@ struct RelayContractTests {
         // Delivered and forgotten. A relay that kept these would answer a
         // reconnect's backfill with a pile of people who stopped typing hours
         // ago.
-        let history = try await session.query([Filter(kinds: [.buzzTyping])], timeout: .seconds(2))
+        let history = try await session.query([Filter(kinds: [.buzzTyping])], timeout: .seconds(5))
         #expect(history.isEmpty)
         await session.stop()
     }
 
-    @Test("a newer read-state marker replaces the one before it")
-    func addressableEventsAreReplaced() async throws {
-        let relay = try RelayUnderTest.fake()
+    @Test("a newer read-state marker replaces the one before it", arguments: RelayTarget.available)
+    func addressableEventsAreReplaced(_ target: RelayTarget) async throws {
+        let relay = try target.relay()
         let key = try PrivateKey()
+        let identifier = "comb.readstate.\(UUID().uuidString.prefix(8))"
         let (session, _) = try await relay.connect(as: key)
 
         func publishMarker(_ content: String, at age: TimeInterval) async throws {
             let event = try NostrEvent.signed(
                 kind: .appData,
                 content: content,
-                tags: [["d", "comb.readstate"]],
+                tags: [["d", identifier]],
                 createdAt: Date(timeIntervalSinceNow: -age),
                 with: key
             )
@@ -404,16 +419,16 @@ struct RelayContractTests {
         // a second device would apply a superseded marker and unread counts
         // would walk backwards.
         let markers = try await session.query(
-            [Filter(authors: [key.publicKey.hex], kinds: [.appData])],
-            timeout: .seconds(2)
+            [Filter(authors: [key.publicKey.hex], kinds: [.appData]).withTag("d", [identifier])],
+            timeout: .seconds(5)
         )
         #expect(markers.map(\.content) == ["newer"])
         await session.stop()
     }
 
-    @Test("account-level events need no group")
-    func profileAndReportCarryNoGroupTag() async throws {
-        let relay = try RelayUnderTest.fake()
+    @Test("account-level events need no group", arguments: RelayTarget.available)
+    func profileAndReportCarryNoGroupTag(_ target: RelayTarget) async throws {
+        let relay = try target.relay()
         let key = try PrivateKey()
         let (session, _) = try await relay.connect(as: key)
 

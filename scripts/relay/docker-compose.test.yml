@@ -1,0 +1,68 @@
+# A real Buzz relay, for the contract suite to run against.
+#
+# The fake in CombNetTesting pins our *model* of the relay. This pins the
+# relay. Every case in RelayContractTests runs against both, which is the only
+# arrangement that can tell us the model is wrong.
+#
+# `ghcr.io/block/buzz` is published multi-arch, so there is no Rust toolchain
+# and no buzz-reference checkout involved.
+#
+# Images are by digest, not tag. A conformance suite whose subject can be
+# swapped underneath it by someone else's `latest` push is not pinning
+# anything, and the failure would look like our bug.
+services:
+  postgres:
+    image: postgres:16-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777
+    environment:
+      POSTGRES_USER: buzz
+      POSTGRES_PASSWORD: buzz
+      POSTGRES_DB: buzz
+    # No volume on purpose. Every run starts from an empty database, because a
+    # contract case that passes only against state left by the last run is
+    # worse than no case.
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U buzz"]
+      interval: 1s
+      timeout: 3s
+      retries: 30
+
+  redis:
+    image: redis:7-alpine@sha256:e7723ff73d963f5cc6d9c4643ea3d989527a402a319239054e9472a7fb9219a2
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 1s
+      timeout: 3s
+      retries: 30
+
+  relay:
+    image: ghcr.io/block/buzz@sha256:a0f67203d71d15d237fa7517788799957c30c8acdb81cbcff711e07e951c2710
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    # 3030, not 3000. A developer with a team relay already running on 3000
+    # would otherwise point the suite at it and get answers from the wrong
+    # server, which is the sort of confusion that costs an afternoon.
+    ports:
+      - "3030:3000"
+    environment:
+      DATABASE_URL: postgres://buzz:buzz@postgres:5432/buzz
+      REDIS_URL: redis://redis:6379
+      # Load-bearing, and the whole reason up.sh asserts before running
+      # anything. Without a relay key, NIP-11 advertises no `self`, the
+      # provenance check on relay-signed 39000/39002 takes its skipped branch,
+      # and the rig reports a clean pass while proving nothing at all.
+      BUZZ_RELAY_PRIVATE_KEY: ${BUZZ_RELAY_PRIVATE_KEY:?set it, or the suite silently proves nothing}
+      # A test loop is not abuse. The stock 60 events a minute is well below
+      # what the contract cases send in a burst.
+      BUZZ_RATE_LIMIT_EVENTS_PER_MINUTE: "6000"
+      BUZZ_RATE_LIMIT_REQS_PER_MINUTE: "6000"
+      RUST_LOG: info
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000 --header='Accept: application/nostr+json' || exit 1"]
+      interval: 1s
+      timeout: 3s
+      retries: 60
