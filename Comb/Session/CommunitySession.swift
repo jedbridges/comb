@@ -752,8 +752,14 @@ actor CommunitySession {
     }
 
     /// Fetches an attachment's bytes, with the signed header the relay requires.
+    ///
+    /// The community's own URL goes in, and the fetch refuses anything else. An
+    /// attachment names its host in an `imeta` tag written by whoever sent the
+    /// message, so without this a single message could point every reader at a
+    /// host of the sender's choosing, carrying an authorization signed with the
+    /// reader's key.
     func mediaData(for attachment: Blossom.Attachment) async throws -> Data {
-        try await BlossomClient().data(for: attachment, signer: signer)
+        try await BlossomClient().data(for: attachment, servedBy: relayURL, signer: signer)
     }
 
     // MARK: - Zaps

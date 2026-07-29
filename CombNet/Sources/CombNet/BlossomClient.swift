@@ -25,6 +25,9 @@ public struct BlossomClient: Sendable {
         case rejected(status: Int)
         /// The relay's own URL could not be turned into an HTTP origin.
         case badRelayURL
+        /// The blob is on a host that is not this community's, or is not on
+        /// TLS. Nothing was signed and nothing was requested.
+        case foreignHost
         case malformedResponse
         /// The bytes that came back are not the bytes that were asked for.
         case hashMismatch
@@ -121,13 +124,36 @@ public struct BlossomClient: Sendable {
     ///
     /// The hash check is the point of a content-addressed store: without it a
     /// relay could serve any bytes it liked under someone else's attachment.
+    ///
+    /// `servedBy` is required rather than inferred, and that is the whole point.
+    /// An attachment's URL comes from an `imeta` tag written by whoever sent the
+    /// message, so it names a host of their choosing. This function signs a
+    /// Blossom authorization with the reader's own key and puts it in a header,
+    /// so fetching an attacker-named host handed a stranger the reader's IP
+    /// address together with a signature proving their pubkey: a way to tie a
+    /// Nostr identity to a network address for every member of a channel who
+    /// scrolled past one message.
+    ///
+    /// Taking the expected host as a parameter is what stops that being a thing
+    /// a caller can forget. There was a correct host check in the app, on the
+    /// avatar path, and the attachment path simply never got one.
     public func data(
         for attachment: Blossom.Attachment,
+        servedBy host: URL,
         signer: some EventSigner
     ) async throws -> Data {
         guard let url = URL(string: attachment.url),
               let origin = Self.httpOrigin(of: url)
         else { throw Failure.badRelayURL }
+
+        // Nothing is signed, and no request is made, until the host matches.
+        guard Self.isSameHost(url, as: host) else { throw Failure.foreignHost }
+        // And only over TLS. `httpOrigin` accepts `http` so a local development
+        // relay works, which would otherwise put the URL and the signed header
+        // on the wire in clear.
+        guard origin.scheme == "https" || Self.isLoopback(origin) else {
+            throw Failure.foreignHost
+        }
 
         var request = URLRequest(url: url, timeoutInterval: 60)
         request.httpMethod = "GET"
@@ -149,6 +175,33 @@ public struct BlossomClient: Sendable {
     }
 
     // MARK: - URLs
+
+    /// Whether a blob URL belongs to the community being asked to serve it.
+    /// Compared case-insensitively on host and port, because a relay on a
+    /// non-default port is a different origin from the same name on 443.
+    static func isSameHost(_ url: URL, as community: URL) -> Bool {
+        guard let left = url.host?.lowercased(),
+              let right = community.host?.lowercased(),
+              left == right
+        else { return false }
+        return effectivePort(of: url) == effectivePort(of: community)
+    }
+
+    /// A local relay, where plain HTTP is the only option and the traffic never
+    /// leaves the machine.
+    static func isLoopback(_ url: URL) -> Bool {
+        guard let host = url.host?.lowercased() else { return false }
+        return host == "localhost" || host == "127.0.0.1" || host == "::1"
+    }
+
+    private static func effectivePort(of url: URL) -> Int {
+        if let port = url.port { return port }
+        switch url.scheme?.lowercased() {
+        case "https", "wss": return 443
+        case "http", "ws": return 80
+        default: return -1
+        }
+    }
 
     /// The HTTP origin matching a relay's websocket URL: `wss` becomes `https`,
     /// and `ws` becomes `http` so local development still works.

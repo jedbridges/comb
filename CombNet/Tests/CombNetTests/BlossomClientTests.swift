@@ -140,7 +140,9 @@ struct BlossomClientTests {
 
         await #expect(throws: BlossomClient.Failure.hashMismatch) {
             try await self.makeClient().data(
-                for: attachment, signer: InMemorySigner(try PrivateKey())
+                for: attachment,
+                servedBy: URL(string: "wss://designers.communities.buzz.xyz")!,
+                signer: InMemorySigner(try PrivateKey())
             )
         }
     }
@@ -157,7 +159,9 @@ struct BlossomClientTests {
         )
 
         let data = try await makeClient().data(
-            for: attachment, signer: InMemorySigner(try PrivateKey())
+            for: attachment,
+            servedBy: URL(string: "wss://designers.communities.buzz.xyz")!,
+            signer: InMemorySigner(try PrivateKey())
         )
 
         #expect(data == bytes)
@@ -173,5 +177,134 @@ struct BlossomClientTests {
         #expect(BlossomClient.httpOrigin(of: URL(string: "ws://localhost:8080")!)?
             .absoluteString == "http://localhost:8080")
         #expect(BlossomClient.httpOrigin(of: URL(string: "ftp://relay.example")!) == nil)
+    }
+}
+
+/// The host check on downloads, which is a privacy control rather than a
+/// correctness one.
+///
+/// An attachment names its own host, in an `imeta` tag written by whoever sent
+/// the message. Fetching one signs a Blossom authorization with the reader's
+/// key and puts it in a header, so an unchecked host meant a single message
+/// could hand a stranger every reader's IP address together with a signature
+/// proving their pubkey.
+@Suite("Blossom download provenance", .timeLimit(.minutes(1)), .serialized)
+struct BlossomProvenanceTests {
+    final class Stub: URLProtocol {
+        nonisolated(unsafe) static var requested: [URLRequest] = []
+
+        override class func canInit(with request: URLRequest) -> Bool { true }
+        override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+        override func startLoading() {
+            Self.requested.append(request)
+            let response = HTTPURLResponse(
+                url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil
+            )!
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: Data("bytes".utf8))
+            client?.urlProtocolDidFinishLoading(self)
+        }
+        override func stopLoading() {}
+    }
+
+    private func makeClient() -> BlossomClient {
+        Stub.requested = []
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [Stub.self]
+        return BlossomClient(session: URLSession(configuration: config))
+    }
+
+    private func attachment(_ url: String) -> Blossom.Attachment {
+        Blossom.Attachment(
+            url: url,
+            mimeType: "image/jpeg",
+            sha256: String(repeating: "a", count: 64),
+            size: nil, width: nil, height: nil, blurhash: nil
+        )
+    }
+
+    private let community = URL(string: "wss://designers.communities.buzz.xyz")!
+
+    /// The attack. No request may leave at all, because the request itself is
+    /// the leak: it carries the reader's IP whether or not the bytes come back.
+    @Test("a blob on somebody else's host is refused before anything is sent")
+    func refusesForeignHost() async throws {
+        let client = makeClient()
+        let signer = try InMemorySigner()
+
+        await #expect(throws: BlossomClient.Failure.foreignHost) {
+            try await client.data(
+                for: attachment("https://attacker.example/\(String(repeating: "a", count: 64))"),
+                servedBy: community,
+                signer: signer
+            )
+        }
+        #expect(Stub.requested.isEmpty)
+    }
+
+    @Test("a blob on the community's own host is fetched and signed")
+    func allowsTheCommunitysHost() async throws {
+        let client = makeClient()
+        let signer = try InMemorySigner()
+
+        _ = try? await client.data(
+            for: attachment("https://designers.communities.buzz.xyz/\(String(repeating: "a", count: 64))"),
+            servedBy: community,
+            signer: signer
+        )
+
+        #expect(Stub.requested.count == 1)
+        #expect(Stub.requested.first?.value(forHTTPHeaderField: "Authorization") != nil)
+    }
+
+    /// A different port is a different origin, and a lookalike host is the
+    /// whole point of the check.
+    @Test("a lookalike host and a different port are both foreign")
+    func portAndSuffixAreNotEnough() async throws {
+        let client = makeClient()
+        let signer = try InMemorySigner()
+        let blob = String(repeating: "a", count: 64)
+
+        for url in [
+            "https://designers.communities.buzz.xyz.attacker.example/\(blob)",
+            "https://designers.communities.buzz.xyz:8443/\(blob)",
+            "https://evil.designers.communities.buzz.xyz/\(blob)",
+        ] {
+            await #expect(throws: BlossomClient.Failure.foreignHost) {
+                try await client.data(for: attachment(url), servedBy: community, signer: signer)
+            }
+        }
+        #expect(Stub.requested.isEmpty)
+    }
+
+    /// The right host over plain HTTP would put the signed header on the wire
+    /// in clear. Only loopback is exempt, where the traffic never leaves.
+    @Test("the right host without TLS is still refused")
+    func requiresTLS() async throws {
+        let client = makeClient()
+        let signer = try InMemorySigner()
+
+        await #expect(throws: BlossomClient.Failure.foreignHost) {
+            try await client.data(
+                for: attachment("http://designers.communities.buzz.xyz/\(String(repeating: "a", count: 64))"),
+                servedBy: community,
+                signer: signer
+            )
+        }
+        #expect(Stub.requested.isEmpty)
+    }
+
+    @Test("a local development relay still works over plain HTTP")
+    func allowsLoopback() async throws {
+        let client = makeClient()
+        let signer = try InMemorySigner()
+
+        _ = try? await client.data(
+            for: attachment("http://localhost:3030/\(String(repeating: "a", count: 64))"),
+            servedBy: URL(string: "ws://localhost:3030")!,
+            signer: signer
+        )
+
+        #expect(Stub.requested.count == 1)
     }
 }
