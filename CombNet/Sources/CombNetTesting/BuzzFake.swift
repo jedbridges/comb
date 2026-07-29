@@ -56,12 +56,21 @@ public actor BuzzFake: WebSocketTransport {
         public var name: String
         public var members: Set<String>
         public var admins: Set<String>
+        /// Buzz's hidden groups, made by the 41010 command rather than 9007.
+        public var isDirectMessage: Bool
 
-        public init(id: String, name: String, members: Set<String>, admins: Set<String> = []) {
+        public init(
+            id: String,
+            name: String,
+            members: Set<String>,
+            admins: Set<String> = [],
+            isDirectMessage: Bool = false
+        ) {
             self.id = id
             self.name = name
             self.members = members
             self.admins = admins
+            self.isDirectMessage = isDirectMessage
         }
     }
 
@@ -95,13 +104,13 @@ public actor BuzzFake: WebSocketTransport {
     /// cases whose subject is something else.
     public func seed(group: Group) {
         groups[group.id] = group
-        stored.append(contentsOf: groupState(for: group))
+        for item in groupState(for: group) { record(item) }
     }
 
     /// Stores events as though they had arrived before this client connected,
     /// which is what a REQ's historical answer is made of.
     public func seed(events: [NostrEvent]) {
-        stored.append(contentsOf: events)
+        for event in events { record(event) }
     }
 
     public func loosen(_ change: @Sendable (inout Rules) -> Void) {
@@ -236,6 +245,8 @@ public actor BuzzFake: WebSocketTransport {
             return changeMembership(from: event, joining: true)
         case .groupLeaveRequest:
             return changeMembership(from: event, joining: false)
+        case .buzzOpenDirectMessage:
+            return openDirectMessage(from: event)
         default:
             break
         }
@@ -253,9 +264,69 @@ public actor BuzzFake: WebSocketTransport {
 
         // Ephemerals reach live subscribers and are never kept, which is what
         // makes a typing indicator safe to send and pointless to store.
-        if !event.kind.isEphemeral { stored.append(event) }
+        if !event.kind.isEphemeral { record(event) }
         ok(event.id, true, "")
         deliverLive(event)
+    }
+
+    /// Stores an event, applying NIP-01's storage classes.
+    ///
+    /// Replacement is not a detail: read-state sync publishes a 30078 per
+    /// change under the same `d` tag and relies on the relay keeping only the
+    /// newest. A fake that kept them all would answer a query with a pile of
+    /// superseded markers and never notice the difference.
+    private func record(_ event: NostrEvent) {
+        if event.kind.isAddressable {
+            let identifier = tag(event, "d") ?? ""
+            stored.removeAll {
+                $0.kind == event.kind && $0.pubkey == event.pubkey
+                    && (tag($0, "d") ?? "") == identifier && $0.createdAt <= event.createdAt
+            }
+        } else if event.kind.isReplaceable {
+            stored.removeAll {
+                $0.kind == event.kind && $0.pubkey == event.pubkey && $0.createdAt <= event.createdAt
+            }
+        }
+        stored.append(event)
+    }
+
+    /// Buzz's 41010: the relay makes the group, names it, adds everyone, and
+    /// answers with the channel id inside the OK's reason.
+    ///
+    /// The reason string is the only place in the protocol where an
+    /// acknowledgement carries data the client needs, which is exactly why it
+    /// deserves a contract case: nothing else in Comb reads an OK for anything
+    /// but yes or no.
+    private func openDirectMessage(from event: NostrEvent) {
+        let named = event.tags.filter { $0.first == "p" && $0.count > 1 }.map { $0[1] }
+        guard !named.isEmpty else {
+            return ok(event.id, false, "invalid: a conversation needs somebody in it")
+        }
+        let participants = Set(named).union([event.pubkey])
+
+        // Keyed on the participant set, so asking twice returns the same
+        // conversation rather than making a second one. The app leans on this:
+        // tapping "message" on a profile is not meant to be destructive.
+        let existing = groups.values.first { $0.isDirectMessage && $0.members == participants }
+        let id = existing?.id ?? "dm-\(abs(participants.sorted().joined().hashValue))"
+
+        if existing == nil {
+            let group = Group(
+                id: id,
+                name: participants.sorted().map { String($0.prefix(8)) }.joined(separator: " & "),
+                members: participants,
+                isDirectMessage: true
+            )
+            groups[id] = group
+            let state = groupState(for: group)
+            for item in state {
+                record(item)
+                deliverLive(item)
+            }
+        }
+
+        record(event)
+        ok(event.id, true, "response: {\"channel_id\":\"\(id)\"}")
     }
 
     private func createGroup(from event: NostrEvent) {
@@ -267,7 +338,7 @@ public actor BuzzFake: WebSocketTransport {
             members: [event.pubkey],
             admins: [event.pubkey]
         )
-        stored.append(event)
+        record(event)
         ok(event.id, true, "")
 
         // Offered to the live subscriptions and withheld there, rather than
@@ -275,9 +346,10 @@ public actor BuzzFake: WebSocketTransport {
         // through `deliverLive`, the rule that withholds it would be doing
         // nothing, and the case that claims to test the rule would pass against
         // a relay that had no such behaviour at all.
-        let state = groupState(for: groups[id]!)
-        stored.append(contentsOf: state)
-        for event in state { deliverLive(event) }
+        for item in groupState(for: groups[id]!) {
+            record(item)
+            deliverLive(item)
+        }
     }
 
     private func changeMembership(from event: NostrEvent, joining: Bool) {
@@ -291,7 +363,7 @@ public actor BuzzFake: WebSocketTransport {
             group.members.remove(event.pubkey)
         }
         groups[id] = group
-        stored.append(event)
+        record(event)
         ok(event.id, true, "")
 
         // The roster notice is relay-signed and does reach a live subscription:
@@ -305,13 +377,15 @@ public actor BuzzFake: WebSocketTransport {
             with: relayKey
         )
         if let notice {
-            stored.append(notice)
+            record(notice)
             deliverLive(notice)
         }
-        stored.removeAll { $0.kind == .groupMembers && tag($0, "d") == id }
-        let roster = groupState(for: group).filter { $0.kind == .groupMembers }
-        stored.append(contentsOf: roster)
-        for event in roster { deliverLive(event) }
+        // The new roster supersedes the old one by the addressable-replacement
+        // rule in `record`, rather than by a hand-written removal here.
+        for item in groupState(for: group) where item.kind == .groupMembers {
+            record(item)
+            deliverLive(item)
+        }
     }
 
     /// The relay-signed description of a group: its metadata and its roster.
@@ -407,12 +481,20 @@ public actor BuzzFake: WebSocketTransport {
         push("[\"EVENT\",\"\(subscription)\",\(String(decoding: json, as: UTF8.self))]")
     }
 
+    /// The reason is JSON-encoded rather than interpolated between quotes. It
+    /// carries a JSON object of its own for the 41010 command, and a hand-built
+    /// frame would have produced something no client could parse.
     private func ok(_ eventID: String, _ accepted: Bool, _ reason: String) {
-        push("[\"OK\",\"\(eventID)\",\(accepted),\"\(reason)\"]")
+        push("[\"OK\",\"\(eventID)\",\(accepted),\(quoted(reason))]")
     }
 
     private func closed(_ subscription: String, _ reason: String) {
-        push("[\"CLOSED\",\"\(subscription)\",\"\(reason)\"]")
+        push("[\"CLOSED\",\"\(subscription)\",\(quoted(reason))]")
+    }
+
+    private func quoted(_ text: String) -> String {
+        guard let data = try? JSONEncoder().encode(text) else { return "\"\"" }
+        return String(decoding: data, as: UTF8.self)
     }
 
     private func push(_ text: String) {

@@ -289,6 +289,154 @@ struct RelayContractTests {
         await session.stop()
     }
 
+    // MARK: - The 41010 command
+
+    @Test("opening a direct message answers with the channel it made")
+    func directMessageOpenReturnsAChannel() async throws {
+        let relay = try RelayUnderTest.fake()
+        let me = try PrivateKey()
+        let them = try PrivateKey()
+        let (session, _) = try await relay.connect(as: me)
+
+        let open = try NostrEvent.signed(
+            kind: .buzzOpenDirectMessage,
+            content: "",
+            tags: [["p", them.publicKey.hex]],
+            with: me
+        )
+        let response = try await session.publish(open)
+
+        // The only acknowledgement in the protocol that carries data rather
+        // than a verdict. Everything else the client reads from an OK is yes
+        // or no.
+        let channel = try #require(CommandResponse.channelID(in: response))
+        #expect(!channel.isEmpty)
+
+        // And the conversation's metadata is query-only like any other group
+        // state, which is why the client refetches after opening one rather
+        // than waiting for it to arrive.
+        let state = try await session.query(
+            [Filter(kinds: [.groupMetadata])],
+            timeout: .seconds(2)
+        )
+        #expect(state.contains { $0.tags.contains { $0 == ["d", channel] } })
+        await session.stop()
+    }
+
+    @Test("opening the same conversation twice returns the same channel")
+    func directMessageOpenIsIdempotent() async throws {
+        let relay = try RelayUnderTest.fake()
+        let me = try PrivateKey()
+        let them = try PrivateKey()
+        let (session, _) = try await relay.connect(as: me)
+
+        func open() async throws -> String? {
+            let event = try NostrEvent.signed(
+                kind: .buzzOpenDirectMessage,
+                content: "",
+                // A fresh timestamp each time, so the two events differ and the
+                // relay cannot be answering the same id twice.
+                tags: [["p", them.publicKey.hex]],
+                createdAt: Date(timeIntervalSinceNow: Double.random(in: -30 ... -1)),
+                with: me
+            )
+            return CommandResponse.channelID(in: try await session.publish(event))
+        }
+
+        let first = try await open()
+        let second = try await open()
+        #expect(first != nil)
+        #expect(first == second, "tapping message on a profile twice must not make two conversations")
+        await session.stop()
+    }
+
+    // MARK: - Storage classes
+
+    @Test("typing reaches a live subscriber and is never stored")
+    func ephemeralsAreNotKept() async throws {
+        let relay = try RelayUnderTest.fake()
+        let key = try PrivateKey()
+        let (session, sink) = try await relay.connect(as: key)
+        try await create(Self.channel, with: session, by: key)
+
+        _ = try await session.subscribe([Filter(kinds: [.buzzTyping])], label: "typing")
+        let typing = try NostrEvent.signed(
+            kind: .buzzTyping,
+            content: "",
+            tags: [["h", Self.channel]],
+            with: key
+        )
+        _ = try await session.publish(typing)
+
+        try await waitUntil("the typing indicator") {
+            await sink.events.contains { $0.kind == .buzzTyping }
+        }
+        // Delivered and forgotten. A relay that kept these would answer a
+        // reconnect's backfill with a pile of people who stopped typing hours
+        // ago.
+        let history = try await session.query([Filter(kinds: [.buzzTyping])], timeout: .seconds(2))
+        #expect(history.isEmpty)
+        await session.stop()
+    }
+
+    @Test("a newer read-state marker replaces the one before it")
+    func addressableEventsAreReplaced() async throws {
+        let relay = try RelayUnderTest.fake()
+        let key = try PrivateKey()
+        let (session, _) = try await relay.connect(as: key)
+
+        func publishMarker(_ content: String, at age: TimeInterval) async throws {
+            let event = try NostrEvent.signed(
+                kind: .appData,
+                content: content,
+                tags: [["d", "comb.readstate"]],
+                createdAt: Date(timeIntervalSinceNow: -age),
+                with: key
+            )
+            _ = try await session.publish(event)
+        }
+
+        try await publishMarker("older", at: 60)
+        try await publishMarker("newer", at: 0)
+
+        // Read-state sync publishes one of these per change under the same `d`
+        // tag and relies on the relay keeping only the newest. If it kept both,
+        // a second device would apply a superseded marker and unread counts
+        // would walk backwards.
+        let markers = try await session.query(
+            [Filter(authors: [key.publicKey.hex], kinds: [.appData])],
+            timeout: .seconds(2)
+        )
+        #expect(markers.map(\.content) == ["newer"])
+        await session.stop()
+    }
+
+    @Test("account-level events need no group")
+    func profileAndReportCarryNoGroupTag() async throws {
+        let relay = try RelayUnderTest.fake()
+        let key = try PrivateKey()
+        let (session, _) = try await relay.connect(as: key)
+
+        // The h-tag rule must not overreach. A profile belongs to an account,
+        // not a channel, and a relay demanding a group for one would break
+        // setting a display name before joining anything.
+        let profile = try NostrEvent.signed(
+            kind: .metadata,
+            content: #"{"display_name":"Somebody"}"#,
+            with: key
+        )
+        _ = try await session.publish(profile)
+
+        let report = try NostrEvent.signed(
+            kind: .report,
+            content: "spam",
+            tags: [["p", try PrivateKey().publicKey.hex, "spam"]],
+            with: key
+        )
+        _ = try await session.publish(report)
+        await session.stop()
+    }
+
     // MARK: - Helpers
 
     /// Creates a group by publishing 9007, which is what the app does, so the
