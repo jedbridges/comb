@@ -30,6 +30,15 @@ log="$dir/$name.log"
 # target do exactly that.
 [ -f "$log" ] && mv -f "$log" "$log.prev"
 
+# xcodebuild does not always exit non-zero when it fails. Two concurrent builds
+# sharing a derived data directory produce "unable to attach DB: ... database is
+# locked", a "** BUILD FAILED **" banner, and an exit status of 0, so a caller
+# that trusts the status gets a false green. The banner is the more reliable
+# signal: when it is in the log, the run failed whatever the status said.
+banner_failed() {
+	grep -qE '^\*\* (BUILD|TEST|ARCHIVE) FAILED \*\*' "$log" 2>/dev/null
+}
+
 if [ "${V:-0}" != "0" ]; then
 	# Still record the log, but let everything through to the terminal.
 	# A pipeline's exit status is tee's, not the command's, and POSIX sh has
@@ -38,6 +47,7 @@ if [ "${V:-0}" != "0" ]; then
 	{ "$@" 2>&1; echo $? >"$rc"; } | tee "$log"
 	status=$(cat "$rc" 2>/dev/null || echo 1)
 	rm -f "$rc"
+	[ "$status" -eq 0 ] && banner_failed && status=1
 	echo "($name exit $status; full log: $log)"
 	exit "$status"
 fi
@@ -60,6 +70,7 @@ trap 'kill "$cmd" "$ticker" 2>/dev/null; exit 130' INT TERM
 
 wait "$cmd"
 status=$?
+[ $status -eq 0 ] && banner_failed && status=1
 
 # Killing the ticker leaves its in-flight `sleep` orphaned for up to 5s. That
 # is one short-lived process per invocation and it reaps itself, which is a
