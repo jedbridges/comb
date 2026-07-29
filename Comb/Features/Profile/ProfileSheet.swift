@@ -131,14 +131,27 @@ struct ProfileSheet: View {
                     .disabled(isOpeningDirectMessage)
                 }
 
-                // Offered when the answer is yes, and when Comb has never seen
-                // their profile and so has no answer. Hidden only when they
-                // published one and it carries no Lightning address.
-                if profile.zapCapability != .no {
-                    Button {
-                        isZapping = true
-                    } label: {
-                        Label("Send a zap", systemImage: "bolt.fill")
+                // Always offered, and the presenter explains when they cannot
+                // be paid. Hiding it on a known no meant the row appeared for
+                // some people and not others with nothing saying why.
+                //
+                // Says what a zap is at rest rather than only behind the info
+                // icon two taps away. It sits directly under "Send a message",
+                // and one of these opens a conversation while the other moves
+                // real money, so they should not read as the same weight of
+                // decision.
+                Button {
+                    isZapping = true
+                } label: {
+                    Label {
+                        VStack(alignment: .leading, spacing: Space.hairline) {
+                            Text("Send a zap")
+                            Text("A Bitcoin tip, paid from a wallet on this iPhone")
+                                .font(Typography.caption)
+                                .foregroundStyle(Palette.subtext)
+                        }
+                    } icon: {
+                        Image(systemName: "bolt.fill")
                     }
                 }
             } footer: {

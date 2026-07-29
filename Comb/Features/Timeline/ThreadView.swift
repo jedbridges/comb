@@ -164,7 +164,9 @@ struct ThreadView: View {
             },
             onRetry: { Task { await model.retry(entry.row.id) } },
             onDiscard: { Task { await model.discard(entry.row.id) } },
-            onZap: entry.row.zapCapability == .no ? nil : { zapTarget = entry.row },
+            // Always offered, and the presenter explains a no. See the same
+            // call in ChannelTimelineView for why the row must not vanish.
+            onZap: { zapTarget = entry.row },
             onOpenAuthor: { profileTarget = ProfileTarget(pubkey: entry.row.pubkey) },
             onPickEmoji: entry.row.isDeleted ? nil : { reactingTo = entry.row },
             onShowReactors: { emoji in

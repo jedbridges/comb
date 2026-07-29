@@ -29,6 +29,12 @@ struct ZapSheet: View {
     @State private var isCustom = false
     @State private var customText = ""
     @FocusState private var isCustomFocused: Bool
+    /// The pre-flight could not reach the host, so the amounts on offer are
+    /// guesses again. Held apart from `phase` because it is not an attempt: the
+    /// invoice request may still succeed, so the chooser stays live, and the
+    /// button must go on saying what it will do rather than offering to repeat
+    /// something that never happened.
+    @State private var preflightFailure: String?
 
     private enum Phase: Equatable {
         case choosing
@@ -38,7 +44,14 @@ struct ZapSheet: View {
         /// to know that, and a case named for what the reader hopes happened is
         /// how the hope ends up in the copy.
         case handedOff(CommunitySession.PreparedZap)
+        /// An attempt was made and did not work. Distinct from
+        /// `preflightFailure`, which is something that happened before the
+        /// reader did anything, and the distinction is what stops a button
+        /// saying "Try again" to somebody who has not tried.
         case failed(String)
+        /// The recipient cannot be paid at all, so there is nothing to choose.
+        /// Terminal: no amounts, no retry, one way out.
+        case refused(String)
     }
 
     /// What the recipient's endpoint accepts, once it has told us.
@@ -52,6 +65,29 @@ struct ZapSheet: View {
         case known(low: Int64, high: Int64, commentLength: Int)
         case unknown
     }
+
+    /// What a zap is, and what a sat is worth.
+    ///
+    /// The middle sentence is the one that was missing. "A small Bitcoin tip"
+    /// names the category and says nothing about the size, and these readers are
+    /// design-literate and deliberately not crypto-literate, so being asked to
+    /// price a gift in sats was asking them to be. A hundred million to the
+    /// bitcoin is a fixed fact that needs no network and never goes stale.
+    ///
+    /// There is no live conversion here and there will not be one. A rate means
+    /// asking a price service, and a price service is a host the reader never
+    /// chose, which ETHOS.md calls a bug by definition. So the absence is stated
+    /// rather than left for the reader to notice: a screen that quietly declines
+    /// to say what you are spending is worse than one that says why it cannot.
+    static let explanation = """
+        A zap is a Bitcoin tip, counted in sats. There are 100 million sats in \
+        one bitcoin, so these are small amounts on purpose.
+
+        Comb cannot show you what that is in your own currency, because looking \
+        up a rate would mean asking a price service you never chose. It hands \
+        an invoice to a Lightning wallet on this iPhone, so you need one \
+        installed to pay it, and Comb never touches the money.
+        """
 
     /// The customary sat amounts. 21 is the Nostr default and the sensible
     /// starting selection.
@@ -105,6 +141,8 @@ struct ZapSheet: View {
         NavigationStack {
             if case .handedOff(let zap) = phase {
                 handedOff(zap)
+            } else if case .refused(let reason) = phase {
+                refused(reason)
             } else {
                 chooser
             }
@@ -173,23 +211,55 @@ struct ZapSheet: View {
         .navigationBarTitleDisplayMode(.inline)
     }
 
+    /// The recipient cannot be paid, so the screen stops being a form.
+    ///
+    /// Deliberately the same shape as `ZapPresenter`'s own dead end: one glyph,
+    /// one sentence, one way out. A live amount grid above an explanation that
+    /// no amount will work is a screen arguing with itself, and the grid wins
+    /// that argument because it is larger and brighter than the sentence.
+    private func refused(_ reason: String) -> some View {
+        VStack(spacing: Space.md) {
+            Spacer()
+            Image(systemName: "bolt.slash")
+                .font(.system(size: Sizing.stateGlyph))
+                .foregroundStyle(Palette.subtext)
+                .accessibilityHidden(true)
+            Text(reason)
+                .font(Typography.labelRegular)
+                .foregroundStyle(Palette.subtext)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, Space.lg)
+            Spacer()
+            PrimaryButton(title: "Close") { dismiss() }
+                .padding(.horizontal, Space.lg)
+                .padding(.bottom, Space.xs)
+        }
+        .navigationTitle("Zap")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
     private var chooser: some View {
         Group {
             Form {
                 Section {
                     presetGrid
                 } header: {
-                    Text("Zap \(recipientName)")
+                    // Names the recipient, which the nav title cannot: "Zap"
+                    // there and "Zap Ray" here said the verb twice and the
+                    // person once. This says the person, and the button below
+                    // says the verb with the amount attached.
+                    Text("To \(recipientName)")
                 } footer: {
-                    VStack(alignment: .leading, spacing: Space.xxs) {
-                        Text("\(amount.formatted()) sats")
-                            .font(Typography.captionEmphasis)
-                            .foregroundStyle(canSend ? Palette.chartreuse : Palette.subtext)
-                        if let rangeNote {
-                            Text(rangeNote)
-                                .font(Typography.caption)
-                                .foregroundStyle(Palette.subtext)
-                        }
+                    // The amount is on the selected chip and on the button.
+                    // Printing it a third time here was the accent's second
+                    // wrong use on this screen, and it moved when the chip did,
+                    // so it repeated rather than added. What is left is the
+                    // range, which is the only thing here the chips cannot say.
+                    if let rangeNote {
+                        Text(rangeNote)
+                            .font(Typography.caption)
+                            .foregroundStyle(Palette.subtext)
                     }
                 }
                 .combRows()
@@ -253,7 +323,7 @@ struct ZapSheet: View {
                     }
                     .accessibilityLabel("What is a zap?")
                     .popover(isPresented: $isExplaining) {
-                        Text("A zap is a small Bitcoin tip, counted in sats. Comb never handles the money: it hands an invoice to a Lightning wallet on this iPhone, so you need one installed to pay it.")
+                        Text(Self.explanation)
                             .font(Typography.labelRegular)
                             .foregroundStyle(Palette.text)
                             .multilineTextAlignment(.leading)
@@ -280,13 +350,17 @@ struct ZapSheet: View {
                     // rendered behind the button and ran off the bottom of the
                     // sheet: the one moment the reader needs it is the one
                     // moment it could not be read.
-                    if case .failed(let message) = phase {
-                        // InlineNotice rather than a third hand-rolled copy of it, and
-                            // because .meta is 11pt: a failure should not be the smallest
-                            // type on the screen it happened on.
-                            InlineNotice(kind: .failure, text: message)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .transition(.opacity)
+                    // InlineNotice rather than a third hand-rolled copy of it,
+                    // and because .meta is 11pt: a failure should not be the
+                    // smallest type on the screen it happened on.
+                    //
+                    // A pre-flight failure is shown in the same place but says
+                    // something different, so the two cannot both be on screen:
+                    // an attempt supersedes the guess that preceded it.
+                    if let notice {
+                        InlineNotice(kind: .failure, text: notice)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .transition(.opacity)
                     }
 
                     PrimaryButton(
@@ -364,12 +438,28 @@ struct ZapSheet: View {
         .animation(Motion.fast, value: isSelected)
     }
 
+    /// The one failure worth showing, and which one wins.
+    ///
+    /// An attempt's failure supersedes the pre-flight's: once the reader has
+    /// pressed the button, what happened then is the news, and the guess that
+    /// preceded it is history.
+    private var notice: String? {
+        if case .failed(let message) = phase { return message }
+        return preflightFailure
+    }
+
     private var primaryTitle: String {
         switch phase {
+        // Amount-aware whenever nothing has been attempted, and a failed
+        // pre-flight does not change that. This used to read "Try again" the
+        // moment the host was unreachable, which was false twice over: the
+        // reader had tried nothing, and the button attempts the invoice, a
+        // different request from the one that failed.
         case .choosing: amount > 0 ? "Zap \(amount.formatted()) sats" : "Choose an amount"
         case .preparing: "Preparing…"
         case .ready, .handedOff: "Open in wallet"
         case .failed: "Try again"
+        case .refused: "Close"
         }
     }
 
@@ -386,19 +476,33 @@ struct ZapSheet: View {
             // Not folded into `unsupported`: they did set up a wallet that
             // speaks Nostr zaps, and saying they did not would be false and
             // would send the reader to ask them about the wrong thing.
+            //
+            // Refused rather than failed. There is no amount that works, so
+            // showing a picker would be offering a choice that cannot be made,
+            // and a retry would repeat an answer that is not going to change on
+            // this screen.
             guard high >= low, high > 0 else {
                 limits = .unknown
-                phase = .failed("\(recipientName)'s wallet is not accepting zaps right now.")
+                phase = .refused("\(recipientName)'s wallet is not accepting zaps right now.")
                 return
             }
             limits = .known(low: low, high: high, commentLength: commentLength)
             reconcileAmount(low: low, high: high)
+
         case .unsupported:
+            // Also terminal, and normally unreachable: `ZapPresenter` answers
+            // this before the sheet is built. Kept because a profile can change
+            // between the two checks.
             limits = .unknown
-            phase = .failed("\(recipientName) has not set up a Lightning wallet that accepts zaps.")
+            phase = .refused("\(recipientName) has not set up a Lightning wallet that accepts zaps.")
+
         case .failed(let message):
+            // Soft. The host was unreachable or unreadable, so the amounts are
+            // guesses again, but the invoice request may still succeed and
+            // refusing up front on a failed guess would be worse than the
+            // guessing it replaced. The chooser stays live and says why.
             limits = .unknown
-            phase = .failed(message)
+            preflightFailure = message
         }
     }
 

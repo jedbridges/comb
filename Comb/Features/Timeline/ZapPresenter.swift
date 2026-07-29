@@ -40,10 +40,24 @@ struct ZapPresenter: View {
             } else if let explanation {
                 cannot(explanation)
             } else {
-                ProgressView()
-                    .controlSize(.large)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .presentationDetents([.medium])
+                // In a NavigationStack like the other two branches, which this
+                // one was not. A bare spinner on a titleless sheet gave the
+                // reader nothing to read and nothing but a swipe to leave by,
+                // on the one branch that involves waiting on the network.
+                NavigationStack {
+                    ProgressView()
+                        .controlSize(.large)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .accessibilityLabel("Looking up \(displayName)'s wallet")
+                        .navigationTitle("Zap")
+                        .navigationBarTitleDisplayMode(.inline)
+                        .toolbar {
+                            ToolbarItem(placement: .topBarLeading) {
+                                Button("Cancel") { dismiss() }
+                            }
+                        }
+                }
+                .presentationDetents([.medium])
             }
         }
         .task { await resolve() }
@@ -53,9 +67,12 @@ struct ZapPresenter: View {
         NavigationStack {
             VStack(spacing: Space.md) {
                 Spacer()
+                // Decorative: the sentence under it says the same thing, and
+                // VoiceOver announcing "bolt slash" before it helps nobody.
                 Image(systemName: "bolt.slash")
                     .font(.system(size: Sizing.stateGlyph))
                     .foregroundStyle(Palette.subtext)
+                    .accessibilityHidden(true)
                 Text(message)
                     .font(Typography.labelRegular)
                     .foregroundStyle(Palette.subtext)

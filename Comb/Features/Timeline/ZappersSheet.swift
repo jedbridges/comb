@@ -3,7 +3,9 @@ import SwiftUI
 
 /// Who zapped a message, and what the number does and does not mean.
 ///
-/// Reached by long-pressing the zap chip. This is where the honesty about zap
+/// Reached by long-pressing the zap chip, or through its rotor action. Tapping
+/// the chip adds a zap instead, the way tapping a reaction adds one. This is
+/// where the honesty about zap
 /// totals lives, rather than as a permanent caption under every chip: the
 /// limitations are real and worth stating once, where someone looking at the
 /// number closely will find them, in the same register as the "what is a zap?"

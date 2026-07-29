@@ -264,17 +264,30 @@ struct ChannelTimelineView: View {
             // messages already carry a zap action apiece, which is the right
             // shape when the question is who you are paying.
             //
-            // Offered when Comb has never seen their profile as well as when it
-            // knows they take zaps: the answer is one fetch away and
-            // `ZapPresenter` makes it, so hiding the button would spend the
-            // reader's intent on nothing. Hidden only on a real no.
+            // Always offered once there is a counterpart, whatever their profile
+            // says: the presenter explains a no, and a button that comes and
+            // goes by recipient teaches nothing.
+            //
+            // The word is shown, not just the bolt. In iOS a bolt means flash,
+            // power, or speed and has never meant "send money", so a reader
+            // tapping it to find out lands in a real-money flow. It is also the
+            // only entry point that has to introduce the feature, since a DM
+            // has no message-level menu in view.
             ToolbarItem(placement: .topBarTrailing) {
-                if let dmCounterpart, dmZapCapability != .no {
+                if let dmCounterpart {
                     Button {
                         zapCounterpart = ProfileTarget(pubkey: dmCounterpart)
                     } label: {
-                        Label("Zap", systemImage: "bolt.fill")
-                            .foregroundStyle(Palette.chrome)
+                        // An explicit HStack rather than `Label` with a label
+                        // style: a toolbar imposes its own style and rendered
+                        // the word away, leaving the bare glyph this exists to
+                        // stop being bare.
+                        HStack(spacing: Space.xxs) {
+                            Image(systemName: "bolt.fill")
+                            Text("Zap")
+                        }
+                        .font(Typography.count)
+                        .foregroundStyle(Palette.chrome)
                     }
                     .accessibilityLabel("Send a zap")
                 }
@@ -398,7 +411,20 @@ struct ChannelTimelineView: View {
             },
             onRetry: { Task { await model.retry(entry.row.id) } },
             onDiscard: { Task { await model.discard(entry.row.id) } },
-            onZap: entry.row.zapCapability == .no ? nil : { zapTarget = entry },
+            // Always offered, including for somebody with no wallet.
+            //
+            // This used to be nil on a known no, which meant the Zap row
+            // appeared and vanished from the menu by author, with nothing
+            // anywhere saying why. A reader who had just zapped one person and
+            // then found no Zap row on the next concluded the app was flaky,
+            // and a reader who had never zapped anyone saw a menu quietly
+            // missing an item they did not know existed. Hiding the only
+            // teaching surface on exactly the messages where an explanation is
+            // owed is the opposite of stating a limitation in the UI.
+            //
+            // `ZapPresenter` already has the sentence for this case and was
+            // simply never reached.
+            onZap: { zapTarget = entry },
             onOpenAuthor: { profileTarget = ProfileTarget(pubkey: entry.row.pubkey) },
             onOpenThread: { threadRoot = entry.row },
             onReply: entry.row.isDeleted ? nil : { threadRoot = entry.row },
@@ -652,7 +678,8 @@ struct MessageRow: View {
     var onPickEmoji: (() -> Void)?
     /// Long-press on a reaction chip: shows who reacted.
     var onShowReactors: ((String) -> Void)?
-    /// Long-press on the zap chip: shows who zapped, and what the total means.
+    /// Long-press on the zap chip, or its rotor action: shows who zapped, and
+    /// what the total means.
     var onShowZappers: (() -> Void)?
     /// Marks the channel unread from this message and returns to the list.
     var onMarkUnread: (() -> Void)?
@@ -756,7 +783,8 @@ struct MessageRow: View {
                         onShowReactors: onShowReactors,
                         zaps: zaps,
                         pendingZap: pendingZap,
-                        onShowZappers: onShowZappers
+                        onShowZappers: onShowZappers,
+                        onZap: onZap
                     )
                     // The first reaction on a message adds a whole row beneath
                     // it. Growing from the leading edge, where the chips are,
@@ -1068,14 +1096,20 @@ struct ReactionBar: View {
     var zaps: ZapSummary?
     /// The reader's own zap of this message, still waiting on its receipt.
     var pendingZap: ZapAttempt?
-    /// Long-press on the zap chip.
+    /// Long-press on the zap chip, or its rotor action.
     var onShowZappers: (() -> Void)?
+    /// Tap on the zap chip: adds the reader's own, like tapping a reaction.
+    var onZap: (() -> Void)?
 
     var body: some View {
         HStack(spacing: Space.xs) {
             // Leading, so the money reads before the faces.
             if let zaps {
-                ZapChip(zaps: zaps, onShowZappers: { onShowZappers?() })
+                ZapChip(
+                    zaps: zaps,
+                    onZap: onZap,
+                    onShowZappers: { onShowZappers?() }
+                )
             } else if pendingZap != nil {
                 PendingZapChip()
             }
@@ -1139,12 +1173,23 @@ struct ReactionBar: View {
 /// No burst and no haptic, unlike a reaction. A receipt arrives asynchronously,
 /// possibly minutes later and possibly while the app is in a pocket, and
 /// DESIGN.md is explicit that haptics fire only for what the reader did.
+///
+/// Same gesture contract as the reaction chip beside it, which it did not have
+/// and needed: tap adds yours, long-press shows whose it already is. Three
+/// capsules sitting in one row cannot each mean something different by the same
+/// touch. The reader learns "tap a capsule to join the pile" from the reaction
+/// chips, and tapping this one used to open a sheet instead, which broke the
+/// model on the money control of all places.
 private struct ZapChip: View {
     let zaps: ZapSummary
+    /// Adds the reader's own zap, the way tapping a reaction chip adds theirs.
+    /// Absent when the message cannot be zapped at all, which leaves the chip
+    /// as a display and its long-press intact.
+    let onZap: (() -> Void)?
     let onShowZappers: () -> Void
 
     var body: some View {
-        Button(action: onShowZappers) {
+        Button { onZap?() } label: {
             HStack(spacing: Space.xxs) {
                 // Emoji size, not count size. A reaction chip sets its emoji at
                 // body size, and both chips share the same capsule, so a glyph
@@ -1166,11 +1211,22 @@ private struct ZapChip: View {
             }
         }
         .buttonStyle(.plain)
+        .disabled(onZap == nil)
+        // Simultaneous, not `.onLongPressGesture`: that variant competes with
+        // the Button's own press handling, so a long press fires the tap too.
+        // The reaction chip learned this the hard way and this copies it.
+        .simultaneousGesture(
+            LongPressGesture(minimumDuration: 0.4).onEnded { _ in onShowZappers() }
+        )
         .accessibilityLabel(
             "\(zaps.totalSats) sats"
                 + (zaps.includesMe ? ", including yours" : "")
         )
-        .accessibilityHint("Shows who zapped this")
+        .accessibilityHint(onZap == nil ? "" : "Adds your zap")
+        // VoiceOver has no long press, so the same destination is offered as a
+        // rotor action or it cannot be reached by ear. The reaction chip does
+        // exactly this and the zap chip was missing it.
+        .accessibilityAction(named: "See who zapped", onShowZappers)
     }
 }
 
