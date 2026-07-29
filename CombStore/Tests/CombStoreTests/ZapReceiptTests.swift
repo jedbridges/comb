@@ -547,3 +547,62 @@ struct ZapAttestationProjectionTests {
         #expect(try store.zapTotals(for: [message.id]).count == 1)
     }
 }
+
+/// Who a direct message is with, which is what decides whether the screen can
+/// offer to zap them.
+@Suite("Direct message counterpart")
+struct CounterpartTests {
+    private func store(members: [String], channel: String = "dm-1") async throws -> EventStore {
+        let store = try EventStore()
+        let relay = try Fixture(name: "Relay")
+        _ = try await store.ingest([
+            try relay.event(
+                .groupMembers,
+                tags: [["d", channel]] + members.map { ["p", $0] },
+                at: 900
+            ),
+        ])
+        return store
+    }
+
+    @Test("a two-person conversation has one other person")
+    func oneToOne() async throws {
+        let me = try Fixture(name: "Me")
+        let them = try Fixture(name: "Them")
+        let store = try await store(members: [me.pubkey, them.pubkey])
+
+        #expect(try store.counterpart(in: "dm-1", me: me.pubkey) == them.pubkey)
+    }
+
+    /// The reason this is not `members.first(where:)`. A conversation opened
+    /// before the other person has said anything still has a counterpart, and
+    /// `members(of:)` would drop them for having no profile and no messages.
+    @Test("someone who has never spoken is still the counterpart")
+    func silentCounterpart() async throws {
+        let me = try Fixture(name: "Me")
+        let them = try Fixture(name: "Them")
+        let store = try await store(members: [me.pubkey, them.pubkey])
+
+        #expect(try store.members(of: "dm-1").isEmpty)
+        #expect(try store.counterpart(in: "dm-1", me: me.pubkey) == them.pubkey)
+    }
+
+    @Test("a group conversation has no single other person")
+    func group() async throws {
+        let me = try Fixture(name: "Me")
+        let a = try Fixture(name: "A")
+        let b = try Fixture(name: "B")
+        let store = try await store(members: [me.pubkey, a.pubkey, b.pubkey])
+
+        // Nil rather than a guess: "zap them" has no meaning here, and the
+        // messages already carry a zap action apiece.
+        #expect(try store.counterpart(in: "dm-1", me: me.pubkey) == nil)
+    }
+
+    @Test("a room holding only this account has none either")
+    func alone() async throws {
+        let me = try Fixture(name: "Me")
+        let store = try await store(members: [me.pubkey])
+        #expect(try store.counterpart(in: "dm-1", me: me.pubkey) == nil)
+    }
+}

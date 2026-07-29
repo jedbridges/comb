@@ -21,6 +21,11 @@ struct ChannelTimelineView: View {
     @State private var reactingTo: TimelineRow?
     @State private var reactorsOf: ReactorsTarget?
     @State private var zappersOf: ZappersTarget?
+    /// The other person in a direct message, when there is exactly one.
+    @State private var dmCounterpart: String?
+    /// Their profile as of opening, or `.unknown` while none has been seen.
+    @State private var dmZapCapability: ProfileSummary.ZapCapability = .unknown
+    @State private var zapCounterpart: ProfileTarget?
     @FocusState private var isComposing: Bool
     @State private var isAwayFromBottom = false
     @State private var arrivalsWhileAway = 0
@@ -254,6 +259,26 @@ struct ChannelTimelineView: View {
         .navigationTitle(navigationTitle)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            // Only in a one-to-one conversation, where "zap them" has exactly
+            // one meaning. A group channel has no single other person, and its
+            // messages already carry a zap action apiece, which is the right
+            // shape when the question is who you are paying.
+            //
+            // Offered when Comb has never seen their profile as well as when it
+            // knows they take zaps: the answer is one fetch away and
+            // `ZapPresenter` makes it, so hiding the button would spend the
+            // reader's intent on nothing. Hidden only on a real no.
+            ToolbarItem(placement: .topBarTrailing) {
+                if let dmCounterpart, dmZapCapability != .no {
+                    Button {
+                        zapCounterpart = ProfileTarget(pubkey: dmCounterpart)
+                    } label: {
+                        Label("Zap", systemImage: "bolt.fill")
+                            .foregroundStyle(Palette.chrome)
+                    }
+                    .accessibilityLabel("Send a zap")
+                }
+            }
             ToolbarItem(placement: .topBarTrailing) {
                 if channel.memberCount > 0 {
                     NavigationLink {
@@ -272,6 +297,7 @@ struct ChannelTimelineView: View {
             }
         }
         .task { await model.activate() }
+        .task { resolveCounterpart() }
         .navigationDestination(item: $threadRoot) { root in
             ThreadView(session: session, channel: channel, root: root)
         }
@@ -302,6 +328,18 @@ struct ChannelTimelineView: View {
         .sheet(item: $zappersOf) { target in
             ZappersSheet(session: session, messageID: target.messageID)
         }
+        .sheet(item: $zapCounterpart) { target in
+            // No `messageID`: this zaps the person, not a line they wrote,
+            // which is the whole difference between this and the row action.
+            ZapPresenter(
+                session: session,
+                pubkey: target.pubkey,
+                lightningAddress: dmLightningAddress,
+                capability: dmZapCapability,
+                messageID: nil,
+                displayName: channel.name
+            )
+        }
         .sheet(item: $zapTarget) { entry in
             ZapPresenter(
                 session: session,
@@ -312,6 +350,30 @@ struct ChannelTimelineView: View {
                 displayName: entry.row.displayName
             )
         }
+    }
+
+    /// Their Lightning address, when a profile for them has been seen.
+    private var dmLightningAddress: String? {
+        dmCounterpart.flatMap { try? session.store.profile(pubkey: $0)?.lightningAddress }
+    }
+
+    /// Works out who a direct message is with, once.
+    ///
+    /// Both reads are local and indexed, so this is cheap enough to do on
+    /// appear and not worth observing: a conversation does not change who it is
+    /// with, and a group that gained a member stops being one-to-one, which the
+    /// nil answer already covers.
+    private func resolveCounterpart() {
+        guard channel.isDirectMessage else { return }
+        guard let other = try? session.store.counterpart(
+            in: channel.id,
+            me: session.me.hex
+        ) else { return }
+
+        dmCounterpart = other
+        // Absent is `.unknown`, not `.no`. Comb has simply never fetched them,
+        // and the presenter is what turns that into an answer.
+        dmZapCapability = (try? session.store.profile(pubkey: other))?.zapCapability ?? .unknown
     }
 
     /// Its own function rather than inline in the `ForEach`. With the zap

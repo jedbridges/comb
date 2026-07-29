@@ -369,6 +369,21 @@ struct ZapSheet: View {
     private func loadLimits() async {
         switch await session.zapLimits(toLightningAddress: lightningAddress) {
         case .limits(let low, let high, let commentLength):
+            // An endpoint can advertise a range that admits nothing. Alby
+            // returns `maxSendable: 0` for an account that is not currently
+            // taking payments, and rendering that faithfully produced "accepts
+            // 1 to 0 sats" over a grid with every amount filtered out and a
+            // dead button, which reads as Comb being broken rather than as the
+            // wallet being shut.
+            //
+            // Not folded into `unsupported`: they did set up a wallet that
+            // speaks Nostr zaps, and saying they did not would be false and
+            // would send the reader to ask them about the wrong thing.
+            guard high >= low, high > 0 else {
+                limits = .unknown
+                phase = .failed("\(recipientName)'s wallet is not accepting zaps right now.")
+                return
+            }
             limits = .known(low: low, high: high, commentLength: commentLength)
             reconcileAmount(low: low, high: high)
         case .unsupported:

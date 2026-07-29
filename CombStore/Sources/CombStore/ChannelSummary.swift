@@ -442,6 +442,27 @@ public extension EventStore {
             .sorted { $0.messageCount > $1.messageCount }
     }
 
+    /// The other person in a one-to-one conversation.
+    ///
+    /// A bare pubkey rather than a walk through `members(of:)`, which resolves
+    /// profiles and drops anyone holding neither a kind 0 nor a message here.
+    /// In a direct message the counterpart is the entire subject of the screen,
+    /// so losing them because they have not spoken yet is the wrong trade: it
+    /// is the conversation you opened before they replied.
+    ///
+    /// Nil where the question has no single answer. A group conversation has no
+    /// counterpart, and neither does a room this account is somehow alone in,
+    /// and both are better as an absent affordance than a guessed one.
+    nonisolated func counterpart(in channel: String, me: String) throws -> String? {
+        try reader.read { db in
+            let others = try String.fetchAll(db, sql: """
+                SELECT pubkey FROM channel_member
+                WHERE channel_id = ? AND pubkey <> ?
+                """, arguments: [channel, me])
+            return others.count == 1 ? others.first : nil
+        }
+    }
+
     /// Searches message text already on this device.
     ///
     /// Local-first on purpose: it answers instantly, works offline, and covers
