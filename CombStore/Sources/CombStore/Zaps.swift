@@ -132,6 +132,17 @@ public extension EventStore {
         }
     }
 
+    /// Which channel an event was posted in.
+    ///
+    /// Read from the log rather than carried down from the screen, because an
+    /// attestation is published minutes after the sheet that started it and the
+    /// screen may be long gone. The `h` column is indexed and set at ingest.
+    nonisolated func channel(ofEvent id: String) throws -> String? {
+        try reader.read { db in
+            try String.fetchOne(db, sql: "SELECT h FROM event WHERE id = ?", arguments: [id])
+        }
+    }
+
     /// The key an endpoint signs receipts with, if this reader has ever zapped
     /// them. Absent for everyone else, which is the point: learning it for a
     /// stranger would mean a request to their wallet host that the reader never

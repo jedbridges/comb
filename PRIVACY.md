@@ -41,6 +41,10 @@ To other places, which is the part worth reading closely:
   because you scrolled. The requests carry no cookies and are not cached, so
   the provider cannot link one zap to the next. Comb never sees the money and
   never holds a key to it.
+- **Confirming a zap asks the same provider, and nobody else.** Where the
+  provider supports it, Comb asks whether the invoice was paid so the zap can be
+  counted. It polls only that provider's own host, for under a minute, and only
+  after you sent a zap. A confirmation URL pointing anywhere else is ignored.
 
 ## What Comb does not do
 

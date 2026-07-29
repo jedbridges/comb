@@ -85,8 +85,10 @@ struct LNURLClientTests {
             zapRequest: zapRequest
         )
 
-        #expect(invoice == "lnbc210n1pjxyz...")
+        #expect(invoice.bolt11 == "lnbc210n1pjxyz...")
         #expect(issuer == wallet.publicKey)
+        // This callback offered no LUD-21 verify URL, which is the common case.
+        #expect(invoice.verify == nil)
 
         // The callback must carry both the amount and the signed request, or the
         // wallet cannot produce a verifiable receipt.
@@ -227,5 +229,138 @@ struct LNURLClientTests {
                 for: try #require(Zap.LightningAddress("jed@getalby.com"))
             )
         }
+    }
+}
+
+/// LUD-21 `verify`, which is how a zap paid through a `lightning:` handoff
+/// learns its own preimage. Without it, Comb hands an invoice to a wallet and
+/// never finds out what happened, and there is nothing to attest to.
+@Suite("LNURL settlement", .timeLimit(.minutes(1)), .serialized)
+struct LNURLSettlementTests {
+    /// Its own stub rather than the one next door. Both suites would otherwise
+    /// share a static and race, since Swift Testing runs separate suites in
+    /// parallel however serialized each one is internally.
+    final class Stub: URLProtocol {
+        nonisolated(unsafe) static var respond: (@Sendable (URLRequest) -> (Int, Data))?
+
+        override class func canInit(with request: URLRequest) -> Bool { true }
+        override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+        override func startLoading() {
+            let (status, body) = Self.respond?(request) ?? (500, Data())
+            guard status != 0 else {
+                client?.urlProtocol(self, didFailWithError: URLError(.cannotFindHost))
+                return
+            }
+            let response = HTTPURLResponse(
+                url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil
+            )!
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: body)
+            client?.urlProtocolDidFinishLoading(self)
+        }
+        override func stopLoading() {}
+    }
+
+    private func makeClient() -> LNURLClient {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [Stub.self]
+        return LNURLClient(session: URLSession(configuration: config))
+    }
+
+    private let verify = URL(string: "https://getalby.com/verify/abc")!
+
+    @Test("a settled invoice hands back its preimage")
+    func settled() async throws {
+        Stub.respond = { _ in
+            (200, Data(#"{"status":"OK","settled":true,"preimage":"aabb","pr":"lnbc1"}"#.utf8))
+        }
+        #expect(await makeClient().settlement(of: verify) == .settled(preimage: "aabb"))
+    }
+
+    @Test("an unpaid invoice says so rather than guessing")
+    func unsettled() async throws {
+        Stub.respond = { _ in
+            (200, Data(#"{"status":"OK","settled":false,"preimage":null,"pr":"lnbc1"}"#.utf8))
+        }
+        #expect(await makeClient().settlement(of: verify) == .unsettled)
+    }
+
+    @Test("a preimage without a settled flag is not taken as proof")
+    func preimageWithoutSettlement() async throws {
+        // The preimage is the valuable half, so a host that sends one while
+        // declining to say the invoice settled must not be read as a yes.
+        Stub.respond = { _ in
+            (200, Data(#"{"status":"OK","preimage":"aabb"}"#.utf8))
+        }
+        #expect(await makeClient().settlement(of: verify) == .unknown)
+    }
+
+    @Test("an unreachable or erroring host is unknown, never a failure")
+    func unreachable() async throws {
+        Stub.respond = { _ in (0, Data()) }
+        #expect(await makeClient().settlement(of: verify) == .unknown)
+
+        Stub.respond = { _ in (200, Data(#"{"status":"ERROR","reason":"Not found"}"#.utf8)) }
+        #expect(await makeClient().settlement(of: verify) == .unknown)
+
+        Stub.respond = { _ in (500, Data()) }
+        #expect(await makeClient().settlement(of: verify) == .unknown)
+    }
+
+    @Test("a verify URL on the callback's own host is used")
+    func sameHostAccepted() throws {
+        let callback = URL(string: "https://getalby.com/lnurlp/jed/callback")!
+        #expect(LNURLClient.verifyURL("https://getalby.com/verify/x", sameHostAs: callback)
+            == URL(string: "https://getalby.com/verify/x"))
+        // Case in the host is not a difference.
+        #expect(LNURLClient.verifyURL("https://GetAlby.com/verify/x", sameHostAs: callback) != nil)
+    }
+
+    @Test("a verify URL pointing somewhere else is refused")
+    func foreignHostRefused() throws {
+        let callback = URL(string: "https://getalby.com/lnurlp/jed/callback")!
+        // LUD-21 puts no constraint on this URL, so without the check a wallet
+        // host could name any address in the world and have Comb poll it on a
+        // timer. That is a request to a host nobody chose.
+        #expect(LNURLClient.verifyURL("https://evil.example/verify/x", sameHostAs: callback) == nil)
+        #expect(LNURLClient.verifyURL("https://getalby.com.evil.example/x", sameHostAs: callback) == nil)
+        // Plaintext is refused even on the right host.
+        #expect(LNURLClient.verifyURL("http://getalby.com/verify/x", sameHostAs: callback) == nil)
+        #expect(LNURLClient.verifyURL("not a url at all", sameHostAs: callback) == nil)
+        #expect(LNURLClient.verifyURL(nil, sameHostAs: callback) == nil)
+    }
+
+    @Test("polling gives up rather than running forever")
+    func pollingIsBounded() async throws {
+        Stub.respond = { _ in
+            (200, Data(#"{"status":"OK","settled":false,"preimage":null}"#.utf8))
+        }
+        // A payment that never settles must not leave a timer pointed at a
+        // third party's host. Short delays here so the test is not the wait.
+        let outcome = await makeClient().awaitSettlement(
+            of: verify,
+            delays: [.milliseconds(1), .milliseconds(1)]
+        )
+        #expect(outcome == .unknown)
+    }
+
+    @Test("polling keeps waiting through a blink and still reports settlement")
+    func pollingSurvivesABlink() async throws {
+        nonisolated(unsafe) var calls = 0
+        Stub.respond = { _ in
+            calls += 1
+            // Not paid, then the host blinks, then paid. One bad answer is not
+            // a reason to abandon a payment that may still be in flight.
+            switch calls {
+            case 1: return (200, Data(#"{"status":"OK","settled":false}"#.utf8))
+            case 2: return (500, Data())
+            default: return (200, Data(#"{"status":"OK","settled":true,"preimage":"ccdd"}"#.utf8))
+            }
+        }
+        let outcome = await makeClient().awaitSettlement(
+            of: verify,
+            delays: [.milliseconds(1), .milliseconds(1), .milliseconds(1)]
+        )
+        #expect(outcome == .settled(preimage: "ccdd"))
     }
 }

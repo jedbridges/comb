@@ -73,9 +73,16 @@ These are design choices, not vulnerabilities, but you should know them:
   is the one place Comb talks to a host outside the community relay, it happens
   only when you tap Zap, and the requests carry no cookies and are not cached.
   See [PRIVACY.md](PRIVACY.md).
-- **A zap total is a floor, not a balance.** It counts the receipts this device
-  has seen. Membership-gated relays do not carry receipts from wallet providers,
-  so a total may be lower than what was actually sent, and a zap Comb handed to
-  a wallet is shown as waiting rather than paid, because Comb cannot observe a
+- **A zap total is a floor, not a balance.** It counts what this device has
+  seen: kind 9735 receipts, and kind 40004 attestations. A zap that produced
+  neither is shown as waiting rather than paid, because Comb cannot observe a
   payment. Where a receipt's issuer key has never been learned, the list of
   zappers says so rather than presenting an unverified total as a verified one.
+- **An attestation proves the payment, not the payer.** A kind 40004 carries an
+  invoice and its preimage, and `sha256(preimage)` matching the invoice's
+  payment hash is settlement, checkable by anyone offline. What it does not
+  establish is who settled it: anyone holding a preimage could publish one. A
+  preimage is only learned by paying or by being paid, so the failure mode is a
+  real payment credited to the wrong sender, never an invented payment credited
+  at all. The amount comes from the invoice rather than the request, so a payer
+  cannot buy a large number cheaply, and open-amount invoices are refused.

@@ -1,4 +1,5 @@
 import CombCore
+import CryptoKit
 import Foundation
 import GRDB
 import Testing
@@ -223,8 +224,11 @@ struct ZapReceiptTests {
 
 extension EventStore {
     /// Test-side access to the aggregate the timeline observation uses.
-    nonisolated func zapTotals(for ids: [String]) throws -> [String: ZapSummary] {
-        try reader.read { db in try EventStore.fetchZaps(db, for: ids, me: nil) }
+    nonisolated func zapTotals(
+        for ids: [String],
+        me: String? = nil
+    ) throws -> [String: ZapSummary] {
+        try reader.read { db in try EventStore.fetchZaps(db, for: ids, me: me) }
     }
 }
 
@@ -351,5 +355,195 @@ struct ZapProjectionUpgradeTests {
         // And the local tables, which no rebuild may touch, are still here.
         #expect(try upgraded.cachedIssuer(for: author.pubkey) == wallet.pubkey)
         #expect(try upgraded.pendingZapAttempts().count == 1)
+    }
+}
+
+/// Sender-attested zaps: the half that works on a membership-gated relay,
+/// where no wallet's receipt can ever reach the group.
+@Suite("Zap attestations")
+struct ZapAttestationProjectionTests {
+    /// A settled invoice, and the kind 40004 that proves it.
+    private func attestation(
+        payer: Fixture,
+        recipient: Fixture,
+        amount: Int64 = 21_000,
+        target: String? = "msg-1",
+        preimage: Data = Data(repeating: 0x11, count: 32),
+        at seconds: Int64 = 1_100
+    ) async throws -> NostrEvent {
+        let request = try Zap.request(
+            amountMillisats: amount,
+            recipient: recipient.key.publicKey,
+            relays: [URL(string: "wss://relay.example")!],
+            comment: "for the good post",
+            eventID: target,
+            with: payer.key
+        )
+        return try await Zap.attestation(
+            request: request,
+            bolt11: Self.invoice(millisats: amount, preimage: preimage),
+            preimage: preimage.hex,
+            groupID: "room-1",
+            with: InMemorySigner(payer.key)
+        )
+    }
+
+    /// The same minimal encoder the CombCore attestation tests use. A payment
+    /// hash whose preimage is known cannot come from the published vectors.
+    static func invoice(millisats: Int64, preimage: Data) -> String {
+        let hash = Data(SHA256.hash(data: preimage))
+        var words: [UInt8] = []
+        let timestamp: Int64 = 1_700_000_000
+        for shift in stride(from: 30, through: 0, by: -5) {
+            words.append(UInt8((timestamp >> shift) & 0x1F))
+        }
+        words += [1, UInt8(52 >> 5), UInt8(52 & 0x1F)]
+        words += Bech32.words(fromBytes: Array(hash))
+        words += Array(repeating: 0, count: 104)
+        let amount = millisats % 100 == 0 ? "\(millisats / 100)n" : "\(millisats * 10)p"
+        return Bech32.encode(prefix: "lnbc" + amount, words: words)
+    }
+
+    private func room(_ store: EventStore, author: Fixture) async throws -> NostrEvent {
+        let message = try author.event(
+            .groupChatMessage, "worth something", tags: [["h", "room-1"]], at: 1_000
+        )
+        _ = try await store.ingest([
+            try author.event(
+                .groupMetadata, #"{"name":"General"}"#, tags: [["d", "room-1"]], at: 900
+            ),
+            message,
+        ])
+        return message
+    }
+
+    @Test("an attestation counts on the message it names")
+    func counts() async throws {
+        let store = try EventStore()
+        let author = try Fixture(name: "Ada")
+        let payer = try Fixture(name: "Bob")
+        let message = try await room(store, author: author)
+
+        _ = try await store.ingest([
+            try await attestation(payer: payer, recipient: author, target: message.id),
+        ])
+
+        let zaps = try store.zapTotals(for: [message.id], me: payer.pubkey)
+        let summary = try #require(zaps[message.id])
+        #expect(summary.totalMillisats == 21_000)
+        #expect(summary.count == 1)
+        #expect(summary.includesMe)
+    }
+
+    /// The reason `proof` is a column. An attestation carries the preimage, so
+    /// it needs no cached endpoint key; reusing the receipt rule would have
+    /// reported the better-evidenced zap as the weaker one.
+    @Test("an attestation is verified without any cached issuer key")
+    func selfProving() async throws {
+        let store = try EventStore()
+        let author = try Fixture(name: "Ada")
+        let payer = try Fixture(name: "Bob")
+        let message = try await room(store, author: author)
+
+        _ = try await store.ingest([
+            try await attestation(payer: payer, recipient: author, target: message.id),
+        ])
+
+        // Nothing has ever been written to lnurl_issuer.
+        #expect(try store.cachedIssuer(for: author.pubkey) == nil)
+
+        let zaps = try store.zapTotals(for: [message.id], me: payer.pubkey)
+        #expect(try #require(zaps[message.id]).issuersKnown)
+        #expect(try store.zappers(for: message.id).first?.issuerKnown == true)
+    }
+
+    @Test("a forged attestation is stored but never counted")
+    func forged() async throws {
+        let store = try EventStore()
+        let author = try Fixture(name: "Ada")
+        let liar = try Fixture(name: "Mallory")
+        let message = try await room(store, author: author)
+
+        // A real request, a real invoice, and a preimage that opens neither.
+        let request = try Zap.request(
+            amountMillisats: 1_000_000,
+            recipient: author.key.publicKey,
+            relays: [URL(string: "wss://relay.example")!],
+            eventID: message.id,
+            with: liar.key
+        )
+        let event = try await Zap.attestation(
+            request: request,
+            bolt11: Self.invoice(millisats: 1_000_000, preimage: Data(repeating: 0xAA, count: 32)),
+            preimage: Data(repeating: 0xBB, count: 32).hex,
+            groupID: "room-1",
+            with: InMemorySigner(liar.key)
+        )
+
+        let result = try await store.ingest([event])
+        // It passed the choke point: the event is validly signed, it just does
+        // not prove what it claims. It stays in the log like any other event.
+        #expect(result.inserted.count == 1)
+        #expect(try store.zapTotals(for: [message.id]).isEmpty)
+    }
+
+    /// The defence that matters once two sources feed one tally: an
+    /// attestation and the wallet's own receipt for the same payment.
+    @Test("one payment counts once, however many ways it is evidenced")
+    func oneInvoiceOneRow() async throws {
+        let store = try EventStore()
+        let author = try Fixture(name: "Ada")
+        let payer = try Fixture(name: "Bob")
+        let wallet = try Fixture(name: "Wallet")
+        let message = try await room(store, author: author)
+
+        let preimage = Data(repeating: 0x11, count: 32)
+        let bolt11 = Self.invoice(millisats: 21_000, preimage: preimage)
+
+        // The same request, evidenced twice: once by the payer, once by the
+        // recipient's wallet.
+        let request = try Zap.request(
+            amountMillisats: 21_000,
+            recipient: author.key.publicKey,
+            relays: [URL(string: "wss://relay.example")!],
+            eventID: message.id,
+            with: payer.key
+        )
+        let json = String(decoding: try JSONEncoder().encode(request), as: UTF8.self)
+
+        _ = try await store.ingest([
+            try await Zap.attestation(
+                request: request, bolt11: bolt11, preimage: preimage.hex,
+                groupID: "room-1", with: InMemorySigner(payer.key)
+            ),
+            try wallet.event(
+                .zapReceipt,
+                tags: [["p", author.pubkey], ["bolt11", bolt11], ["description", json]],
+                at: 1_200
+            ),
+        ])
+
+        let summary = try #require(
+            try store.zapTotals(for: [message.id])[message.id]
+        )
+        #expect(summary.count == 1)
+        #expect(summary.totalMillisats == 21_000)
+    }
+
+    @Test("attestations survive a projection rebuild unchanged")
+    func rebuild() async throws {
+        let store = try EventStore()
+        let author = try Fixture(name: "Ada")
+        let payer = try Fixture(name: "Bob")
+        let message = try await room(store, author: author)
+
+        _ = try await store.ingest([
+            try await attestation(payer: payer, recipient: author, target: message.id),
+        ])
+
+        let before = try await store.projectionSnapshot()
+        try await store.rebuildProjections()
+        #expect(try await store.projectionSnapshot() == before)
+        #expect(try store.zapTotals(for: [message.id]).count == 1)
     }
 }

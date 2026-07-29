@@ -21,6 +21,8 @@ enum Projector {
             try projectReaction(event, into: db)
         case .zapReceipt:
             try projectZap(event, into: db)
+        case .buzzZapAttestation:
+            try projectAttestation(event, into: db)
         case .deletion, .groupDeleteEvent:
             try projectDeletion(event, into: db)
         case .buzzEdit:
@@ -254,8 +256,8 @@ enum Projector {
         try db.execute(
             sql: """
                 INSERT INTO zap (event_id, request_id, target_id, sender, recipient,
-                                 issuer, amount_msats, comment, bolt11, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                 issuer, amount_msats, comment, bolt11, proof, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'receipt', ?)
                 -- Both conflicts are the same defence seen from two sides: the
                 -- same receipt arriving twice, and a genuine receipt
                 -- republished under a fresh id to be counted again.
@@ -271,6 +273,53 @@ enum Projector {
                 receipt.amountMillisats,
                 receipt.comment,
                 receipt.bolt11,
+                event.createdAt,
+            ]
+        )
+    }
+
+    /// Records a zap the payer proved, into the same table a receipt lands in.
+    ///
+    /// One tally, two sources. A message does not care which way its sats were
+    /// evidenced, and keeping them apart would mean every read doing a union
+    /// and every total being two numbers that have to be added correctly in
+    /// more than one place.
+    ///
+    /// Unlike a receipt, this one is checked completely here. An attestation's
+    /// proof is its preimage, which is settled forever and needs no network, so
+    /// nothing is left for read time to ask. That is why `proof` exists as a
+    /// column: a receipt's trust depends on an issuer key that may not be
+    /// cached, an attestation's does not depend on anything, and a read that
+    /// could not tell them apart would have to report the better-evidenced of
+    /// the two as the less.
+    ///
+    /// `issuer` is the payer's own key, because they are who signed this claim.
+    /// It is not compared against `lnurl_issuer`, and must not be: no LNURL
+    /// endpoint issued this.
+    ///
+    /// The unique index on bolt11 is what stops a zap being counted twice when
+    /// both an attestation and a real receipt arrive for the same payment. One
+    /// invoice, one row, whichever gets there first.
+    private static func projectAttestation(_ event: NostrEvent, into db: Database) throws {
+        guard let attested = try? Zap.verifyAttestation(event) else { return }
+
+        try db.execute(
+            sql: """
+                INSERT INTO zap (event_id, request_id, target_id, sender, recipient,
+                                 issuer, amount_msats, comment, bolt11, proof, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'attestation', ?)
+                ON CONFLICT DO NOTHING
+                """,
+            arguments: [
+                attested.attestationID,
+                attested.requestID,
+                attested.targetEventID,
+                attested.sender.hex,
+                attested.recipient,
+                attested.sender.hex,
+                attested.amountMillisats,
+                attested.comment,
+                attested.bolt11,
                 event.createdAt,
             ]
         )

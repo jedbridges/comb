@@ -551,10 +551,15 @@ public extension EventStore {
                    SUM(amount_msats) AS total,
                    COUNT(*)          AS n,
                    MAX(sender = ?)   AS mine,
-                   -- MIN over a boolean: true only when every receipt in the
-                   -- tally was signed by a key we hold for its recipient.
-                   MIN(issuer = (SELECT i.issuer_pubkey FROM lnurl_issuer i
-                                  WHERE i.pubkey = zap.recipient))
+                   -- MIN over a boolean: true only when every zap in the tally
+                   -- is one this device can actually stand behind. An
+                   -- attestation always is, because it carries the preimage.
+                   -- A receipt only is when we hold the key its recipient's
+                   -- endpoint advertises, which is the case exactly when this
+                   -- reader has zapped them before.
+                   MIN(zap.proof = 'attestation'
+                       OR issuer = (SELECT i.issuer_pubkey FROM lnurl_issuer i
+                                     WHERE i.pubkey = zap.recipient))
                                      AS issuers_known
             FROM zap
             WHERE target_id IN (\(placeholders))
@@ -591,8 +596,9 @@ public extension EventStore {
                        z.created_at AS created_at,
                        p.display_name AS display_name,
                        p.picture AS picture,
-                       (z.issuer = (SELECT i.issuer_pubkey FROM lnurl_issuer i
-                                     WHERE i.pubkey = z.recipient)) AS issuer_known
+                       (z.proof = 'attestation'
+                        OR z.issuer = (SELECT i.issuer_pubkey FROM lnurl_issuer i
+                                        WHERE i.pubkey = z.recipient)) AS issuer_known
                 FROM zap z
                 LEFT JOIN profile p ON p.pubkey = z.sender
                 WHERE z.target_id = :target

@@ -238,7 +238,7 @@ public enum Zap {
     /// is somebody else's word about a payment and is only as good as the key
     /// that signed it, while an attestation carries the preimage and is
     /// checkable by anyone with no third party in the answer.
-    struct Attestation: Equatable, Sendable {
+    public struct Attestation: Equatable, Sendable {
         public let amountMillisats: Int64
         public let sender: PublicKey
         public let recipient: String
@@ -252,7 +252,7 @@ public enum Zap {
         public let preimage: String
     }
 
-    enum AttestationError: Error, Equatable {
+    public enum AttestationError: Error, Equatable {
         case notAnAttestation
         /// The event's own signature does not verify.
         case badSignature
@@ -288,7 +288,7 @@ public enum Zap {
     /// not a hole worth closing: a preimage is only learned by paying or by
     /// being paid, and the failure mode is that a real payment is credited to
     /// the wrong sender, not that an imaginary one is credited at all.
-    static func verifyAttestation(_ event: NostrEvent) throws -> Attestation {
+    public static func verifyAttestation(_ event: NostrEvent) throws -> Attestation {
         guard event.kind == .buzzZapAttestation else { throw AttestationError.notAnAttestation }
         guard event.isValid else { throw AttestationError.badSignature }
 
@@ -365,7 +365,7 @@ public enum Zap {
     /// `groupID` is what makes this a group event: it is h-tagged like a
     /// message, so a membership-gated relay accepts it from a member, which is
     /// the entire reason this kind exists.
-    static func attestation(
+    public static func attestation(
         request: NostrEvent,
         bolt11: String,
         preimage: String,

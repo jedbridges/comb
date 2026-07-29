@@ -15,7 +15,7 @@ import GRDB
 enum Schema {
     /// Bump when any projection's shape or meaning changes. On next open, every
     /// projection table is dropped and replayed from `event`.
-    static let projectionVersion = 8
+    static let projectionVersion = 9
 
     static var migrator: DatabaseMigrator {
         var migrator = DatabaseMigrator()
@@ -301,6 +301,17 @@ enum Schema {
                 amount_msats INTEGER NOT NULL,
                 comment      TEXT NOT NULL,
                 bolt11       TEXT NOT NULL,
+                -- How the payment was evidenced: 'receipt' for a kind 9735 the
+                -- recipient's wallet signed, 'attestation' for a kind 40004 the
+                -- payer proved with the invoice's preimage.
+                --
+                -- A column rather than something a read infers, because the two
+                -- are trusted differently and in opposite directions. A
+                -- receipt is only as good as the issuer key, which this device
+                -- usually does not hold; an attestation carries its own proof
+                -- and needs nothing. Without this the better-evidenced of the
+                -- two would be reported as the weaker.
+                proof        TEXT NOT NULL,
                 created_at   INTEGER NOT NULL
             )
             """)

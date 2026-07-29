@@ -28,7 +28,7 @@ actor CommunitySession {
     /// subscription can never drift apart.
     private static let contentKinds: [EventKind] = [
         .groupChatMessage, .reaction, .deletion, .groupDeleteEvent,
-        .buzzEdit, .buzzRichContent,
+        .buzzEdit, .buzzRichContent, .buzzZapAttestation,
     ]
     private static let stateKinds: [EventKind] = [
         .metadata, .groupMetadata, .groupMembers,
@@ -948,6 +948,16 @@ actor CommunitySession {
         public let recipient: String
         public let issuer: String
         public let amountMillisats: Int64
+        /// LUD-21, where the host will say whether this invoice was paid.
+        ///
+        /// Nil on most hosts, since plenty do not implement it. Where it is
+        /// present it is the only way a `lightning:` handoff ever learns its
+        /// own preimage, and without a preimage there is nothing to attest to.
+        public let verify: URL?
+        /// The signed kind 9734, kept because an attestation has to embed the
+        /// same one the invoice was requested for. Rebuilding it later would
+        /// produce a different event id and a different signature.
+        public let request: NostrEvent
     }
 
     public enum ZapPreparation {
@@ -988,12 +998,14 @@ actor CommunitySession {
                 zapRequest: request
             )
             return .prepared(PreparedZap(
-                invoice: invoice,
+                invoice: invoice.bolt11,
                 requestID: request.id,
                 targetID: messageID,
                 recipient: recipient.hex,
                 issuer: issuer.hex,
-                amountMillisats: amountSats * 1000
+                amountMillisats: amountSats * 1000,
+                verify: invoice.verify,
+                request: request
             ))
         } catch let failure as LNURLClient.Failure {
             guard let message = Self.describe(failure, host: address.host) else {
@@ -1025,12 +1037,13 @@ actor CommunitySession {
         return (try? await store.ingest(events)) != nil
     }
 
-    /// Remembers that an invoice reached a wallet.
+    /// Remembers that an invoice reached a wallet, and starts watching for it
+    /// to settle.
     ///
     /// Called after the OS confirms a wallet took the `lightning:` link, not
     /// when the invoice was made: an invoice nobody opened is not an attempt at
     /// anything. Even then this records only that the handoff happened. Whether
-    /// the payment went through is a question only a receipt answers.
+    /// the payment went through is a question only a preimage answers.
     func recordZapHandoff(_ zap: PreparedZap) async {
         do {
             try await store.recordZapAttempt(
@@ -1044,6 +1057,52 @@ actor CommunitySession {
             // A missing pending marker is a worse-looking zap, not a failed one.
             // The payment is already in the wallet's hands either way.
         }
+
+        await attest(zap)
+    }
+
+    /// Turns a settled invoice into an attestation the group can verify.
+    ///
+    /// Only reachable where the host implements LUD-21. Without a verify URL
+    /// there is no way for a `lightning:` handoff to learn its own preimage,
+    /// so the zap stays a pending marker until it expires, which is what
+    /// happens today for every zap.
+    ///
+    /// Every failure here is silent and costs only the tally. The payment
+    /// happened or it did not, entirely between the reader's wallet and the
+    /// recipient's, and an error about bookkeeping would be Comb claiming a
+    /// part in something it had no part in.
+    private func attest(_ zap: PreparedZap) async {
+        guard let verify = zap.verify, let channel = zap.targetID.flatMap(channelOf) else { return }
+
+        guard case .settled(let preimage) = await LNURLClient().awaitSettlement(of: verify) else {
+            return
+        }
+
+        do {
+            let attestation = try await Zap.attestation(
+                request: zap.request,
+                bolt11: zap.invoice,
+                preimage: preimage,
+                groupID: channel,
+                with: signer
+            )
+            // Verified before publishing, against the same function every other
+            // client will run. Publishing an attestation that does not check
+            // out would put a claim in the log that every reader silently
+            // drops, which looks exactly like the payment never happening.
+            _ = try Zap.verifyAttestation(attestation)
+
+            _ = try await relay.publish(attestation)
+            _ = try await store.ingest([attestation])
+        } catch {
+            // Left as a pending marker, which then expires. Honest either way.
+        }
+    }
+
+    /// The channel a message was posted in, read from the log.
+    private nonisolated func channelOf(_ messageID: String) -> String? {
+        try? store.channel(ofEvent: messageID)
     }
 
     /// What the recipient's endpoint will actually accept.
