@@ -55,11 +55,18 @@ struct ZapSheet: View {
 
     /// The customary sat amounts. 21 is the Nostr default and the sensible
     /// starting selection.
-    private static let customary: [Int64] = [21, 100, 500, 1000, 5000, 21000]
+    ///
+    /// Five, not six. With "Other" the grid is exactly two rows of three, and a
+    /// third row holding one amount and one escape hatch made the picker the
+    /// tallest thing on a sheet whose job is one tap. 21,000 is the one that
+    /// went: it is two orders of magnitude past 5,000, so it sat next to
+    /// visually identical chips worth a thousandth as much, and anyone sending
+    /// that much has a reason and will use "Other" to name it.
+    private static let customary: [Int64] = [21, 100, 500, 1000, 5000]
 
     /// The customary amounts this recipient can actually be sent. An endpoint
-    /// with a floor above 21000 sats used to leave every chip unpayable with no
-    /// way to reach a working number.
+    /// with a floor above every preset used to leave every chip unpayable with
+    /// no way to reach a working number.
     private var presets: [Int64] {
         guard case .known(let low, let high, _) = limits else { return Self.customary }
         return Self.customary.filter { $0 * 1000 >= low && $0 * 1000 <= high }
