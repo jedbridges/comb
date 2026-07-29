@@ -40,10 +40,17 @@ struct CommunitySessionTests {
         await rig.session.stop()
     }
 
-    /// The verification choke point, reached the way a hostile relay would
-    /// reach it, rather than by calling `ingest` directly.
-    @Test("a message whose signature does not check is not stored")
-    func forgedMessageIsRejected() async throws {
+    /// The first half of the verification choke point: the id is a hash over
+    /// the event's own contents, so changing the content breaks it.
+    ///
+    /// Named for what it covers rather than for what it looks like. An earlier
+    /// version of this called itself a signature test and was not one: an event
+    /// whose content changed is refused by the id check on the line before, and
+    /// `isValid` begins with that same check, so the signature was never
+    /// consulted. Deleting the entire signature guard from `ingest` left this
+    /// case green. `signedByTheWrongKeyIsRejected` is the one that covers it.
+    @Test("a message whose content changed after signing is not stored")
+    func rewrittenMessageIsRejected() async throws {
         let rig = try await Rig()
 
         let author = try PrivateKey()
@@ -83,6 +90,111 @@ struct CommunitySessionTests {
         let stored = try rig.store.timeline(channel: Rig.channel)
         #expect(stored.count == 1)
         #expect(stored.first?.content == "honest")
+
+        await rig.session.stop()
+    }
+
+    /// What the session asks the relay for, as opposed to what it does with
+    /// the answer.
+    ///
+    /// The scripted transport routes by subscription id and evaluates no
+    /// filters, so it will hand back anything pushed at it regardless of what
+    /// was requested: drop `.groupChatMessage` from the session's bootstrap
+    /// kinds and every other case here still passes. `BuzzFake` answers a REQ
+    /// with what the filters actually match, so this is the case that notices.
+    @Test("the bootstrap query asks for the kinds the app renders")
+    func bootstrapAsksForChatMessages() async throws {
+        let relay = try BuzzFake()
+        let key = try PrivateKey()
+        let store = try EventStore()
+
+        // History that predates the connection, which is what a bootstrap
+        // query is for. Seeded rather than published, because the subject here
+        // is the read path.
+        let author = try PrivateKey()
+        await relay.seed(group: BuzzFake.Group(
+            id: Rig.channel,
+            name: "Contract",
+            members: [key.publicKey.hex, author.publicKey.hex]
+        ))
+        await relay.seed(events: [
+            try NostrEvent.signed(
+                kind: .groupChatMessage,
+                content: "said before we arrived",
+                tags: [["h", Rig.channel]],
+                with: author
+            ),
+        ])
+
+        let session = try CommunitySession(
+            url: URL(string: "wss://fake.communities.buzz.xyz")!,
+            key: key,
+            store: store,
+            transport: relay
+        )
+        try await session.start()
+
+        let stored = try store.timeline(channel: Rig.channel)
+        #expect(stored.map(\.content) == ["said before we arrived"])
+        await session.stop()
+    }
+
+    /// The second half of the choke point, and the half that had no cover: an
+    /// event whose id is a correct hash of its own contents, carrying a
+    /// signature that is not over that id.
+    ///
+    /// This is what a relay swapping one member's message for another's
+    /// produces, and it is the only shape that reaches the signature guard at
+    /// all, because everything cruder is caught by the id check first.
+    @Test("a message signed by the wrong key is not stored")
+    func signedByTheWrongKeyIsRejected() async throws {
+        let rig = try await Rig()
+
+        let author = try PrivateKey()
+        let honest = try NostrEvent.signed(
+            kind: .groupChatMessage,
+            content: "honest",
+            tags: [["h", Rig.channel]],
+            with: author
+        )
+        // A second, genuinely signed event, so the signature we borrow is a
+        // real one over a different message rather than random bytes.
+        let elsewhere = try NostrEvent.signed(
+            kind: .groupChatMessage,
+            content: "signed over something else",
+            tags: [["h", Rig.channel]],
+            with: author
+        )
+        let forged = NostrEvent(
+            id: honest.id,
+            pubkey: honest.pubkey,
+            createdAt: honest.createdAt,
+            kind: honest.kind,
+            tags: honest.tags,
+            content: honest.content,
+            sig: elsewhere.sig
+        )
+        // The id checks out, which is the whole point: this one gets past the
+        // guard that catches a rewritten message.
+        #expect(forged.hasValidID)
+        #expect(!forged.isValid)
+
+        try await rig.transport.push(event: forged, subscription: rig.liveSubscription)
+
+        let arrives = try NostrEvent.signed(
+            kind: .groupChatMessage,
+            content: "properly signed",
+            tags: [["h", Rig.channel]],
+            with: author
+        )
+        try await rig.transport.push(event: arrives, subscription: rig.liveSubscription)
+        try await waitUntil("the properly signed message to be stored") {
+            ((try? rig.store.timeline(channel: Rig.channel)) ?? []).count >= 1
+        }
+
+        let stored = try rig.store.timeline(channel: Rig.channel)
+        #expect(stored.count == 1)
+        #expect(stored.first?.content == "properly signed")
 
         await rig.session.stop()
     }
