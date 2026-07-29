@@ -99,7 +99,7 @@ struct CommunitySessionTests {
 
         init() async throws {
             let transport = MockTransport()
-            await transport.setBehaviour(Behaviour.cooperative())
+            await transport.setBehaviour(TransportFixture.answersEverything())
             let store = try EventStore()
             let session = try CommunitySession(
                 url: URL(string: "wss://relay.test.invalid")!,

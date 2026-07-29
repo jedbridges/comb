@@ -158,7 +158,7 @@ struct FilterValidationTests {
 struct SubscriptionTests {
     @Test("routes events to the sink and reports end of stored events")
     func routesEvents() async throws {
-        let harness = try await Harness(behaviour: Behaviour.cooperative(onReq: { _, _ in }))
+        let harness = try await Harness(behaviour: TransportFixture.answersEverything(onReq: { _, _ in }))
         try await harness.connect()
 
         let id = try await harness.session.subscribe(
@@ -221,7 +221,7 @@ struct SubscriptionTests {
         // with an unbounded one for ephemerals. Typing indicators were wired end
         // to end but never arrived, because the ephemeral kind was in neither
         // list on the single filter that existed. One REQ, both filters.
-        let harness = try await Harness(behaviour: Behaviour.cooperative(onReq: { _, _ in }))
+        let harness = try await Harness(behaviour: TransportFixture.answersEverything(onReq: { _, _ in }))
         try await harness.connect()
 
         var stored = Filter(kinds: [.groupChatMessage])
@@ -262,7 +262,7 @@ struct QueryTests {
             )
         }
 
-        let harness = try await Harness(behaviour: Behaviour.cooperative(onReq: { id, transport in
+        let harness = try await Harness(behaviour: TransportFixture.answersEverything(onReq: { id, transport in
             for event in events { try? await transport.push(event: event, subscription: id) }
             await transport.push("[\"EOSE\",\"\(id)\"]")
         }))
@@ -281,7 +281,7 @@ struct QueryTests {
         let key = try PrivateKey()
         let event = try NostrEvent.signed(kind: .groupMetadata, content: "{}", with: key)
 
-        let harness = try await Harness(behaviour: Behaviour.cooperative(onReq: { id, transport in
+        let harness = try await Harness(behaviour: TransportFixture.answersEverything(onReq: { id, transport in
             try? await transport.push(event: event, subscription: id)
             await transport.push("[\"EOSE\",\"\(id)\"]")
         }))
@@ -293,7 +293,7 @@ struct QueryTests {
 
     @Test("fails when the relay closes the query")
     func failsOnClosed() async throws {
-        let harness = try await Harness(behaviour: Behaviour.cooperative(onReq: { id, transport in
+        let harness = try await Harness(behaviour: TransportFixture.answersEverything(onReq: { id, transport in
             await transport.push("[\"CLOSED\",\"\(id)\",\"error: too many filters\"]")
         }))
         try await harness.connect()
@@ -307,7 +307,7 @@ struct QueryTests {
     func timesOut() async throws {
         // A relay that accepts a REQ and never sends EOSE would otherwise leave
         // the caller hanging with no way to recover.
-        let harness = try await Harness(behaviour: Behaviour.cooperative(onReq: { _, _ in }))
+        let harness = try await Harness(behaviour: TransportFixture.answersEverything(onReq: { _, _ in }))
         try await harness.connect()
 
         await #expect(throws: RelayError.timedOut) {
@@ -468,7 +468,7 @@ struct RecoveryTests {
 
     @Test("reconnects and resubscribes from just before the last event seen")
     func resubscribesWithSince() async throws {
-        let harness = try await Harness(behaviour: Behaviour.cooperative(onReq: { _, _ in }))
+        let harness = try await Harness(behaviour: TransportFixture.answersEverything(onReq: { _, _ in }))
         try await harness.connect()
 
         let id = try await harness.session.subscribe(
@@ -549,7 +549,7 @@ struct RecoveryTests {
         // The whole point of a deliberate close: iOS kills the socket on the
         // way to the background anyway, and letting that surface as a read
         // error sends the reconnect loop into a backoff nobody is awake for.
-        let harness = try await Harness(behaviour: Behaviour.cooperative(onReq: { _, _ in }))
+        let harness = try await Harness(behaviour: TransportFixture.answersEverything(onReq: { _, _ in }))
         try await harness.connect()
         try await harness.session.subscribe([Filter(kinds: [.groupChatMessage])])
 
@@ -564,7 +564,7 @@ struct RecoveryTests {
 
     @Test("resuming replays every subscription from the last event seen")
     func resumeReplays() async throws {
-        let harness = try await Harness(behaviour: Behaviour.cooperative(onReq: { _, _ in }))
+        let harness = try await Harness(behaviour: TransportFixture.answersEverything(onReq: { _, _ in }))
         try await harness.connect()
 
         let id = try await harness.session.subscribe(
@@ -606,7 +606,7 @@ struct RecoveryTests {
         // The suspend flag is what stops the read loop recovering on its own.
         // Left set after a resume, the next genuine drop would be read as
         // deliberate and the app would sit offline forever.
-        let harness = try await Harness(behaviour: Behaviour.cooperative(onReq: { _, _ in }))
+        let harness = try await Harness(behaviour: TransportFixture.answersEverything(onReq: { _, _ in }))
         try await harness.connect()
         try await harness.session.subscribe([Filter(kinds: [.groupChatMessage])])
 

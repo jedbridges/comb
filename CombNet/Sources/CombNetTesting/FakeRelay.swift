@@ -197,12 +197,19 @@ public actor RecordingSink: EventSink {
     }
 }
 
-// MARK: - Behaviours
+// MARK: - Transport fixtures
 
-public enum Behaviour {
-    /// A relay that authenticates anyone and answers every REQ with an
-    /// immediate EOSE. The common case.
-    public static func cooperative(
+/// Canned answers for tests whose subject is the transport, not the protocol.
+///
+/// This used to be called `Behaviour.cooperative`, which flattered it. It
+/// authenticates anyone, accepts anything, and evaluates no filters, so it can
+/// prove a reconnect resubscribes and a backoff backs off, and it cannot prove
+/// anything at all about relay rules: a client that stopped sending `h` tags
+/// would pass against it. `BuzzFake` is the conformance target. Reach for this
+/// one only when the relay's answer is irrelevant to what is being tested.
+public enum TransportFixture {
+    /// Says yes to everything and EOSEs every REQ immediately.
+    public static func answersEverything(
         onReq: (@Sendable (String, MockTransport) async -> Void)? = nil
     ) -> @Sendable (RelayRequest, MockTransport) async -> Void {
         { request, transport in
@@ -259,7 +266,7 @@ public struct Harness: Sendable {
     public let url = URL(string: "wss://designers.communities.buzz.xyz")!
 
     public init(
-        behaviour: (@Sendable (RelayRequest, MockTransport) async -> Void)? = Behaviour.cooperative(),
+        behaviour: (@Sendable (RelayRequest, MockTransport) async -> Void)? = TransportFixture.answersEverything(),
         policy: ReconnectPolicy = ReconnectPolicy(base: .milliseconds(1), cap: .milliseconds(1))
     ) async throws {
         transport = MockTransport()
