@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 /// Lightning zaps (NIP-57): sending sats to another member and proving it.
@@ -225,6 +226,169 @@ public enum Zap {
             requestID: request.id,
             issuer: receipt.pubkey,
             bolt11: bolt11
+        )
+    }
+
+    // MARK: - Sender attestation (kind 40004)
+
+    /// A payment the payer proved, rather than one a wallet vouched for.
+    ///
+    /// Same facts a `Receipt` carries, reached a different way, so both can
+    /// project into one tally. The difference worth keeping in mind: a receipt
+    /// is somebody else's word about a payment and is only as good as the key
+    /// that signed it, while an attestation carries the preimage and is
+    /// checkable by anyone with no third party in the answer.
+    struct Attestation: Equatable, Sendable {
+        public let amountMillisats: Int64
+        public let sender: PublicKey
+        public let recipient: String
+        public let targetEventID: String?
+        public let comment: String
+        public let attestationID: String
+        public let requestID: String
+        public let bolt11: String
+        /// Kept rather than discarded once checked, so a reader can recheck it
+        /// without trusting that this code did.
+        public let preimage: String
+    }
+
+    enum AttestationError: Error, Equatable {
+        case notAnAttestation
+        /// The event's own signature does not verify.
+        case badSignature
+        case missingBolt11
+        case missingPreimage
+        case undecodableInvoice
+        /// The preimage does not hash to the invoice's payment hash. This is
+        /// the case that means "no payment was proved".
+        case preimageMismatch
+        /// An open-amount invoice. It proves a payment of an unknown size,
+        /// which is not proof of the payment being claimed.
+        case openAmountInvoice
+        case missingRequest
+        case requestInvalid
+        /// Signed by somebody other than the person who signed the request.
+        case notTheSender
+        case recipientMismatch
+        case targetMismatch
+        case amountMismatch
+    }
+
+    /// Checks an attestation completely, using nothing but the event.
+    ///
+    /// Every question this answers is settled offline and settled forever,
+    /// unlike a receipt, whose issuer check needs the recipient's endpoint and
+    /// can change when they move wallet provider. So this can run at write time
+    /// in a projector and still leave a rebuild reproducible.
+    ///
+    /// What it establishes, precisely: an invoice for this amount, to this
+    /// recipient, for this message was settled, and the person claiming it is
+    /// the same person who signed the request. What it does not establish is
+    /// *who* settled it. Anyone holding a preimage can publish this. That is
+    /// not a hole worth closing: a preimage is only learned by paying or by
+    /// being paid, and the failure mode is that a real payment is credited to
+    /// the wrong sender, not that an imaginary one is credited at all.
+    static func verifyAttestation(_ event: NostrEvent) throws -> Attestation {
+        guard event.kind == .buzzZapAttestation else { throw AttestationError.notAnAttestation }
+        guard event.isValid else { throw AttestationError.badSignature }
+
+        guard let bolt11 = event.firstValue(for: "bolt11") else {
+            throw AttestationError.missingBolt11
+        }
+        guard let preimageHex = event.firstValue(for: "preimage"),
+              let preimage = Hex.decode(preimageHex)
+        else { throw AttestationError.missingPreimage }
+
+        guard let invoice = try? Bolt11.decode(bolt11) else {
+            throw AttestationError.undecodableInvoice
+        }
+
+        // Settlement, and the only part of this that is about money rather than
+        // about consistency. A preimage is revealed when an invoice is paid and
+        // at no other time.
+        guard Data(SHA256.hash(data: preimage)) == invoice.paymentHash else {
+            throw AttestationError.preimageMismatch
+        }
+
+        guard let invoiceAmount = invoice.amountMillisats else {
+            throw AttestationError.openAmountInvoice
+        }
+
+        // The same embedded request a 9735 carries, in the same place, so a
+        // reader that already understands receipts is looking at a familiar
+        // shape. Its signature is what makes the amount, recipient and target
+        // unforgeable by anyone republishing this.
+        guard let requestJSON = event.firstValue(for: "description"),
+              let requestData = requestJSON.data(using: .utf8),
+              let request = try? JSONDecoder().decode(NostrEvent.self, from: requestData)
+        else { throw AttestationError.missingRequest }
+
+        guard request.kind == .zapRequest, request.isValid, let sender = request.author else {
+            throw AttestationError.requestInvalid
+        }
+
+        // The payer attests to their own payment and nobody else's. Without
+        // this, any member could wrap somebody else's request and preimage and
+        // publish it as a zap they had sent.
+        guard request.pubkey == event.pubkey else { throw AttestationError.notTheSender }
+
+        guard let requestRecipient = request.firstValue(for: "p"),
+              event.firstValue(for: "p") == requestRecipient
+        else { throw AttestationError.recipientMismatch }
+
+        guard event.firstValue(for: "e") == request.firstValue(for: "e") else {
+            throw AttestationError.targetMismatch
+        }
+
+        // The invoice is the thing that was actually paid, so it decides the
+        // amount. A request asking for more than the invoice charged would
+        // otherwise let a payer buy a large number cheaply.
+        guard let requested = request.firstValue(for: "amount").flatMap({ Int64($0) }),
+              requested == invoiceAmount
+        else { throw AttestationError.amountMismatch }
+
+        return Attestation(
+            amountMillisats: invoiceAmount,
+            sender: sender,
+            recipient: requestRecipient,
+            targetEventID: request.firstValue(for: "e"),
+            comment: request.content,
+            attestationID: event.id,
+            requestID: request.id,
+            bolt11: bolt11,
+            preimage: preimageHex
+        )
+    }
+
+    /// Builds the attestation to publish once a payment is settled.
+    ///
+    /// `groupID` is what makes this a group event: it is h-tagged like a
+    /// message, so a membership-gated relay accepts it from a member, which is
+    /// the entire reason this kind exists.
+    static func attestation(
+        request: NostrEvent,
+        bolt11: String,
+        preimage: String,
+        groupID: String,
+        with signer: any EventSigner
+    ) async throws -> NostrEvent {
+        var tags: [[String]] = [
+            ["h", groupID],
+            ["bolt11", bolt11],
+            ["preimage", preimage],
+            ["description", try String(decoding: JSONEncoder().encode(request), as: UTF8.self)],
+        ]
+        if let recipient = request.firstValue(for: "p") {
+            tags.append(["p", recipient])
+        }
+        if let target = request.firstValue(for: "e") {
+            tags.append(["e", target])
+        }
+
+        return try await signer.sign(
+            kind: .buzzZapAttestation,
+            content: "",
+            tags: tags
         )
     }
 }

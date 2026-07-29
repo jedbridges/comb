@@ -23,17 +23,44 @@ public enum Bech32 {
     // MARK: - Generic encode / decode
 
     public static func encode(prefix: String, data: Data) -> String {
-        let words = convertBits(Array(data), from: 8, to: 5, pad: true) ?? []
+        encode(prefix: prefix, words: words(fromBytes: Array(data)))
+    }
+
+    /// Encodes 5-bit words directly, for payloads whose length is not a whole
+    /// number of bytes. The inverse of `decodeWords`.
+    public static func encode(prefix: String, words: [UInt8]) -> String {
         let checksum = createChecksum(prefix: prefix, words: words)
         let payload = (words + checksum).map { charset[Int($0)] }
         return prefix + "1" + String(payload)
     }
 
+    /// Regroups bytes into 5-bit words, zero-padding the last one.
+    public static func words(fromBytes bytes: [UInt8]) -> [UInt8] {
+        convertBits(bytes, from: 8, to: 5, pad: true) ?? []
+    }
+
     public static func decode(_ string: String) throws -> (prefix: String, data: Data) {
+        let (prefix, words) = try decodeWords(string)
+        guard let bytes = convertBits(words, from: 5, to: 8, pad: false) else {
+            throw Error.invalidChecksum
+        }
+        return (prefix, Data(bytes))
+    }
+
+    /// The raw 5-bit words of a bech32 string, checksum verified and with the
+    /// checksum stripped.
+    ///
+    /// BOLT-11 needs these rather than bytes. Its data part is a run of tagged
+    /// fields aligned to 5 bits whose total is not a whole number of bytes, so
+    /// regrouping to 8 bits up front would both destroy the field boundaries
+    /// and fail the padding check on the way.
+    public static func decodeWords(_ string: String) throws -> (prefix: String, words: [UInt8]) {
         let lower = string.lowercased()
         let upper = string.uppercased()
         guard string == lower || string == upper else { throw Error.mixedCase }
 
+        // Last, not first: the separator is the final "1", and "1" is not in
+        // the charset, so nothing after it can be one.
         guard let separator = lower.lastIndex(of: "1") else { throw Error.missingSeparator }
 
         let prefix = String(lower[lower.startIndex..<separator])
@@ -48,12 +75,15 @@ public enum Bech32 {
         }
 
         guard verifyChecksum(prefix: prefix, words: words) else { throw Error.invalidChecksum }
+        return (prefix, Array(words.dropLast(checksumLength)))
+    }
 
-        let payloadWords = Array(words.dropLast(checksumLength))
-        guard let bytes = convertBits(payloadWords, from: 5, to: 8, pad: false) else {
-            throw Error.invalidChecksum
-        }
-        return (prefix, Data(bytes))
+    /// Regroups 5-bit words back into bytes, rejecting non-zero padding.
+    ///
+    /// Nil rather than throwing, because every caller so far is already
+    /// deciding what a malformed field means in its own vocabulary.
+    public static func bytes(fromWords words: [UInt8]) -> [UInt8]? {
+        convertBits(words, from: 5, to: 8, pad: false)
     }
 
     // MARK: - NIP-19 convenience

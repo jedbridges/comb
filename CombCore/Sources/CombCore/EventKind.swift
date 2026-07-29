@@ -69,6 +69,23 @@ public struct EventKind: RawRepresentable, Hashable, Codable, Sendable, Expressi
     public static let buzzTyping: EventKind = 20002        // ephemeral
     public static let buzzRichContent: EventKind = 40002
     public static let buzzEdit: EventKind = 40003
+
+    /// A zap the payer proved themselves, published into the group.
+    ///
+    /// Exists because standard NIP-57 cannot work on a membership-gated relay.
+    /// A kind 9735 is published by the recipient's LNURL host, and that host is
+    /// not a member, so it can never reach a hosted Buzz relay: the receipt is
+    /// refused and the zap is invisible to everyone including the person paid.
+    ///
+    /// So the payer publishes the proof instead. The event carries the invoice
+    /// and its preimage, and `sha256(preimage) == payment_hash` is settlement,
+    /// checkable by anyone offline with no third party involved. Verified by
+    /// `Zap.verifyAttestation`.
+    ///
+    /// A client that does not know this kind sees nothing, which is the
+    /// fallback the extension rule requires: zaps still work, they just are not
+    /// counted, exactly as they are not counted today.
+    public static let buzzZapAttestation: EventKind = 40004
     public static let buzzMemberAdded: EventKind = 44100   // relay-signed notification
     public static let buzzMemberRemoved: EventKind = 44101
 
@@ -86,7 +103,8 @@ public struct EventKind: RawRepresentable, Hashable, Codable, Sendable, Expressi
         switch self {
         case .buzzMemberAdd, .buzzMemberRemove, .buzzRoleChange, .buzzWorkspaceProfile,
              .buzzMembershipList, .buzzPresence, .buzzTyping, .buzzRichContent,
-             .buzzEdit, .buzzMemberAdded, .buzzMemberRemoved, .buzzOpenDirectMessage:
+             .buzzEdit, .buzzZapAttestation, .buzzMemberAdded, .buzzMemberRemoved,
+             .buzzOpenDirectMessage:
             true
         default:
             false
