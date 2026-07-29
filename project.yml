@@ -101,6 +101,23 @@ targets:
       - package: CombNet
         product: CombNetTesting
 
+  # Nothing static catches an inert DismissAction: it compiles, it is called,
+  # it returns, and the screen does not change. Only driving the real
+  # navigation stack catches that class of defect, which is why this target
+  # exists despite being the slowest thing in the repository.
+  #
+  # It shares AccessibilityIdentifiers.swift with the app rather than repeating
+  # its strings, because a UI test runs in another process and cannot import
+  # the app it drives.
+  CombUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: CombUITests
+      - path: Comb/App/AccessibilityIdentifiers.swift
+    dependencies:
+      - target: Comb
+
 schemes:
   Comb:
     build:
@@ -113,5 +130,6 @@ schemes:
       gatherCoverageData: true
       targets:
         - CombTests
+        - CombUITests
     archive:
       config: Release

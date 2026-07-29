@@ -143,6 +143,7 @@ struct ChannelListView: View {
                         .foregroundStyle(Palette.chrome)
                 }
                 .accessibilityLabel("Settings")
+                .a11y(A11y.settingsButton)
             }
         }
         // The same screen onboarding shows, one tap from anywhere: discovery
@@ -295,12 +296,16 @@ struct ChannelListView: View {
 
     private var channelList: some View {
         ScrollView {
+            // Identified on the scroll view rather than the stack: this is what
+            // a test waits for to know it is looking at the list of channels
+            // and not at an empty state or a spinner.
             LazyVStack(spacing: 0) {
                 ForEach(Array(model.channels.enumerated()), id: \.element.id) { index, channel in
                     NavigationLink(value: channel) {
                         ChannelRow(channel: channel)
                     }
                     .buttonStyle(.plain)
+                    .a11y(A11y.channelRow(channel.id))
                     .arrival(true, delay: Double(min(index, 8)) * 0.04)
 
                     if channel.id != model.channels.last?.id {
@@ -313,6 +318,7 @@ struct ChannelListView: View {
             .padding(.vertical, Space.xxs)
             .glassEffect(in: .rect(cornerRadius: Radii.card))
             .padding(.horizontal, Space.md)
+            .a11y(A11y.channelList)
             .padding(.vertical, Space.sm)
         }
         .softScrollEdges()

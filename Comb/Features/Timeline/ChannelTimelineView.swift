@@ -1304,6 +1304,7 @@ struct ComposeBar: View {
             // an accident.
             VStack(alignment: .leading, spacing: Space.xs) {
                 TextField(placeholder, text: $draft, axis: .vertical)
+                    .a11y(A11y.composeField)
                     .lineLimit(1...6)
                     .font(Typography.body)
                     .foregroundStyle(Palette.text)
@@ -1358,6 +1359,7 @@ struct ComposeBar: View {
                     .buttonStyle(.plain)
                     .animation(Motion.fast, value: canSend)
                     .accessibilityLabel("Send message")
+                    .a11y(A11y.sendButton)
                     .disabled(!canSend)
                 }
                 // Both controls keep a full 44pt target while drawing at 32,

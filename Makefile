@@ -1,4 +1,4 @@
-.PHONY: help project test test-core test-store test-net check-dead-ui relay-up relay-down test-live build-app test-app run archive export clean
+.PHONY: help project test test-core test-store test-net check-dead-ui relay-up relay-down test-live build-app test-app test-ui run archive export clean
 
 SIMULATOR ?= platform=iOS Simulator,name=iPhone 17 Pro
 
@@ -12,6 +12,7 @@ help:
 	@echo "make test       run all Swift package tests (no simulator, seconds)"
 	@echo "make build-app  build the app for the simulator"
 	@echo "make test-app   run the app target's tests in a simulator, and the dead-UI check"
+	@echo "make test-ui    run the UI flows in a simulator (minutes, not seconds)"
 	@echo "make relay-up   start a real Buzz relay in Docker for the contract suite"
 	@echo "make test-live  run the contract suite against that relay as well as the fake"
 	@echo "make relay-down stop it and discard its data"
@@ -78,6 +79,19 @@ test-app: project check-dead-ui
 		-scheme Comb \
 		-destination '$(SIMULATOR)' \
 		-derivedDataPath DerivedData \
+		-skip-testing:CombUITests \
+		$(XCFLAGS)
+
+# The UI flows, on their own, because they are minutes rather than seconds and
+# the loop above has to stay usable. Skipped from test-app rather than left out
+# of the scheme, so a full `xcodebuild test` in CI still runs everything.
+test-ui: project
+	@$(Q) test-ui xcodebuild test \
+		-project Comb.xcodeproj \
+		-scheme Comb \
+		-destination '$(SIMULATOR)' \
+		-derivedDataPath DerivedData \
+		-only-testing:CombUITests \
 		$(XCFLAGS)
 
 # Build, install, launch, and screenshot on a booted simulator.
