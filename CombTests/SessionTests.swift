@@ -199,6 +199,186 @@ struct CommunitySessionTests {
         await rig.session.stop()
     }
 
+    /// Read state written by another client in the spec's shape reaches this
+    /// one's store.
+    ///
+    /// Sequential rather than concurrent: one `BuzzFake` is one socket, and two
+    /// sessions parked in `receive()` at once would take each other's frames.
+    /// The desktop app this stands in for is a separate process anyway.
+    @Test("a NIP-RS blob from another client moves this device's read line")
+    func interopReadStateIsAdopted() async throws {
+        let relay = try BuzzFake()
+        let key = try PrivateKey()
+        let url = URL(string: "wss://fake.communities.buzz.xyz")!
+        await relay.seed(group: BuzzFake.Group(
+            id: Rig.channel,
+            name: "Contract",
+            members: [key.publicKey.hex]
+        ))
+
+        // What another client would have published: the spec's `d`, the spec's
+        // topic tag, the spec's payload, encrypted to this account's own key.
+        let blob = ReadStateBlob(clientID: "buzz-desktop", contexts: [Rig.channel: 4000])
+        let json = String(decoding: try JSONEncoder().encode(blob), as: UTF8.self)
+        let signer = InMemorySigner(key)
+        await relay.seed(events: [
+            try await signer.sign(
+                kind: .appData,
+                content: try await signer.encryptToSelf(json),
+                tags: [["d", "read-state:aaa111"], ["t", "read-state"]],
+                createdAt: Date(timeIntervalSince1970: 9000)
+            ),
+        ])
+
+        let store = try EventStore()
+        let session = try CommunitySession(url: url, key: key, store: store, transport: relay)
+        try await session.start()
+        // After `start()`, not before: starting mirrors the persisted setting
+        // from UserDefaults, which is off in a test bundle, so an earlier call
+        // would be overwritten. This is also the order the app uses when the
+        // switch is flipped on a running session.
+        await session.setSyncsReadState(true)
+
+        try await waitUntil("the read line to move") {
+            ((try? store.readMarkers()) ?? []).contains { $0.channelID == Rig.channel }
+        }
+        let marker = try #require(store.readMarkers().first { $0.channelID == Rig.channel })
+        #expect(marker.lastReadAt == 4000)
+        // Stamped with the blob's own created_at, which is what lets a later
+        // mark-unread on this device outrank it.
+        #expect(marker.updatedAt == 9000)
+
+        await session.stop()
+    }
+
+    /// What Comb puts on the wire is shaped the way the specification says.
+    ///
+    /// Asserted against the relay's stored events rather than against the code
+    /// that built them, because the tags are the whole interoperability
+    /// surface: a blob without its topic tag is invisible to the `#t` fetch
+    /// every other client uses, and would look fine from in here.
+    @Test("the published blob carries the tags other clients search by")
+    func publishesAConformantBlob() async throws {
+        let relay = try BuzzFake()
+        let key = try PrivateKey()
+        let store = try EventStore()
+        await relay.seed(group: BuzzFake.Group(
+            id: Rig.channel,
+            name: "Contract",
+            members: [key.publicKey.hex]
+        ))
+        // A recent read line, because publishing prunes anything older than the
+        // spec's seven-day horizon. An epoch-era timestamp is pruned to nothing
+        // and publishes no blob at all, which is correct and made the first
+        // version of this test fail for a reason that had nothing to do with
+        // tags.
+        let readAt = Int64(Date().timeIntervalSince1970) - 60
+        try await store.mergeReadMarkers([
+            ReadMarker(channelID: Rig.channel, lastReadAt: readAt, updatedAt: readAt),
+        ])
+
+        let session = try CommunitySession(
+            url: URL(string: "wss://fake.communities.buzz.xyz")!,
+            key: key,
+            store: store,
+            transport: relay
+        )
+        try await session.start()
+        // Enabling publishes immediately rather than waiting out the debounce.
+        await session.setSyncsReadState(true)
+
+        let published = await relay.stored.filter { event in
+            event.tags.contains { $0.first == "d" && $0.count > 1 && $0[1].hasPrefix("read-state:") }
+        }
+        let blob = try #require(published.first, "a spec-shaped blob should have been published")
+        #expect(
+            blob.tags.contains { $0 == ["t", "read-state"] },
+            "without the topic tag no other client's fetch will find this"
+        )
+
+        let json = try await InMemorySigner(key).decryptFromSelf(blob.content)
+        let decoded = try #require(
+            JSONDecoder().decode(ReadStateBlob.self, from: Data(json.utf8)).validated()
+        )
+        #expect(decoded.contexts[Rig.channel] == readAt)
+
+        await session.stop()
+    }
+
+    /// The deviation from the specification, end to end.
+    ///
+    /// NIP-RS merges by plain maximum, which would silently undo a deliberate
+    /// mark-unread. Comb stamps an incoming blob with its own `created_at` and
+    /// lets last-writer-wins decide, so a blob written before the reader's
+    /// decision loses to it. The store-level test covers the rule; this covers
+    /// the wiring that carries `created_at` into it.
+    @Test("a blob written before a mark-unread does not undo it")
+    func staleBlobDoesNotUndoMarkUnread() async throws {
+        let relay = try BuzzFake()
+        let key = try PrivateKey()
+        let store = try EventStore()
+        let other = "another-channel"
+        await relay.seed(group: BuzzFake.Group(
+            id: Rig.channel,
+            name: "Contract",
+            members: [key.publicKey.hex]
+        ))
+
+        // The reader marked this unread at 9000, well after the blob below was
+        // written.
+        try await store.mergeReadMarkers([
+            ReadMarker(channelID: Rig.channel, lastReadAt: 10, updatedAt: 9000),
+        ])
+
+        let signer = InMemorySigner(key)
+        func blob(_ contexts: [String: Int64], at createdAt: Int64, from client: String) async throws -> NostrEvent {
+            let json = String(
+                decoding: try JSONEncoder().encode(ReadStateBlob(clientID: client, contexts: contexts)),
+                as: UTF8.self
+            )
+            return try await signer.sign(
+                kind: .appData,
+                content: try await signer.encryptToSelf(json),
+                tags: [["d", "read-state:\(client)"], ["t", "read-state"]],
+                createdAt: Date(timeIntervalSince1970: TimeInterval(createdAt))
+            )
+        }
+
+        // One blob, two contexts. The witness channel has no local marker, so
+        // its arrival proves this exact blob was decrypted and merged; the
+        // other context is the one that must lose.
+        //
+        // An earlier version used two separate blobs and could not tell "the
+        // stale blob arrived and lost" from "the stale blob never arrived at
+        // all", so it passed even when incoming blobs were deliberately stamped
+        // with the wrong clock. Waiting on a different blob proves nothing
+        // about this one.
+        await relay.seed(events: [
+            try await blob([Rig.channel: 8000, other: 7000], at: 1000, from: "stale"),
+        ])
+
+        let session = try CommunitySession(
+            url: URL(string: "wss://fake.communities.buzz.xyz")!,
+            key: key,
+            store: store,
+            transport: relay
+        )
+        try await session.start()
+        await session.setSyncsReadState(true)
+
+        try await waitUntil("the witness context to arrive, proving the blob was merged") {
+            ((try? store.readMarkers()) ?? []).contains { $0.channelID == other }
+        }
+
+        let marker = try #require(store.readMarkers().first { $0.channelID == Rig.channel })
+        #expect(marker.lastReadAt == 10, "a stale blob must not undo a deliberate mark-unread")
+        // Distinguishes "the blob arrived and lost" from "the blob never
+        // arrived". Without this the case would pass just as happily against a
+        // session that had stopped consuming read state altogether.
+        #expect(marker.updatedAt == 9000, "the local decision should still be the newest writer")
+        await session.stop()
+    }
+
     /// A session wired to a scripted relay, started and authenticated, with its
     /// live subscription id already picked out.
     private struct Rig: Sendable {

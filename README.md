@@ -198,6 +198,7 @@ release path.
 **The app**
 
 - [x] Channel list with unread state, message history, sending
+- [x] Cross-device read state, in Comb's own shape and in NIP-RS for other clients
 - [x] Onboarding, community discovery with search and sorting
 - [x] Keychain storage and the `nostrpair://` pairing handshake
 - [x] Threads, reactions with a full emoji picker, editing and deleting

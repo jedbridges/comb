@@ -22,6 +22,40 @@ enum SyncSettings {
         set { UserDefaults.standard.set(newValue, forKey: readStateKey) }
     }
 
+    private static let readStateSlotKey = "comb.sync.readStateSlot"
+    private static let readStateClientKey = "comb.sync.readStateClient"
+
+    /// This installation's slot in NIP-RS, and the name it signs its blobs with.
+    ///
+    /// Two values rather than one because the spec keeps them apart on purpose.
+    /// The slot is the public `d` tag, so a relay operator can count how many
+    /// installations an account runs; the client id lives inside the encrypted
+    /// body and is the only thing that says which blob is ours, which is how a
+    /// device avoids merging its own echo back over itself.
+    ///
+    /// Per installation, not per community. The addressable coordinate already
+    /// includes the pubkey, and Comb holds a different key per community, so one
+    /// slot cannot collide across them.
+    ///
+    /// Created on first use and never rotated here. The spec allows rotation and
+    /// asks clients to keep these stable for as long as possible, because every
+    /// rotation leaves an orphaned blob behind until it ages out.
+    static var readStateSlot: String { stableIdentifier(forKey: readStateSlotKey) }
+
+    static var readStateClientID: String { stableIdentifier(forKey: readStateClientKey) }
+
+    /// 32 hex characters from the system CSPRNG, as the specification suggests.
+    private static func stableIdentifier(forKey key: String) -> String {
+        if let existing = UserDefaults.standard.string(forKey: key), !existing.isEmpty {
+            return existing
+        }
+        var bytes = [UInt8](repeating: 0, count: 16)
+        for index in bytes.indices { bytes[index] = UInt8.random(in: 0...255) }
+        let value = bytes.map { String(format: "%02x", $0) }.joined()
+        UserDefaults.standard.set(value, forKey: key)
+        return value
+    }
+
     private static let remoteImagesKey = "comb.privacy.remoteImages"
 
     /// Whether to load pictures from hosts other than the community's own.

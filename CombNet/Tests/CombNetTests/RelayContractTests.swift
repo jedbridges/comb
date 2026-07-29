@@ -519,6 +519,46 @@ struct RelayContractTests {
         await session.stop()
     }
 
+    /// NIP-RS asks clients to find read state with a `#t` filter rather than by
+    /// pulling every kind 30078 the account has ever written.
+    ///
+    /// This is the first `#t` filter anywhere in Comb, so the case is as much
+    /// about the filter path as about read state: a relay that ignored `#t`
+    /// would hand back the other blob too, and a client that trusted the answer
+    /// would merge somebody else's app data into its read markers.
+    @Test("a topic filter selects read state and nothing else", arguments: RelayTarget.available)
+    func topicFilterSelectsReadState(_ target: RelayTarget) async throws {
+        let relay = try target.relay()
+        let key = try PrivateKey()
+        let (session, _) = try await relay.connect(as: key)
+        let slot = UUID().uuidString.prefix(16)
+
+        let readState = try NostrEvent.signed(
+            kind: .appData,
+            content: "read state, encrypted in the real thing",
+            tags: [["d", "read-state:\(slot)"], ["t", "read-state"]],
+            with: key
+        )
+        _ = try await session.publish(readState)
+
+        // Same kind, same author, no topic: the thing a `#t` filter has to
+        // leave behind.
+        let somethingElse = try NostrEvent.signed(
+            kind: .appData,
+            content: "unrelated app data",
+            tags: [["d", "comb.something-else.\(slot)"]],
+            with: key
+        )
+        _ = try await session.publish(somethingElse)
+
+        let hits = try await session.query(
+            [Filter(authors: [key.publicKey.hex], kinds: [.appData]).withTag("t", ["read-state"])],
+            timeout: .seconds(5)
+        )
+        #expect(hits.map(\.id) == [readState.id])
+        await session.stop()
+    }
+
     @Test("account-level events need no group", arguments: RelayTarget.available)
     func profileAndReportCarryNoGroupTag(_ target: RelayTarget) async throws {
         let relay = try target.relay()

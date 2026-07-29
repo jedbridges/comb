@@ -224,13 +224,13 @@ struct SettingsView: View {
                     // relay cannot read which rooms were read; the thing it
                     // does learn is that something was read, and roughly when.
                     //
-                    // "Comb devices" rather than "devices", because that is
-                    // what this does. Buzz has since published NIP-RS, which
-                    // specifies a different `d` tag and a different payload
-                    // shape for the same kind 30078, and each side ignores the
-                    // other's. Someone reading in Buzz on their desktop would
-                    // otherwise expect this switch to cover it.
-                    Text("Keeps unread badges in step across your Comb devices. It does not reach other apps on this account yet. Your read markers are encrypted to your own key, so the relay cannot read them, but it can see when they are sent. Off by default: this is the one thing Comb can keep entirely on this iPhone.")
+                    // Comb publishes this twice: its own shape, which carries
+                    // when each decision was made, and NIP-RS, which other
+                    // clients read. The second sentence is the difference
+                    // between them, and it is a limit of the standard rather
+                    // than of Comb: NIP-RS is a grow-only maximum, so there is
+                    // no way to express "I marked this unread" in it at all.
+                    Text("Keeps unread badges in step across your devices, including other apps on this account that read the same standard. Marking something unread stays between your Comb devices, because the standard has no way to say it. Your read markers are encrypted to your own key, so the relay cannot read them, but it can see when they are sent. Off by default: this is the one thing Comb can keep entirely on this iPhone.")
                 }
                 .combRows()
 

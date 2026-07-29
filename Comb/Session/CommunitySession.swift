@@ -175,7 +175,16 @@ actor CommunitySession {
 
         // Read here rather than at init, so every entry point (launch, join,
         // pair, community switch) picks it up without each remembering to.
-        syncsReadState = await MainActor.run { SyncSettings.syncsReadState }
+        let sync = await MainActor.run {
+            (
+                SyncSettings.syncsReadState,
+                SyncSettings.readStateSlot,
+                SyncSettings.readStateClientID
+            )
+        }
+        syncsReadState = sync.0
+        readStateSlot = sync.1
+        readStateClientID = sync.2
 
         Log.session.info("connecting to \(self.relayURL.host ?? "?", privacy: .public)")
         DiagnosticsBuffer.report("session", "connecting to \(relayURL.host ?? "?")")
@@ -433,6 +442,14 @@ actor CommunitySession {
         }
     }
 
+    /// Publishes this device's read line in both shapes, from one flush.
+    ///
+    /// Comb's own payload carries an `updatedAt` per marker and so can express
+    /// "I marked this unread"; NIP-RS is a grow-only maximum and cannot. Sending
+    /// both means another Comb device gets the whole decision and Buzz Desktop
+    /// gets the read line, and neither has to be told about the other: the spec
+    /// says to ignore any `d` that is not `read-state:`-prefixed, and Comb only
+    /// reads its own.
     private func sendReadState() async {
         guard let markers = try? store.readMarkers(), !markers.isEmpty else { return }
 
@@ -451,7 +468,51 @@ actor CommunitySession {
             // alert about it would be about nothing the reader can act on.
             DiagnosticsBuffer.report("session", "read state publish failed: \(error)")
         }
+
+        await sendInteropReadState(markers)
     }
+
+    /// The NIP-RS half.
+    ///
+    /// Separate from the publish above rather than folded into it, because a
+    /// failure in either must not take the other down: they are two claims to
+    /// two audiences, and Comb's own devices should not lose sync because a
+    /// spec-shaped event was rejected.
+    private func sendInteropReadState(_ markers: [ReadMarker]) async {
+        let blob = ReadStateBlob(
+            clientID: readStateClientID,
+            markers: markers,
+            now: Int64(Date().timeIntervalSince1970)
+        )
+        // Everything aged out of the horizon, so there is nothing to say.
+        guard !blob.contexts.isEmpty else { return }
+
+        do {
+            let json = String(decoding: try JSONEncoder().encode(blob), as: UTF8.self)
+            // The specification's clock-skew rule: a blob for our own slot must
+            // never carry a `created_at` at or below one we have already
+            // published, or a relay applying addressable-replacement keeps the
+            // older event and this device stops being able to update itself.
+            let now = Int64(Date().timeIntervalSince1970)
+            let stamp = now > lastInteropPublishedAt ? now : lastInteropPublishedAt + 1
+            let event = try await signer.sign(
+                kind: .appData,
+                content: try await signer.encryptToSelf(json),
+                tags: [
+                    ["d", ReadStateSync.interopDTag(slot: readStateSlot)],
+                    ["t", ReadStateSync.interopTopic],
+                ],
+                createdAt: Date(timeIntervalSince1970: TimeInterval(stamp))
+            )
+            try await relay.publish(event)
+            lastInteropPublishedAt = stamp
+        } catch {
+            DiagnosticsBuffer.report("session", "interop read state publish failed: \(error)")
+        }
+    }
+
+    /// The newest `created_at` this session has published for its own slot.
+    private var lastInteropPublishedAt: Int64 = 0
 
     /// Folds markers from another device into this one's read state.
     ///
@@ -464,26 +525,67 @@ actor CommunitySession {
         guard syncsReadState else { return }
 
         for event in events where event.pubkey == me.hex {
-            guard event.tags.contains(where: { $0.count >= 2 && $0[0] == "d" && $0[1] == ReadStateSync.dTag })
+            guard let slot = event.tags.first(where: { $0.count >= 2 && $0[0] == "d" })?[1]
             else { continue }
 
-            guard let json = try? await signer.decryptFromSelf(event.content),
-                  let payload = try? JSONDecoder().decode(
-                      ReadStatePayload.self, from: Data(json.utf8)
-                  ),
-                  payload.version == ReadStatePayload.currentVersion
-            else { continue }
-
-            // Nothing republished on a merge that changed something: the device
-            // that sent this already holds the newer markers, and answering
-            // every sync with a sync is how two clients talk forever.
-            _ = try? await store.mergeReadMarkers(payload.markers)
+            // This subscription is `d`-blind, so both shapes arrive here and so
+            // does every other client's unrelated kind 30078. The tag decides
+            // which reader, if either, is being addressed.
+            if slot == ReadStateSync.dTag {
+                await receiveOwnReadState(event)
+            } else if slot.hasPrefix(ReadStateSync.interopPrefix) {
+                await receiveInteropReadState(event)
+            }
         }
+    }
+
+    private func receiveOwnReadState(_ event: NostrEvent) async {
+        guard let json = try? await signer.decryptFromSelf(event.content),
+              let payload = try? JSONDecoder().decode(
+                  ReadStatePayload.self, from: Data(json.utf8)
+              ),
+              payload.version == ReadStatePayload.currentVersion
+        else { return }
+
+        // Nothing republished on a merge that changed something: the device
+        // that sent this already holds the newer markers, and answering
+        // every sync with a sync is how two clients talk forever.
+        _ = try? await store.mergeReadMarkers(payload.markers)
+    }
+
+    /// A NIP-RS blob, from Buzz Desktop or any other client speaking the spec.
+    ///
+    /// Stamped with the event's own `created_at`, which is what makes a
+    /// deliberate mark-unread survive: Comb's merge is last-writer-wins, so a
+    /// blob written before the reader marked something unread loses, and one
+    /// written after wins. The spec's own merge is a plain maximum and would
+    /// undo the reader's decision.
+    private func receiveInteropReadState(_ event: NostrEvent) async {
+        guard event.tags.contains(where: {
+            $0.count >= 2 && $0[0] == "t" && $0[1] == ReadStateSync.interopTopic
+        }) else { return }
+
+        guard let json = try? await signer.decryptFromSelf(event.content),
+              let decoded = try? JSONDecoder().decode(ReadStateBlob.self, from: Data(json.utf8)),
+              let blob = decoded.validated()
+        else { return }
+
+        // Our own echo, coming back off the live subscription. Merging it would
+        // be harmless today and is exactly the loop the client id exists to
+        // prevent, so it stops here rather than relying on the merge to be a
+        // no-op.
+        guard blob.clientID != readStateClientID else { return }
+
+        _ = try? await store.mergeReadMarkers(blob.markers(publishedAt: event.createdAt))
     }
 
     /// Mirrored here rather than read per call, because the setting lives in
     /// UserDefaults on the main actor and this is not it.
     private var syncsReadState = false
+
+    /// This installation's NIP-RS identity, mirrored for the same reason.
+    private var readStateSlot = ""
+    private var readStateClientID = ""
 
     /// Applies a change to the setting without waiting for a relaunch.
     ///
