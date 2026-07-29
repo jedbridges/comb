@@ -135,10 +135,14 @@ public struct SentFrame: Sendable {
 }
 
 /// A frame the client sent, decoded enough for a fake relay to respond to.
-public enum RelayRequest {
+///
+/// `Sendable`, which matters now that it is the parameter of a public
+/// `@Sendable` closure: filters are decoded into `Filter` rather than carried
+/// as `[String: Any]`, so a behaviour written outside this module can hold one.
+public enum RelayRequest: Sendable {
     case auth(NostrEvent)
     case event(NostrEvent)
-    case req(id: String, filters: [[String: Any]])
+    case req(id: String, filters: [Filter])
     case close(id: String)
 
     public init?(frame: Data) {
@@ -162,7 +166,12 @@ public enum RelayRequest {
             self = .event(value)
         case "REQ":
             guard let id = array[1] as? String else { return nil }
-            self = .req(id: id, filters: array.dropFirst(2).compactMap { $0 as? [String: Any] })
+            let filters = array.dropFirst(2).compactMap { element in
+                (element as? [String: Any])
+                    .flatMap { try? JSONSerialization.data(withJSONObject: $0) }
+                    .flatMap { try? JSONDecoder().decode(Filter.self, from: $0) }
+            }
+            self = .req(id: id, filters: filters)
         case "CLOSE":
             guard let id = array[1] as? String else { return nil }
             self = .close(id: id)

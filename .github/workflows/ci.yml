@@ -60,18 +60,44 @@ jobs:
 
       # Running the app target's tests needs a real device, not the generic
       # destination a build accepts, and the runner images change which devices
-      # they ship without notice. So ask for the newest iOS runtime present and
-      # take an iPhone from it, rather than pinning a name that will rot.
+      # they ship without notice. So pick one rather than pinning a name.
+      #
+      # Three things this has to get right, each of which a simpler expression
+      # gets wrong:
+      #
+      #   - A runtime can be installed and available with no devices created.
+      #     Most of them are, in practice. Picking the newest runtime and then
+      #     looking for a device in it fails on a runner that has exactly what
+      #     we need one version down.
+      #   - Runtime identifiers sort lexicographically, so iOS-26-2 beats
+      #     iOS-26-10 and iOS-9-3 beats both. Compare them as numbers.
+      #   - The app's deployment target is iOS 26.0. An older runtime would be
+      #     picked happily and then fail in xcodebuild with an error that reads
+      #     like a code problem rather than a runner problem.
       - name: Pick a simulator
         id: simulator
         run: |
           udid=$(xcrun simctl list devices available -j | jq -r '
             .devices | to_entries
-            | map(select(.key | test("iOS")))
-            | sort_by(.key) | last | .value
-            | map(select(.name | startswith("iPhone"))) | last | .udid
+            | map(select(.key | test("SimRuntime\\.iOS-")))
+            | map({
+                version: (.key | capture("iOS-(?<v>[0-9-]+)$").v | split("-") | map(tonumber)),
+                iphones: (.value | map(select(.name | startswith("iPhone"))))
+              })
+            | map(select(.iphones | length > 0))
+            | map(select(.version[0] >= 26))
+            | sort_by(.version)
+            | last | .iphones[0].udid // empty
           ')
-          test -n "$udid" && test "$udid" != "null" || { echo "no iOS simulator on this runner"; exit 1; }
+          if [ -z "$udid" ]; then
+            echo "no iOS 26+ runtime on this runner has an iPhone device:"
+            xcrun simctl list devices available
+            exit 1
+          fi
+          xcrun simctl list devices available -j | jq -r --arg udid "$udid" '
+            .devices | to_entries[] | .key as $runtime | .value[]
+            | select(.udid == $udid) | "testing on \(.name) (\($runtime))"
+          '
           echo "udid=$udid" >> "$GITHUB_OUTPUT"
 
       # swift-secp256k1 ships a build plugin that Xcode will not run without

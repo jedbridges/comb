@@ -356,11 +356,28 @@ actor CommunitySession {
         await retryPendingSends()
     }
 
+    /// Puts everything this session owns down: the connect retry, both
+    /// unstructured tasks, and the socket.
+    ///
+    /// `hasStarted` is cleared too, and that is not tidiness. `resume()` reads
+    /// it to decide between a reconnect and a full start, and a reconnect on a
+    /// stopped session does nothing: the relay is not suspended, so its resume
+    /// no-ops, and `activate()` is never reached, so the read-state loop stays
+    /// gone. A stopped session that came back would have been permanently deaf
+    /// on that path. No caller does that today; the point is that `stop()` must
+    /// not leave a state only `start()` can undo without saying so.
     func stop() async {
         connectTask?.cancel()
         connectTask = nil
         readStateTask?.cancel()
         readStateTask = nil
+        // The debounced read-state publish is the other unstructured task here.
+        // Left running, it wakes three seconds after the user switched
+        // community, on a session nobody holds, to sign an event for a socket
+        // that is closed.
+        readStatePublish?.cancel()
+        readStatePublish = nil
+        hasStarted = false
         await relay.stop()
     }
 
@@ -926,9 +943,7 @@ struct ReplyContext: Sendable, Equatable {
 /// indicator is false ten seconds later, and storing it would grow the log
 /// forever with facts nobody can use. Ingest returns them so they can be
 /// broadcast to live listeners and then forgotten.
-/// Not private: this is the join between the socket and the store, so it is
-/// the piece a test of that join has to be able to hold.
-struct StoreSink: EventSink {
+private struct StoreSink: EventSink {
     let store: EventStore
     let onEphemeral: @Sendable ([NostrEvent]) -> Void
     let onMembershipChange: @Sendable () -> Void
