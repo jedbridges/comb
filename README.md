@@ -113,6 +113,8 @@ git clone https://github.com/jedbridges/comb.git
 cd comb
 make test        # package tests, no simulator, about a second
 make run         # build, install, and launch on a booted simulator
+make test-app    # the app target's tests in a simulator, and the dead-UI check
+make test-ui     # the navigation flows, in a simulator, minutes not seconds
 ```
 
 Requires Xcode 26 and Swift 6.1 or later. `make project` regenerates the Xcode
@@ -128,8 +130,10 @@ in-memory community.
 CombCore/     Protocol, crypto, wire format. Foundation only.
 CombStore/    The append-only event log, its projections, and the ingest
               choke point where verification happens. GRDB.
-CombNet/      Relay connection and protocol state machine. Testable
-              against a mock socket, with no relay.
+CombNet/      Relay connection and protocol state machine. Ships a
+              CombNetTesting product: a transport fixture, and a fake
+              relay that enforces rules rather than agreeing to
+              everything.
 Comb/         The iOS app target. SwiftUI only.
 ```
 
@@ -140,9 +144,31 @@ content-addressed, so the id is a natural primary key, dedupe is
 log. Fixing a projection bug costs a version bump and a local replay, not a
 refetch from the relay.
 
-Three of the four targets are Swift packages, so `make test` exercises the
-protocol, storage, and relay state machine in about a second with no simulator.
-That is where the subtle bugs are.
+Three of the targets are Swift packages, so `make test` exercises the protocol,
+storage, and relay state machine in about a second with no simulator. That is
+where the subtle bugs are.
+
+The rest of the testing is shaped by the two ways this codebase has actually
+shipped defects, rather than by coverage as a number. A whole feature once
+compiled with nothing to trigger it, so `scripts/check-dead-ui.sh` looks for
+state nothing ever fills in and view properties every caller passes and nobody
+reads. A navigation fix once returned without changing the screen, so
+`make test-ui` drives the real navigation stack and asserts where you land.
+
+And because a fake relay that says yes to everything can only ever confirm what
+the client already believes, `RelayContractTests` runs the same cases against
+`BuzzFake`, which enforces NIP-42, filter evaluation and group scoping, and
+against a real Buzz relay in Docker when one is running:
+
+```bash
+export BUZZ_RELAY_PRIVATE_KEY=$(openssl rand -hex 32)
+make relay-up    # asserts the relay advertises `self`, or refuses to start
+make test-live   # the same cases, against the fake and the real relay
+```
+
+That assertion is not ceremony. Without a relay key there is no `self` in
+NIP-11, the provenance check on relay-signed group state skips silently, and
+the suite passes without testing what it claims to test.
 
 Two protocol details worth knowing if you are reading the code. **Edits and
 deletions are authorised at read time**, not at ingest: a kind 5 only erases its
@@ -185,8 +211,8 @@ release path.
 - [x] Typing indicators
 - [x] Direct messages named for the people in them, rather than "dm"
 - [x] Haptics on the moments that repeat, and only for what you did
-- [ ] Presence
-- [ ] Starting a new direct message
+- [x] Presence
+- [x] Starting a new direct message
 - [ ] Creating, joining, and leaving channels
 - [ ] Video playback for received attachments
 - [ ] Nostr Wallet Connect (NIP-47) for in-app zaps
