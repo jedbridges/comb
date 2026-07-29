@@ -19,11 +19,19 @@ import UserNotifications
 /// expectation.
 @MainActor
 enum BackgroundRefresh {
-    static let taskIdentifier = "dev.jedbridges.comb.refresh"
+    nonisolated static let taskIdentifier = "dev.jedbridges.comb.refresh"
 
     /// Registered once at launch, before the app finishes starting, as iOS
-    /// requires. The handler runs on a background wake.
-    static func register() {
+    /// requires.
+    ///
+    /// `nonisolated` is load-bearing. `BGTaskScheduler` calls the launch handler
+    /// on one of its own background queues, but the closure is not `Sendable`,
+    /// so from a `@MainActor` context Swift infers it as main-actor isolated and
+    /// trusts the framework to honour that. It does not, and the runtime's
+    /// isolation check turns that broken promise into a `SIGTRAP` on the
+    /// background queue. Registering from a nonisolated context makes the
+    /// closure nonisolated too, which is the truth about where it runs.
+    nonisolated static func register() {
         BGTaskScheduler.shared.register(
             forTaskWithIdentifier: taskIdentifier,
             using: nil
@@ -112,14 +120,21 @@ enum BackgroundRefresh {
     /// when iOS suspends us a moment later.
     private static let budget: Duration = .seconds(20)
 
-    private static func handle(_ task: BGAppRefreshTask) {
-        // Always line up the next wake first: a crash or timeout below must not
-        // end the chain of refreshes.
-        schedule()
+    /// Runs on whichever background queue `BGTaskScheduler` picked, so it hops
+    /// to the main actor for the work rather than assuming it is already there.
+    ///
+    /// `BGTask` predates `Sendable` but its completion and expiration calls are
+    /// safe from any thread, which is what lets the finishing task carry it
+    /// across.
+    private nonisolated static func handle(_ task: BGAppRefreshTask) {
+        nonisolated(unsafe) let task = task
 
         let completion = TaskCompletion(task)
 
         let work = Task {
+            // Always line up the next wake first: a crash or timeout below must
+            // not end the chain of refreshes.
+            await schedule()
             await run()
             completion.finish(success: true)
         }
