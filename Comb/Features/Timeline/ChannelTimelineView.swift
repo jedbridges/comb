@@ -20,6 +20,7 @@ struct ChannelTimelineView: View {
     @State private var deleting: TimelineRow?
     @State private var reactingTo: TimelineRow?
     @State private var reactorsOf: ReactorsTarget?
+    @State private var zappersOf: ZappersTarget?
     @FocusState private var isComposing: Bool
     @State private var isAwayFromBottom = false
     @State private var arrivalsWhileAway = 0
@@ -84,38 +85,7 @@ struct ChannelTimelineView: View {
                         if entry.showsDayBreak {
                             DayBreak(date: entry.row.date)
                         }
-                        MessageRow(
-                            entry: entry,
-                            reactions: model.snapshot.reactions[entry.row.id] ?? [],
-                            loader: loader,
-                            channelID: channel.id,
-                            mentionNames: model.mentionNames,
-                            mentionsMe: entry.row.mentions(session.me.hex),
-                            onReact: { emoji in
-                                Task {
-                                    if await !model.toggleReaction(emoji, on: entry.row.id) {
-                                        toast = ToastMessage(FailureText.reaction, tone: .failure)
-                                    }
-                                }
-                            },
-                            onRetry: { Task { await model.retry(entry.row.id) } },
-                            onDiscard: { Task { await model.discard(entry.row.id) } },
-                            onZap: entry.row.authorLightningAddress == nil ? nil : { zapTarget = entry },
-                            onOpenAuthor: { profileTarget = ProfileTarget(pubkey: entry.row.pubkey) },
-                            onOpenThread: { threadRoot = entry.row },
-                            onReply: entry.row.isDeleted ? nil : { threadRoot = entry.row },
-                            onEdit: ownMessageAction(entry.row) {
-                                editing = entry.row
-                                draft = entry.row.displayContent
-                            },
-                            onDelete: ownMessageAction(entry.row) { deleting = entry.row },
-                            onPickEmoji: entry.row.isDeleted ? nil : { reactingTo = entry.row },
-                            onShowReactors: { showReactors(entry.row, $0) },
-                            onMarkUnread: { markUnread(entry.row) },
-                            onRemind: { remind(entry.row, at: $0) },
-                            onReport: reportAction(entry.row),
-                            onBlock: blockAction(entry.row)
-                        )
+                        messageRow(entry)
                         .background {
                             if entry.row.id == highlightedID {
                                 RoundedRectangle(cornerRadius: Radii.bubble)
@@ -329,18 +299,60 @@ struct ChannelTimelineView: View {
                 toast = ToastMessage(outcome)
             }
         }
-        .sheet(item: $zapTarget) { entry in
-            if let address = entry.row.authorLightningAddress,
-               let recipient = PublicKey(hex: entry.row.pubkey) {
-                ZapSheet(
-                    session: session,
-                    recipient: recipient,
-                    lightningAddress: address,
-                    messageID: entry.row.id,
-                    recipientName: entry.row.displayName
-                )
-            }
+        .sheet(item: $zappersOf) { target in
+            ZappersSheet(session: session, messageID: target.messageID)
         }
+        .sheet(item: $zapTarget) { entry in
+            ZapPresenter(
+                session: session,
+                pubkey: entry.row.pubkey,
+                lightningAddress: entry.row.authorLightningAddress,
+                capability: entry.row.zapCapability,
+                messageID: entry.row.id,
+                displayName: entry.row.displayName
+            )
+        }
+    }
+
+    /// Its own function rather than inline in the `ForEach`. With the zap
+    /// tallies added, the row's argument list is long enough that leaving it
+    /// inside the view builder costs real type-checking time for no benefit.
+    private func messageRow(_ entry: ChannelTimeline.Entry) -> some View {
+        MessageRow(
+            entry: entry,
+            reactions: model.snapshot.reactions[entry.row.id] ?? [],
+            zaps: model.snapshot.zaps[entry.row.id],
+            pendingZap: model.snapshot.pendingZaps[entry.row.id],
+            loader: loader,
+            channelID: channel.id,
+            mentionNames: model.mentionNames,
+            mentionsMe: entry.row.mentions(session.me.hex),
+            onReact: { emoji in
+                Task {
+                    if await !model.toggleReaction(emoji, on: entry.row.id) {
+                        toast = ToastMessage(FailureText.reaction, tone: .failure)
+                    }
+                }
+            },
+            onRetry: { Task { await model.retry(entry.row.id) } },
+            onDiscard: { Task { await model.discard(entry.row.id) } },
+            onZap: entry.row.zapCapability == .no ? nil : { zapTarget = entry },
+            onOpenAuthor: { profileTarget = ProfileTarget(pubkey: entry.row.pubkey) },
+            onOpenThread: { threadRoot = entry.row },
+            onReply: entry.row.isDeleted ? nil : { threadRoot = entry.row },
+            onEdit: ownMessageAction(entry.row) {
+                editing = entry.row
+                draft = entry.row.displayContent
+            },
+            onDelete: ownMessageAction(entry.row) { deleting = entry.row },
+            onPickEmoji: entry.row.isDeleted ? nil : { reactingTo = entry.row },
+            onShowReactors: { showReactors(entry.row, $0) },
+            onShowZappers: { zappersOf = ZappersTarget(messageID: entry.row.id) },
+            onMarkUnread: { markUnread(entry.row) },
+            onRemind: { remind(entry.row, at: $0) },
+            onReport: reportAction(entry.row),
+            onBlock: blockAction(entry.row)
+        )
     }
 
     /// The action, only when the message is the viewer's own and not deleted.
@@ -549,6 +561,10 @@ struct ChannelTimelineView: View {
 struct MessageRow: View {
     let entry: ChannelTimeline.Entry
     let reactions: [ReactionSummary]
+    /// The zaps this message has been seen to receive.
+    var zaps: ZapSummary?
+    /// The reader's own zap, handed to a wallet and not yet answered.
+    var pendingZap: ZapAttempt?
     let loader: MediaLoader
     /// Needed only to build a "Copy link" URL, which names the channel as
     /// well as the message.
@@ -574,6 +590,8 @@ struct MessageRow: View {
     var onPickEmoji: (() -> Void)?
     /// Long-press on a reaction chip: shows who reacted.
     var onShowReactors: ((String) -> Void)?
+    /// Long-press on the zap chip: shows who zapped, and what the total means.
+    var onShowZappers: (() -> Void)?
     /// Marks the channel unread from this message and returns to the list.
     var onMarkUnread: (() -> Void)?
     /// Schedules a local reminder for this message at the chosen offset.
@@ -666,12 +684,17 @@ struct MessageRow: View {
                 // feature behind knowledge.
                 .onTapGesture { onOpenThread?() }
 
-                if !reactions.isEmpty {
+                // Zaps get the row too, so a message with sats and no reactions
+                // still shows them.
+                if !reactions.isEmpty || zaps != nil || pendingZap != nil {
                     ReactionBar(
                         reactions: reactions,
                         onTap: onReact,
                         onPickEmoji: onPickEmoji,
-                        onShowReactors: onShowReactors
+                        onShowReactors: onShowReactors,
+                        zaps: zaps,
+                        pendingZap: pendingZap,
+                        onShowZappers: onShowZappers
                     )
                     // The first reaction on a message adds a whole row beneath
                     // it. Growing from the leading edge, where the chips are,
@@ -979,9 +1002,22 @@ struct ReactionBar: View {
     var onPickEmoji: (() -> Void)?
     /// Long-press on a chip, carrying the emoji pressed.
     var onShowReactors: ((String) -> Void)?
+    /// The zaps this message has been seen to receive, if any.
+    var zaps: ZapSummary?
+    /// The reader's own zap of this message, still waiting on its receipt.
+    var pendingZap: ZapAttempt?
+    /// Long-press on the zap chip.
+    var onShowZappers: (() -> Void)?
 
     var body: some View {
         HStack(spacing: Space.xs) {
+            // Leading, so the money reads before the faces.
+            if let zaps {
+                ZapChip(zaps: zaps, onShowZappers: { onShowZappers?() })
+            } else if pendingZap != nil {
+                PendingZapChip()
+            }
+
             ForEach(reactions) { reaction in
                 // Tapping a chip toggles: join the pile, or withdraw your own.
                 // Button, with the long press added simultaneously rather
@@ -1027,6 +1063,93 @@ struct ReactionBar: View {
 /// Its own view rather than a function on `ReactionBar` because it now holds
 /// state: a chip has to remember that it is mid-burst, and a `@State` cannot
 /// live in a view builder.
+/// The sats a message has been seen to receive.
+///
+/// Read-only, unlike a reaction chip: tapping cannot add to it, because a zap
+/// goes through a wallet. Tapping opens the list, which is also where the
+/// caveats about what this number means live.
+///
+/// Never chartreuse-filled. A message can already carry a chartreuse reaction
+/// pill, and a bolt is the single most tempting glyph in this app to make
+/// yellow, so the reader's own zap is marked by a brand-coloured glyph on the
+/// usual lift instead. That keeps one accent per bubble.
+///
+/// No burst and no haptic, unlike a reaction. A receipt arrives asynchronously,
+/// possibly minutes later and possibly while the app is in a pocket, and
+/// DESIGN.md is explicit that haptics fire only for what the reader did.
+private struct ZapChip: View {
+    let zaps: ZapSummary
+    let onShowZappers: () -> Void
+
+    var body: some View {
+        Button(action: onShowZappers) {
+            HStack(spacing: Space.xxs) {
+                // Emoji size, not count size. A reaction chip sets its emoji at
+                // body size, and both chips share the same capsule, so a glyph
+                // at caption size here made the zap chip visibly shorter than
+                // the pile sitting next to it in the same row.
+                Image(systemName: "bolt.fill")
+                    .font(Typography.emoji)
+                    .foregroundStyle(zaps.includesMe ? Palette.chartreuse : Palette.subtext)
+                Text("\(zaps.totalSats.formatted())")
+                    .font(Typography.count)
+                    .contentTransition(.numericText())
+                    .foregroundStyle(Palette.subtext)
+            }
+            .padding(.horizontal, Space.xs)
+            .padding(.vertical, Space.xxs)
+            .background(Palette.glyphLift, in: .capsule)
+            .overlay {
+                Capsule().strokeBorder(Palette.glyphHairline, lineWidth: Stroke.hairline)
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(
+            "\(zaps.totalSats) sats"
+                + (zaps.includesMe ? ", including yours" : "")
+        )
+        .accessibilityHint("Shows who zapped this")
+    }
+}
+
+/// The reader's own zap, handed to a wallet and not yet answered by a receipt.
+///
+/// Deliberately not a number and deliberately not part of the tally. Comb does
+/// not know whether the payment happened, so counting it would assert something
+/// it cannot support, and there is no timeout that distinguishes "abandoned"
+/// from "the relay is slow". It says only what is true: the reader did
+/// something and Comb is waiting. Visible to nobody else, and it ages out.
+private struct PendingZapChip: View {
+    var body: some View {
+        HStack(spacing: Space.xxs) {
+            // Matched to the zap chip it will be replaced by, so the row does
+            // not change height when the receipt lands.
+            Image(systemName: "bolt")
+                .font(Typography.emoji)
+                .foregroundStyle(Palette.subtext)
+            Text("Waiting")
+                .font(Typography.count)
+                .foregroundStyle(Palette.subtext)
+        }
+        .padding(.horizontal, Space.xs)
+        .padding(.vertical, Space.xxs)
+        // No hairline, which is the row's tell for "this is not a control".
+        // Three identical capsules sat side by side where one toggled, one
+        // opened a sheet, and this one did nothing, and the only way to learn
+        // which was to tap the wrong one.
+        .background(Palette.glyphLift, in: .capsule)
+        .accessibilityElement()
+        .accessibilityLabel("Your zap is waiting for a receipt")
+    }
+}
+
+/// The message whose zaps are being looked at. A wrapper rather than a bare
+/// String so it can drive `.sheet(item:)`.
+struct ZappersTarget: Identifiable, Hashable {
+    let messageID: String
+    var id: String { messageID }
+}
+
 private struct ReactionChip: View {
     let reaction: ReactionSummary
     let onTap: () -> Void

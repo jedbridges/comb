@@ -73,6 +73,10 @@ enum Sizing {
     static let thumbnail: CGFloat = 64
     /// Minimum hit target, per Apple.
     static let hitTarget: CGFloat = 44
+    /// The glyph an empty or terminal state is built around: nothing here yet,
+    /// nothing more to do, this cannot be done. Large enough to read as the
+    /// subject of the screen rather than as decoration on a sentence.
+    static let stateGlyph: CGFloat = 44
     /// A control drawn small inside a full-size target: the compose bar's
     /// round buttons, which should not dominate a two-row input.
     static let compactControl: CGFloat = 32

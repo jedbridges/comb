@@ -67,16 +67,14 @@ struct ProfileSheet: View {
             profile = try? session.store.profile(pubkey: pubkey)
         }
         .sheet(isPresented: $isZapping) {
-            if let profile, let address = profile.lightningAddress,
-               let recipient = PublicKey(hex: pubkey) {
-                ZapSheet(
-                    session: session,
-                    recipient: recipient,
-                    lightningAddress: address,
-                    messageID: nil,
-                    recipientName: profile.name
-                )
-            }
+            ZapPresenter(
+                session: session,
+                pubkey: pubkey,
+                lightningAddress: profile?.lightningAddress,
+                capability: profile?.zapCapability ?? .unknown,
+                messageID: nil,
+                displayName: profile?.name ?? String(pubkey.prefix(8))
+            )
         }
     }
 
@@ -133,7 +131,10 @@ struct ProfileSheet: View {
                     .disabled(isOpeningDirectMessage)
                 }
 
-                if profile.canReceiveZaps {
+                // Offered when the answer is yes, and when Comb has never seen
+                // their profile and so has no answer. Hidden only when they
+                // published one and it carries no Lightning address.
+                if profile.zapCapability != .no {
                     Button {
                         isZapping = true
                     } label: {
