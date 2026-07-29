@@ -223,7 +223,14 @@ struct SettingsView: View {
                     // markers are encrypted to this account's own key, so the
                     // relay cannot read which rooms were read; the thing it
                     // does learn is that something was read, and roughly when.
-                    Text("Keeps unread badges in step across your devices. Your read markers are encrypted to your own key, so the relay cannot read them, but it can see when they are sent. Off by default: this is the one thing Comb can keep entirely on this iPhone.")
+                    //
+                    // "Comb devices" rather than "devices", because that is
+                    // what this does. Buzz has since published NIP-RS, which
+                    // specifies a different `d` tag and a different payload
+                    // shape for the same kind 30078, and each side ignores the
+                    // other's. Someone reading in Buzz on their desktop would
+                    // otherwise expect this switch to cover it.
+                    Text("Keeps unread badges in step across your Comb devices. It does not reach other apps on this account yet. Your read markers are encrypted to your own key, so the relay cannot read them, but it can see when they are sent. Off by default: this is the one thing Comb can keep entirely on this iPhone.")
                 }
                 .combRows()
 
