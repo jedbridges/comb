@@ -146,9 +146,14 @@ struct RelayContractTests {
         await session.stop()
     }
 
-    @Test("a kind the relay signs itself cannot be published", arguments: RelayTarget.available)
-    func relaySignedKindsAreRefused(_ target: RelayTarget) async throws {
-        let relay = try target.relay()
+    /// Named for what it actually covers. `RelaySession.publish` refuses these
+    /// kinds itself, before authentication and before a frame is sent, so this
+    /// case never reaches a relay and would pass against one that accepted
+    /// forged rosters happily. It was previously called "a kind the relay signs
+    /// itself cannot be published", which claimed a contract it does not test.
+    @Test("the client refuses to publish a kind the relay signs, without asking")
+    func relaySignedKindsAreRefusedByTheClient() async throws {
+        let relay = try RelayUnderTest.fake()
         let key = try PrivateKey()
         let (session, _) = try await relay.connect(as: key)
 
@@ -161,6 +166,87 @@ struct RelayContractTests {
         await #expect(throws: RelayError.self) {
             _ = try await session.publish(forgedRoster)
         }
+
+        // The evidence that this is a client-side refusal rather than a relay
+        // one: nothing went out.
+        let published = await relay.fake?.sent(ofType: "EVENT").count
+        #expect(published == 0)
+        await session.stop()
+    }
+
+    /// And the relay's own rule, reached the only way it can be: by putting the
+    /// frame on the wire directly, as a client that lacked that guard would.
+    @Test("the relay refuses a kind it signs itself")
+    func relaySignedKindsAreRefusedByTheRelay() async throws {
+        let fake = try BuzzFake()
+        let url = URL(string: "wss://fake.communities.buzz.xyz")!
+        let key = try PrivateKey()
+        try await fake.open(url: url)
+        _ = try await fake.receive()
+
+        let authResponse = try NostrEvent.authResponse(
+            challenge: await fake.challenge,
+            relayURL: url,
+            with: key
+        )
+        try await fake.send(Self.frame("AUTH", authResponse))
+
+        let forgedRoster = try NostrEvent.signed(
+            kind: .groupMembers,
+            content: "",
+            tags: [["d", Self.newChannel()], ["p", key.publicKey.hex]],
+            with: key
+        )
+        try await fake.send(Self.frame("EVENT", forgedRoster))
+
+        #expect(await fake.stored.contains { $0.id == forgedRoster.id } == false)
+    }
+
+    /// Presence carries no group at all, and retracting a reaction carries only
+    /// the `e` tag of the reaction it withdraws.
+    ///
+    /// These two exist because the fake got them wrong. It demanded an `h` tag
+    /// on both, which would have meant presence silently never landing and
+    /// un-reacting silently failing, against a suite whose whole purpose is to
+    /// notice that. Deleting a message does carry a group, which is what made
+    /// the mistake easy: one of the two kind 5 paths looks group-scoped.
+    @Test("presence carries no group", arguments: RelayTarget.available)
+    func presenceNeedsNoGroup(_ target: RelayTarget) async throws {
+        let relay = try target.relay()
+        let key = try PrivateKey()
+        let (session, _) = try await relay.connect(as: key)
+
+        // Signed exactly as CommunitySession.sendPresence signs it.
+        let presence = try NostrEvent.signed(kind: .buzzPresence, content: "", with: key)
+        _ = try await session.publish(presence)
+        await session.stop()
+    }
+
+    @Test("withdrawing a reaction carries no group", arguments: RelayTarget.available)
+    func reactionRetractionNeedsNoGroup(_ target: RelayTarget) async throws {
+        let relay = try target.relay()
+        let channel = Self.newChannel()
+        let key = try PrivateKey()
+        let (session, _) = try await relay.connect(as: key)
+        try await create(channel, with: session, by: key)
+
+        let reaction = try NostrEvent.signed(
+            kind: .reaction,
+            content: "🐝",
+            tags: [["e", "some-message-id"], ["h", channel]],
+            with: key
+        )
+        _ = try await session.publish(reaction)
+
+        // Signed exactly as CommunitySession.toggleReaction signs the retraction:
+        // an `e` tag and nothing else.
+        let retraction = try NostrEvent.signed(
+            kind: .deletion,
+            content: "",
+            tags: [["e", reaction.id]],
+            with: key
+        )
+        _ = try await session.publish(retraction)
         await session.stop()
     }
 
@@ -343,21 +429,23 @@ struct RelayContractTests {
         let them = try PrivateKey()
         let (session, _) = try await relay.connect(as: me)
 
-        func open() async throws -> String? {
+        // Distinct whole seconds, not a random offset. `created_at` is seconds,
+        // so two draws from a thirty-second window collided about one run in
+        // thirty, produced byte-identical events, and the second open came back
+        // as a duplicate with no channel id in it.
+        func open(secondsAgo: TimeInterval) async throws -> String? {
             let event = try NostrEvent.signed(
                 kind: .buzzOpenDirectMessage,
                 content: "",
                 tags: [["p", them.publicKey.hex]],
-                // A different timestamp each time, so the two events have
-                // different ids and the relay cannot be answering a duplicate.
-                createdAt: Date(timeIntervalSinceNow: Double.random(in: -30 ... -1)),
+                createdAt: Date(timeIntervalSinceNow: -secondsAgo),
                 with: me
             )
             return CommandResponse.channelID(in: try await session.publish(event))
         }
 
-        let first = try await open()
-        let second = try await open()
+        let first = try await open(secondsAgo: 60)
+        let second = try await open(secondsAgo: 1)
         #expect(first != nil)
         #expect(first == second, "tapping message on a profile twice must not make two conversations")
         await session.stop()
@@ -413,6 +501,11 @@ struct RelayContractTests {
 
         try await publishMarker("older", at: 60)
         try await publishMarker("newer", at: 0)
+        // Out of order too, which is not hypothetical: two devices with skewed
+        // clocks, or an outbox flushing after an offline stretch, both deliver
+        // read state late. A relay that kept the straggler alongside the
+        // current marker would hand the other device a superseded one.
+        try await publishMarker("stale straggler", at: 120)
 
         // Read-state sync publishes one of these per change under the same `d`
         // tag and relies on the relay keeping only the newest. If it kept both,
@@ -464,6 +557,12 @@ struct RelayContractTests {
             with: key
         )
         _ = try await session.publish(create)
+    }
+
+    /// A wire frame, for the cases that have to bypass the client entirely.
+    static func frame(_ type: String, _ event: NostrEvent) throws -> Data {
+        let json = String(decoding: try JSONEncoder().encode(event), as: UTF8.self)
+        return Data("[\"\(type)\",\(json)]".utf8)
     }
 
     private func message(_ text: String, in channel: String, from key: PrivateKey) throws -> NostrEvent {

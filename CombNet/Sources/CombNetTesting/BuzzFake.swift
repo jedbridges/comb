@@ -276,18 +276,38 @@ public actor BuzzFake: WebSocketTransport {
     /// newest. A fake that kept them all would answer a query with a pile of
     /// superseded markers and never notice the difference.
     private func record(_ event: NostrEvent) {
-        if event.kind.isAddressable {
-            let identifier = tag(event, "d") ?? ""
-            stored.removeAll {
-                $0.kind == event.kind && $0.pubkey == event.pubkey
-                    && (tag($0, "d") ?? "") == identifier && $0.createdAt <= event.createdAt
-            }
-        } else if event.kind.isReplaceable {
-            stored.removeAll {
-                $0.kind == event.kind && $0.pubkey == event.pubkey && $0.createdAt <= event.createdAt
-            }
+        guard event.kind.isAddressable || event.kind.isReplaceable else {
+            stored.append(event)
+            return
         }
+
+        // Everything already held in the slot this event addresses.
+        let siblings = stored.filter { occupiesSameSlot($0, as: event) }
+
+        // An older marker arriving after a newer one is dropped, not kept
+        // beside it. This happens for real: two devices with skewed clocks, or
+        // an outbox flushing after an offline stretch, both deliver read state
+        // out of order. Comparing `createdAt <= incoming` instead would have
+        // kept both and answered the next query with a superseded marker.
+        if siblings.contains(where: { supersedes($0, event) }) { return }
+
+        stored.removeAll { occupiesSameSlot($0, as: event) }
         stored.append(event)
+    }
+
+    private func occupiesSameSlot(_ candidate: NostrEvent, as event: NostrEvent) -> Bool {
+        guard candidate.kind == event.kind, candidate.pubkey == event.pubkey else { return false }
+        guard event.kind.isAddressable else { return true }
+        return (tag(candidate, "d") ?? "") == (tag(event, "d") ?? "")
+    }
+
+    /// NIP-01's ordering: newer wins, and a tie is broken by the lowest id
+    /// rather than by whichever arrived last.
+    private func supersedes(_ incumbent: NostrEvent, _ challenger: NostrEvent) -> Bool {
+        if incumbent.createdAt != challenger.createdAt {
+            return incumbent.createdAt > challenger.createdAt
+        }
+        return incumbent.id < challenger.id
     }
 
     /// Buzz's 41010: the relay makes the group, names it, adds everyone, and
@@ -307,8 +327,11 @@ public actor BuzzFake: WebSocketTransport {
         // Keyed on the participant set, so asking twice returns the same
         // conversation rather than making a second one. The app leans on this:
         // tapping "message" on a profile is not meant to be destructive.
+        // Derived from the participants rather than hashed. `hashValue` is
+        // seeded per process, so the same conversation would carry a different
+        // id on every run, and `abs(Int.min)` traps.
         let existing = groups.values.first { $0.isDirectMessage && $0.members == participants }
-        let id = existing?.id ?? "dm-\(abs(participants.sorted().joined().hashValue))"
+        let id = existing?.id ?? "dm-\(participants.sorted().map { $0.prefix(8) }.joined(separator: "-"))"
 
         if existing == nil {
             let group = Group(
@@ -325,7 +348,10 @@ public actor BuzzFake: WebSocketTransport {
             }
         }
 
-        record(event)
+        // Not stored. 41010 is a command, not a message, and EventKind says so
+        // in as many words. Keeping it meant a second identical open landed in
+        // the duplicate branch and was answered without the channel id, which
+        // is a failure the client would read as "the relay made nothing".
         ok(event.id, true, "response: {\"channel_id\":\"\(id)\"}")
     }
 
@@ -434,7 +460,11 @@ public actor BuzzFake: WebSocketTransport {
     /// The historical answer: everything stored that matches, newest first,
     /// truncated to the smallest limit any filter asked for.
     private func answer(to filters: [Filter]) -> [NostrEvent] {
-        guard rules.evaluatesFilters else { return stored }
+        // Visibility is applied either way. It used to sit behind the filter
+        // rule, so loosening `evaluatesFilters` for one falsification case
+        // quietly loosened membership scoping too, and a case that means to
+        // switch off one rule has to switch off exactly one.
+        guard rules.evaluatesFilters else { return stored.filter(isVisible) }
 
         var matched: [NostrEvent] = []
         for filter in filters {
@@ -513,10 +543,23 @@ public actor BuzzFake: WebSocketTransport {
     /// Kinds a Buzz relay will not accept without an `h` tag naming a group the
     /// author belongs to. Profile metadata, app data and reports are account
     /// level and carry no group.
+    /// Presence and deletion are deliberately absent, and their absence is the
+    /// first thing this fake got wrong.
+    ///
+    /// `sendPresence` signs kind 20001 with no tags at all, and retracting a
+    /// reaction signs a kind 5 carrying only the `e` tag of the reaction it
+    /// withdraws. Both are shipped and both work against hosted Buzz, so a fake
+    /// that demanded a group for either was not modelling the relay, it was
+    /// inventing a stricter one. Presence would have silently never landed and
+    /// un-reacting would have silently failed, in a suite whose entire job is
+    /// to notice exactly that.
+    ///
+    /// Deleting a *message* does carry an `h`, which is what made the mistake
+    /// easy to make: one of the two kind 5 paths looks group-scoped.
     static func requiresGroupScope(_ kind: EventKind) -> Bool {
         switch kind {
-        case .groupChatMessage, .reaction, .deletion, .groupDeleteEvent,
-             .buzzEdit, .buzzRichContent, .buzzTyping, .buzzPresence,
+        case .groupChatMessage, .reaction, .groupDeleteEvent,
+             .buzzEdit, .buzzRichContent, .buzzTyping,
              .groupAddUser, .groupRemoveUser, .groupEditMetadata:
             true
         default:
@@ -527,10 +570,15 @@ public actor BuzzFake: WebSocketTransport {
 
 // MARK: - Filter evaluation
 
-public extension Filter {
+extension Filter {
     /// Whether an event satisfies this filter, by NIP-01's rules: fields are
     /// ANDed, values within a field are ORed, and an omitted field constrains
     /// nothing.
+    ///
+    /// Internal on purpose. A `public` extension on a type CombCore owns would
+    /// leak this to everything that links CombNetTesting, and become ambiguous
+    /// the day CombCore grows a `matches` of its own. Nothing outside this
+    /// module needs it.
     ///
     /// This lives with the fake rather than in CombNet because it is relay
     /// behaviour. The client never evaluates a filter; it sends one and trusts
