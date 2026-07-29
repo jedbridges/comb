@@ -728,7 +728,7 @@ struct ProfileDocumentTests {
     ) -> ProfileSummary {
         ProfileSummary(
             pubkey: "abc", displayName: "Old", about: about, picture: picture,
-            nip05: nip05, lightningAddress: lud16, messageCount: 1
+            nip05: nip05, lightningAddress: lud16, hasProfile: true, messageCount: 1
         )
     }
 

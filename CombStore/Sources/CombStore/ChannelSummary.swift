@@ -169,11 +169,28 @@ public extension EventStore {
     }
 }
 
-/// A page of timeline rows with their reaction tallies, fetched atomically so
-/// the two can never describe different moments.
+/// A page of timeline rows with their reaction and zap tallies, fetched
+/// atomically so they can never describe different moments.
 public struct TimelineSnapshot: Sendable, Equatable {
     public let rows: [TimelineRow]
     public let reactions: [String: [ReactionSummary]]
+    public let zaps: [String: ZapSummary]
+    /// The reader's own zaps still waiting on a receipt, keyed by the message
+    /// they were sent to. Separate from `zaps` on purpose: these are claims
+    /// about a payment Comb cannot observe, so they are never added to a total.
+    public let pendingZaps: [String: ZapAttempt]
+
+    public init(
+        rows: [TimelineRow],
+        reactions: [String: [ReactionSummary]],
+        zaps: [String: ZapSummary] = [:],
+        pendingZaps: [String: ZapAttempt] = [:]
+    ) {
+        self.rows = rows
+        self.reactions = reactions
+        self.zaps = zaps
+        self.pendingZaps = pendingZaps
+    }
 
     public static let empty = TimelineSnapshot(rows: [], reactions: [:])
 }
@@ -191,9 +208,9 @@ public extension EventStore {
     ///
     /// This is the only bridge between storage and the UI: GRDB re-runs the
     /// tracking closure when any table it read from changes, so an insert into
-    /// `event`, `outbox`, `reaction`, `deletion`, `edit`, or `profile` all
-    /// surface as one new value. The view layer never polls and never watches
-    /// the socket.
+    /// `event`, `outbox`, `reaction`, `zap`, `zap_attempt`, `deletion`, `edit`,
+    /// or `profile` all surface as one new value. The view layer never polls
+    /// and never watches the socket.
     nonisolated func observeTimeline(
         channel: String,
         limit: Int,
@@ -202,8 +219,7 @@ public extension EventStore {
         ValueObservation
             .tracking { db -> TimelineSnapshot in
                 let rows = try Self.fetchTimeline(db, channel: channel, before: nil, limit: limit)
-                let reactions = try Self.fetchReactions(db, for: rows.map(\.id), me: me)
-                return TimelineSnapshot(rows: rows, reactions: reactions)
+                return try Self.snapshot(db, rows: rows, me: me)
             }
             .removeDuplicates()
             .values(in: reader)
@@ -217,11 +233,38 @@ public extension EventStore {
         ValueObservation
             .tracking { db -> TimelineSnapshot in
                 let rows = try Self.fetchThread(db, root: root)
-                let reactions = try Self.fetchReactions(db, for: rows.map(\.id), me: me)
-                return TimelineSnapshot(rows: rows, reactions: reactions)
+                return try Self.snapshot(db, rows: rows, me: me)
             }
             .removeDuplicates()
             .values(in: reader)
+    }
+
+    /// The tallies for a page of rows, inside one read.
+    ///
+    /// Shared by both observations so they cannot drift: a tally added to one
+    /// and forgotten in the other is a message that shows its zaps in the
+    /// channel and loses them in the thread.
+    private static func snapshot(
+        _ db: Database,
+        rows: [TimelineRow],
+        me: String?
+    ) throws -> TimelineSnapshot {
+        let ids = rows.map(\.id)
+        let attempts = try fetchPendingZapAttempts(db)
+
+        return TimelineSnapshot(
+            rows: rows,
+            reactions: try fetchReactions(db, for: ids, me: me),
+            zaps: try fetchZaps(db, for: ids, me: me),
+            // Newest wins where the reader zapped one message more than once:
+            // the marker says "waiting", not how many.
+            pendingZaps: Dictionary(
+                attempts.compactMap { attempt in
+                    attempt.targetID.map { ($0, attempt) }
+                },
+                uniquingKeysWith: { first, _ in first }
+            )
+        )
     }
 
     /// Emits the channel list whenever channels, members, messages, profiles,
@@ -297,6 +340,12 @@ public struct ProfileSummary: Sendable, Equatable, Identifiable {
     public let picture: String?
     public let nip05: String?
     public let lightningAddress: String?
+    /// Whether the log actually holds this person's kind 0.
+    ///
+    /// Without this, "we have never fetched their profile" and "they published
+    /// one with no Lightning address" are the same value, and the difference
+    /// matters: the first is Comb not knowing yet, the second is an answer.
+    public let hasProfile: Bool
     /// How many messages of theirs the local log holds. A rough sense of how
     /// present someone is, without asking the relay anything.
     public let messageCount: Int
@@ -309,9 +358,23 @@ public struct ProfileSummary: Sendable, Equatable, Identifiable {
         return String(pubkey.prefix(8))
     }
 
-    public var canReceiveZaps: Bool {
-        lightningAddress?.isEmpty == false
+    /// Whether this person can be zapped, including the case where Comb has not
+    /// been told yet.
+    public enum ZapCapability: Sendable, Equatable {
+        case yes
+        case no
+        /// No profile has been seen. Worth offering anyway: the answer is one
+        /// fetch away, and hiding the button spends the reader's intent on
+        /// nothing.
+        case unknown
     }
+
+    public var zapCapability: ZapCapability {
+        if lightningAddress?.isEmpty == false { return .yes }
+        return hasProfile ? .no : .unknown
+    }
+
+    public var canReceiveZaps: Bool { zapCapability == .yes }
 }
 
 /// One search hit, with enough context to render a result row.
@@ -349,7 +412,8 @@ public extension EventStore {
                 guard messages > 0 else { return nil }
                 return ProfileSummary(
                     pubkey: pubkey, displayName: nil, about: nil, picture: nil,
-                    nip05: nil, lightningAddress: nil, messageCount: messages
+                    nip05: nil, lightningAddress: nil, hasProfile: false,
+                    messageCount: messages
                 )
             }
 
@@ -360,6 +424,7 @@ public extension EventStore {
                 picture: row["picture"],
                 nip05: row["nip05"],
                 lightningAddress: row["lud16"],
+                hasProfile: true,
                 messageCount: row["messages"] ?? 0
             )
         }
