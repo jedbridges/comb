@@ -29,6 +29,20 @@ public struct EventKind: RawRepresentable, Hashable, Codable, Sendable, Expressi
     public static let clientAuth: EventKind = 22242      // NIP-42 auth response
     public static let httpAuth: EventKind = 27235        // NIP-98 HTTP auth
     public static let blossomAuth: EventKind = 24242     // Blossom BUD-01 media auth
+    /// Nostr Wallet Connect (NIP-47), how a wallet is asked to pay.
+    ///
+    /// 231xx lands in the ephemeral band, which is exactly right and worth
+    /// saying out loud: wallet traffic is never stored, so a spend request and
+    /// the preimage that answers it do not enter the event log. `StoreSink`
+    /// diverts them on the strength of that classification alone.
+    ///
+    /// Not Buzz extensions. These are standard NIP-47 and go to the wallet's own
+    /// relay, never to a community relay.
+    public static let nwcInfo: EventKind = 13194         // NIP-47, replaceable
+    public static let nwcRequest: EventKind = 23194
+    public static let nwcResponse: EventKind = 23195
+    public static let nwcNotification: EventKind = 23197
+
     public static let zapRequest: EventKind = 9734       // NIP-57
     public static let zapReceipt: EventKind = 9735       // NIP-57
     /// NIP-78 arbitrary app data, addressed by its `d` tag. Comb writes one
