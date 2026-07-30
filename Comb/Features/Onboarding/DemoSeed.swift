@@ -289,6 +289,27 @@ enum DemoSeed {
         Date(timeIntervalSince1970: TimeInterval(seconds))
     }
 
+    /// A real Lightning address to point the demo cast at, from
+    /// `--zap-to me@example.com`.
+    ///
+    /// The demo normally invents `<name>@getalby.com`, which mostly does not
+    /// exist, so nothing in it is actually payable and the zap path can only ever
+    /// be exercised as far as its first failure. This makes one end-to-end test
+    /// possible: point it at your own address and zap yourself a sat.
+    ///
+    /// A Lightning address is public by design, like an email, so it is fine to
+    /// pass on a command line. A wallet connection string is not, and there is
+    /// deliberately no flag for one: it is typed into Settings on the device and
+    /// goes straight to the Keychain.
+    static var payableAddress: String? {
+        let arguments = ProcessInfo.processInfo.arguments
+        guard let index = arguments.firstIndex(of: "--zap-to"),
+              index + 1 < arguments.count
+        else { return nil }
+        let value = arguments[index + 1]
+        return value.contains("@") ? value : nil
+    }
+
     private struct Persona {
         let key: PrivateKey
         let name: String
@@ -300,10 +321,15 @@ enum DemoSeed {
             self.about = about
         }
 
+        /// The override when one was passed, otherwise the invented one.
+        var lightningAddress: String {
+            DemoSeed.payableAddress ?? "\(name.lowercased())@getalby.com"
+        }
+
         func profile(at seconds: Int64) throws -> NostrEvent {
             try NostrEvent.signed(
                 kind: .metadata,
-                content: #"{"display_name":"\#(name)","about":"\#(about)","lud16":"\#(name.lowercased())@getalby.com"}"#,
+                content: #"{"display_name":"\#(name)","about":"\#(about)","lud16":"\#(lightningAddress)"}"#,
                 createdAt: Date(timeIntervalSince1970: TimeInterval(seconds)),
                 with: key
             )
