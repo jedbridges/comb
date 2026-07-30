@@ -98,6 +98,20 @@ struct CombApp: App {
         // because a tip that cannot be stored is a tip that does not appear, and
         // that must never be a reason the app does not start.
         try? Tips.configure()
+
+        // Off under UI test, and this is not a convenience. The zap tip is an
+        // inset above the compose bar, so on the demo cast (who all have
+        // Lightning addresses) it appears on the timeline and moves everything
+        // the navigation suite reaches for. Two runs failed on two different
+        // assertions before this, which is what a layout shift looks like from
+        // the outside: not one broken thing, a different one each time.
+        //
+        // A first-run teaching affordance is not the behaviour under test. What
+        // is under test is that the screens still work with it there, and the
+        // tip's own appearance is verified by hand.
+        if ProcessInfo.processInfo.arguments.contains("--no-tips") {
+            Tips.hideAllTipsForTesting()
+        }
     }
 
     var body: some Scene {

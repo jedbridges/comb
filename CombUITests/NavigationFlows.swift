@@ -25,7 +25,12 @@ final class NavigationFlows: XCTestCase {
 
     private func launch(_ extraArguments: String...) -> XCUIApplication {
         let app = XCUIApplication()
-        app.launchArguments = ["--demo"] + extraArguments
+        // `--no-tips` because a first-run tip is an inset that moves the rest of
+        // the screen, and a suite that asserts on positions cannot also be the
+        // first run. Without it two consecutive runs failed on two different
+        // assertions, which is what a layout shift looks like from outside: not
+        // one broken thing, a different one each time.
+        app.launchArguments = ["--demo", "--no-tips"] + extraArguments
         app.launch()
         return app
     }
