@@ -2,6 +2,7 @@ import CombCore
 import CombStore
 import PhotosUI
 import SwiftUI
+import TipKit
 import UIKit
 
 /// A channel's conversation, newest at the bottom, read from the store.
@@ -21,6 +22,7 @@ struct ChannelTimelineView: View {
     @State private var reactingTo: TimelineRow?
     @State private var reactorsOf: ReactorsTarget?
     @State private var zappersOf: ZappersTarget?
+    private let zapTip = ZapTip()
     /// The other person in a direct message, when there is exactly one.
     @State private var dmCounterpart: String?
     /// Their profile as of opening, or `.unknown` while none has been seen.
@@ -177,6 +179,23 @@ struct ChannelTimelineView: View {
         // put the tap seconds after the gesture that earned it, and a failed
         // send has its own reporting.
         .sensoryFeedback(Haptics.send, trigger: sends)
+        // Pinned above the compose bar rather than placed in the scroll view.
+        //
+        // Inline at the top of the timeline it was invisible: a channel opens
+        // scrolled to the newest message, so a tip sitting above the oldest one
+        // that happens to be loaded is a tip nobody ever reaches. Anchoring it to
+        // a specific row is worse again, since that row can scroll away or be
+        // edited out from under it mid-read.
+        //
+        // Here it is next to the messages it is talking about, in the part of
+        // the screen the eye is already on, and it takes its space back the
+        // moment it is dismissed.
+        .safeAreaInset(edge: .bottom) {
+            TipView(zapTip)
+                .tipBackground(Palette.glyphLift)
+                .padding(.horizontal, Space.md)
+                .padding(.bottom, Space.xs)
+        }
         .safeAreaInset(edge: .bottom) {
             ComposeBar(
                 draft: $draft,
@@ -311,6 +330,19 @@ struct ChannelTimelineView: View {
         }
         .task { await model.activate() }
         .task { resolveCounterpart() }
+        // Armed only where the tip would be true. On a community whose members
+        // have no Lightning address, teaching the gesture would be teaching a
+        // feature that does not work here, and the reader would long-press,
+        // find no Zap row, and conclude the app was lying.
+        //
+        // Deliberately not the reader's own messages: a channel where the only
+        // zappable person is you has nobody to tip.
+        .onChange(of: model.displayRows.count, initial: true) { _, _ in
+            guard !ZapTip.canZapSomeone else { return }
+            ZapTip.canZapSomeone = model.displayRows.contains {
+                $0.row.pubkey != session.me.hex && $0.row.zapCapability == .yes
+            }
+        }
         .navigationDestination(item: $threadRoot) { root in
             ThreadView(session: session, channel: channel, root: root)
         }

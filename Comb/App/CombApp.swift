@@ -1,5 +1,6 @@
 import CombNet
 import SwiftUI
+import TipKit
 import UIKit
 import UserNotifications
 
@@ -90,6 +91,13 @@ struct CombApp: App {
         // handler is free; whether a wake is ever scheduled depends on the
         // notification toggle.
         BackgroundRefresh.register()
+
+        // Tips remember what they have shown across launches, which is the only
+        // reason to use the framework rather than a banner: "once, ever" is
+        // bookkeeping nobody should hand-roll. Failure is ignored on purpose,
+        // because a tip that cannot be stored is a tip that does not appear, and
+        // that must never be a reason the app does not start.
+        try? Tips.configure()
     }
 
     var body: some Scene {
