@@ -41,6 +41,15 @@ To other places, which is the part worth reading closely:
   because you scrolled. The requests carry no cookies and are not cached, so
   the provider cannot link one zap to the next. Comb never sees the money and
   never holds a key to it.
+- **A connected wallet is a second relay, and you chose it.** If you connect a
+  Lightning wallet, Comb talks to the relay that wallet named, and only that
+  one. It opens the connection when you pay and closes it after, so there is no
+  standing socket announcing this phone. The requests are encrypted end to end
+  with the wallet, so the relay carrying them sees neither the invoice nor the
+  amount. The key Comb signs them with is the one your wallet issued, not your
+  community identity, so a zap paid this way is not linkable to the account
+  posting in a channel. You can revoke it in your wallet at any time, and
+  disconnecting deletes it here.
 - **Confirming a zap asks the same provider, and nobody else.** Where the
   provider supports it, Comb asks whether the invoice was paid so the zap can be
   counted. It polls only that provider's own host, for under a minute, and only

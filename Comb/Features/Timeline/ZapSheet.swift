@@ -1,11 +1,19 @@
 import CombCore
 import SwiftUI
 
-/// Picks a zap amount and hands the resulting invoice to a Lightning wallet.
+/// Picks a zap amount and gets the resulting invoice paid.
 ///
-/// Comb never moves the money. It produces a bolt11 invoice and opens it with
-/// `lightning:`, which the OS routes to whatever wallet the user has. If no
-/// wallet is installed, the invoice is offered for copying instead.
+/// Comb holds no balance and mints no invoices either way, but there are now two
+/// endings and they differ in what can honestly be claimed.
+///
+/// With a wallet connected over NIP-47, Comb asks it to pay and the wallet
+/// returns a preimage. That is settlement, so this is the one screen in the
+/// feature allowed a plain "Paid", and the preimage goes straight out as an
+/// attestation the channel can verify.
+///
+/// Without one, the invoice goes to the OS as a `lightning:` link and the story
+/// ends at the handoff, because that is genuinely all Comb knows. If no wallet
+/// claims the link, the invoice is offered for copying instead.
 ///
 /// Opening this sheet asks the recipient's wallet host what it accepts, so the
 /// amounts on offer are the ones that will actually work. That is a request to
@@ -44,6 +52,12 @@ struct ZapSheet: View {
         /// to know that, and a case named for what the reader hopes happened is
         /// how the hope ends up in the copy.
         case handedOff(CommunitySession.PreparedZap)
+        /// A connected wallet has the request and has not answered yet.
+        case paying
+        /// Settled, with a preimage to prove it. The only state in this feature
+        /// that asserts a payment happened, and the only one entitled to: every
+        /// other path ends at a handoff, where Comb genuinely cannot know.
+        case paid(CommunitySession.PreparedZap)
         /// An attempt was made and did not work. Distinct from
         /// `preflightFailure`, which is something that happened before the
         /// reader did anything, and the distinction is what stops a button
@@ -126,8 +140,21 @@ struct ZapSheet: View {
         return amount * 1000 >= low && amount * 1000 <= high
     }
 
-    private var isHandedOff: Bool {
-        if case .handedOff = phase { return true }
+    /// Whether the task is over, so the sheet can settle back down.
+    ///
+    /// Someone who dragged to large to write a comment should not get their
+    /// ending as a full-height sheet with a glyph floating in it. Every terminal
+    /// state qualifies, not just the handoff.
+    private var isFinished: Bool {
+        switch phase {
+        case .handedOff, .paid, .refused: true
+        default: false
+        }
+    }
+
+    /// Whether the wallet has the request and has not answered.
+    private var isPaying: Bool {
+        if case .paying = phase { return true }
         return false
     }
 
@@ -141,6 +168,8 @@ struct ZapSheet: View {
         NavigationStack {
             if case .handedOff(let zap) = phase {
                 handedOff(zap)
+            } else if case .paid(let zap) = phase {
+                paid(zap)
             } else if case .refused(let reason) = phase {
                 refused(reason)
             } else {
@@ -158,7 +187,7 @@ struct ZapSheet: View {
         // confirmation as a full-height sheet with a bolt floating in it: the
         // task is over, and the sheet should stop taking the room the task
         // needed.
-        .presentationDetents(isHandedOff ? [.medium] : [.medium, .large])
+        .presentationDetents(isFinished ? [.medium] : [.medium, .large])
         .task { await loadLimits() }
     }
 
@@ -206,6 +235,52 @@ struct ZapSheet: View {
             }
             .padding(.horizontal, Space.lg)
             .padding(.bottom, Space.xs)
+        }
+        .navigationTitle("Zap")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    /// A payment that actually happened.
+    ///
+    /// The one place in this feature entitled to a plain past tense. Every other
+    /// ending is careful not to claim settlement, because a `lightning:` handoff
+    /// genuinely cannot know; here the wallet returned a preimage, which is proof
+    /// and is already on its way to the group as an attestation.
+    ///
+    /// This is the peak of the interaction and it gets the accent for it, which
+    /// is the one screen in the flow where a bolt in chartreuse is the most
+    /// important thing on it rather than competing with a button.
+    private func paid(_ zap: CommunitySession.PreparedZap) -> some View {
+        VStack(spacing: Space.md) {
+            Spacer()
+
+            Image(systemName: "bolt.fill")
+                .font(.system(size: Sizing.stateGlyph))
+                .foregroundStyle(Palette.chartreuse)
+                .accessibilityHidden(true)
+
+            Text("Paid \(zap.amountMillisats / 1000) sats to \(recipientName)")
+                .font(Typography.actionSecondary)
+                .foregroundStyle(Palette.text)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, Space.lg)
+
+            // Says what the group will see, without promising when. The
+            // attestation is published on a best-effort basis and a relay that
+            // refuses it costs the tally and not the payment.
+            Text("Your wallet paid the invoice. Comb is telling the channel, so the zap will appear on the message.")
+                .font(Typography.labelRegular)
+                .foregroundStyle(Palette.subtext)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, Space.lg)
+
+            Spacer()
+
+            PrimaryButton(title: "Done") { dismiss() }
+                .padding(.horizontal, Space.lg)
+                .padding(.bottom, Space.xs)
         }
         .navigationTitle("Zap")
         .navigationBarTitleDisplayMode(.inline)
@@ -365,8 +440,8 @@ struct ZapSheet: View {
 
                     PrimaryButton(
                         title: primaryTitle,
-                        isBusy: phase == .preparing,
-                        isDisabled: phase == .preparing || !canSend
+                        isBusy: phase == .preparing || isPaying,
+                        isDisabled: phase == .preparing || isPaying || !canSend
                     ) {
                         Task { await act() }
                     }
@@ -457,6 +532,8 @@ struct ZapSheet: View {
         // different request from the one that failed.
         case .choosing: amount > 0 ? "Zap \(amount.formatted()) sats" : "Choose an amount"
         case .preparing: "Preparing…"
+        case .paying: "Paying…"
+        case .paid: "Done"
         case .ready, .handedOff: "Open in wallet"
         case .failed: "Try again"
         case .refused: "Close"
@@ -521,10 +598,35 @@ struct ZapSheet: View {
 
     private func act() async {
         switch phase {
+        case .paid, .refused:
+            dismiss()
         case .ready(let zap), .handedOff(let zap):
             open(zap)
         default:
             await prepare()
+        }
+    }
+
+    /// Asks the connected wallet to pay, and reports what it said.
+    ///
+    /// The one screen in this feature that can end on a certainty. Everything
+    /// else about zaps is careful not to claim a payment happened, because a
+    /// `lightning:` handoff cannot know. Here a preimage came back, so saying
+    /// "paid" is a fact rather than a hope.
+    private func payInPlace(_ zap: CommunitySession.PreparedZap) async {
+        phase = .paying
+        switch await session.payZap(zap) {
+        case .paid:
+            phase = .paid(zap)
+        case .refused(let message):
+            // The wallet answered and declined, so the reader can act on this
+            // and the amount is still theirs to change. Back to the chooser.
+            phase = .choosing
+            preflightFailure = message
+        case .unknown(let message):
+            // Not a refusal and not a success. The money may be gone, so the
+            // pending marker stands and the copy says exactly this much.
+            phase = .failed(message)
         }
     }
 
@@ -541,8 +643,14 @@ struct ZapSheet: View {
         switch result {
         case .prepared(let zap):
             phase = .ready(zap)
-            // Straight to the wallet: the extra tap would only be friction.
-            open(zap)
+            // A connected wallet pays here, without leaving the app, and hands
+            // back the preimage. Everything else hands the invoice to the OS.
+            if await session.hasWallet {
+                await payInPlace(zap)
+            } else {
+                // Straight to the wallet: the extra tap would only be friction.
+                open(zap)
+            }
         case .unsupported:
             phase = .failed("\(recipientName) has not set up a Lightning wallet that accepts zaps.")
         case .failed(let message):

@@ -10,7 +10,9 @@ import CombNet
 /// that rejects this publish" in one line.
 public actor MockTransport: WebSocketTransport {
     private var inbox: [Data] = []
-    private var waiters: [CheckedContinuation<Data, Error>] = []
+    /// Keyed so a cancelled read can withdraw its own continuation, and kept in
+    /// an array so delivery stays first-in-first-out.
+    private var waiters: [(id: UUID, continuation: CheckedContinuation<Data, Error>)] = []
     private var failure: Error?
 
     public private(set) var sentFrames: [Data] = []
@@ -39,13 +41,37 @@ public actor MockTransport: WebSocketTransport {
         }
     }
 
+    /// Cancellable, because the real one is.
+    ///
+    /// This used to park on a bare continuation with no cancellation handling,
+    /// which made the double quietly stricter than the thing it stands in for:
+    /// `URLSessionWebSocketTask.receive()` throws when its task is cancelled,
+    /// and this did not. Any caller that raced a read against a deadline and
+    /// then cancelled the loser hung forever here and nowhere in production,
+    /// which is the worst way for a test double to differ.
     public func receive() async throws -> Data {
         if let failure, inbox.isEmpty { throw failure }
         if !inbox.isEmpty { return inbox.removeFirst() }
 
-        return try await withCheckedThrowingContinuation { continuation in
-            waiters.append(continuation)
+        let id = UUID()
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                // Checked inside, because cancellation can land between the
+                // handler being installed and the continuation being stored.
+                if Task.isCancelled {
+                    continuation.resume(throwing: CancellationError())
+                } else {
+                    waiters.append((id, continuation))
+                }
+            }
+        } onCancel: {
+            Task { await self.withdraw(id) }
         }
+    }
+
+    private func withdraw(_ id: UUID) {
+        guard let index = waiters.firstIndex(where: { $0.id == id }) else { return }
+        waiters.remove(at: index).continuation.resume(throwing: CancellationError())
     }
 
     public func close() async {
@@ -60,7 +86,7 @@ public actor MockTransport: WebSocketTransport {
         if waiters.isEmpty {
             inbox.append(data)
         } else {
-            waiters.removeFirst().resume(returning: data)
+            waiters.removeFirst().continuation.resume(returning: data)
         }
     }
 
@@ -74,7 +100,7 @@ public actor MockTransport: WebSocketTransport {
         failure = error
         let pending = waiters
         waiters.removeAll()
-        for waiter in pending { waiter.resume(throwing: error) }
+        for waiter in pending { waiter.continuation.resume(throwing: error) }
     }
 
     /// Frames the client sent, decoded into Sendable values.

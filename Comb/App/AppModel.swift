@@ -50,6 +50,7 @@ final class AppModel {
             // offline-first promise actually kept.
             let session = try CommunitySession(url: community.relay, key: key)
             stage = .active(session)
+            await restoreWallet(for: session)
             await session.startResilient()
         } catch {
             // Only disk failure lands here now, and that genuinely has no app
@@ -57,6 +58,21 @@ final class AppModel {
             launchNotice = "Could not open \(community.displayName)'s local data."
             stage = .welcome
         }
+    }
+
+    /// Hands a stored wallet connection back to a session that has just opened.
+    ///
+    /// The session deliberately cannot fetch this itself: the secret is in the
+    /// Keychain and the rest is in `UserDefaults`, both reached from the main
+    /// actor, and nothing below the UI should be reaching into either. So it is
+    /// pushed in at every point a session becomes the active one.
+    ///
+    /// Silent when there is nothing stored, which is the ordinary case. A reader
+    /// with no wallet still zaps by handing an invoice to one.
+    private func restoreWallet(for session: CommunitySession) async {
+        let host = session.relayURL.host ?? ""
+        guard let connection = WalletStore.load(host: host) else { return }
+        await session.setWallet(connection)
     }
 
     /// The channel to open immediately after joining.
@@ -70,6 +86,7 @@ final class AppModel {
     func adopt(_ session: CommunitySession, landingInBusiestChannel: Bool = false) {
         launchNotice = nil
         stage = .active(session)
+        Task { await restoreWallet(for: session) }
 
         guard landingInBusiestChannel else { return }
         // Busiest by recency: the channel summaries already sort active first.
@@ -148,6 +165,7 @@ final class AppModel {
             // already on disk, so the swap is a screen change, not a spinner.
             let session = try CommunitySession(url: community.relay, key: key)
             stage = .active(session)
+            await restoreWallet(for: session)
             await session.startResilient()
         } catch {
             launchNotice = "Could not open \(community.displayName)'s local data."

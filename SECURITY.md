@@ -40,6 +40,15 @@ interesting attack surface is roughly:
   receipt, is in scope. Receipt verification is the load-bearing part: the
   amount, sender and target are read from the kind 9734 embedded in a receipt
   and signature-checked, never from the receipt's own tags.
+- **Wallet connections.** With Nostr Wallet Connect (NIP-47), Comb holds a spend
+  credential the wallet issued. It is stored under its own Keychain service,
+  `ThisDeviceOnly` and never synchronised, separate from account keys so that
+  revoking one cannot touch the other. A path that gets Comb to pay an invoice
+  the reader did not choose, that leaks the connection secret, that accepts a
+  response from a key other than the connected wallet, or that treats a claimed
+  settlement with no preimage as a payment, is in scope. Comb speaks only
+  `nip44_v2` and refuses wallets offering only NIP-04, which is unauthenticated;
+  a path that downgrades that is in scope.
 - **Injection through message content.** Message bodies are written by strangers
   and rendered. Comb deliberately does not interpret arbitrary Markdown. A way
   to get styling, a link, or code to execute from message content is in scope.

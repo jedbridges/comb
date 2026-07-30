@@ -205,7 +205,8 @@ release path.
 - [x] Mentions: `@name` autocomplete, highlighting, and `p` tags
 - [x] Images: Blossom upload, inline rendering, metadata stripped before send
 - [x] Search, profiles, member lists, link detection, date separators
-- [x] Zaps (NIP-57) by `lightning:` deep link
+- [x] Zaps (NIP-57) by `lightning:` deep link, or paid in place over NIP-47
+- [x] Sender-attested zaps, so a gated relay can still show a tally
 - [x] Reporting (NIP-56) and local blocking
 - [x] Mention notifications by background refresh, and local reminders
 - [x] Deep links to a message, by `buzz://message` URL
@@ -216,7 +217,7 @@ release path.
 - [x] Starting a new direct message
 - [ ] Creating, joining, and leaving channels
 - [ ] Video playback for received attachments
-- [ ] Nostr Wallet Connect (NIP-47) for in-app zaps
+- [x] Nostr Wallet Connect (NIP-47) for in-app zaps
 
 ### Notifications, honestly
 

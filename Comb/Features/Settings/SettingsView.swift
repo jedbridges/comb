@@ -1,4 +1,5 @@
 import CombCore
+import CombNet
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -39,6 +40,10 @@ struct SettingsView: View {
     @State private var syncsReadState = SyncSettings.syncsReadState
     @State private var loadsRemoteImages = SyncSettings.loadsRemoteImages
     @State private var systemDenied = false
+    @State private var walletURI = ""
+    @State private var walletConnected = false
+    @State private var isConnectingWallet = false
+    @State private var walletFailure: String?
     /// Set when a name change could not be published, so the footer can say so
     /// instead of the field quietly looking saved.
     @State private var nameUndelivered = false
@@ -48,6 +53,133 @@ struct SettingsView: View {
     @State private var hasCopiedAccount = true
 
     private var host: String { session.relayURL.host ?? "" }
+
+    /// Connecting a Lightning wallet, so a zap can be paid without leaving Comb.
+    ///
+    /// A paste field rather than a QR scan, for now: the URI comes off a wallet's
+    /// own screen and is usually already on the clipboard by the time anyone gets
+    /// here. Checked against the wallet before it is saved, because a URI that
+    /// merely parsed tells the reader nothing, and finding out it was wrong at
+    /// the moment they try to pay a person is the worst time to learn.
+    @ViewBuilder
+    private var walletSection: some View {
+        Section {
+            if walletConnected {
+                Button(role: .destructive) {
+                    disconnectWallet()
+                } label: {
+                    Label("Disconnect wallet", systemImage: "bolt.slash")
+                }
+            } else {
+                TextField("nostr+walletconnect://…", text: $walletURI, axis: .vertical)
+                    .lineLimit(1...3)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .font(Typography.monoSmall)
+
+                Button {
+                    Task { await connectWallet() }
+                } label: {
+                    if isConnectingWallet {
+                        Label { Text("Checking…") } icon: {
+                            ProgressView().controlSize(.small)
+                        }
+                    } else {
+                        Label("Connect wallet", systemImage: "bolt.fill")
+                    }
+                }
+                .disabled(walletURI.isEmpty || isConnectingWallet)
+            }
+        } header: {
+            Text("Lightning wallet")
+        } footer: {
+            if let walletFailure {
+                Text(walletFailure)
+                    .foregroundStyle(Palette.danger)
+            } else if walletConnected {
+                // States the new destination plainly. This is the second host
+                // Comb talks to that is not the community's, and the reader
+                // chose it, which is the only reason it is acceptable.
+                Text("Zaps are paid by your wallet without leaving Comb, and Comb learns they were paid. It talks only to the relay your wallet named, using a key you can revoke in your wallet at any time. Comb never holds your balance.")
+            } else {
+                Text("Optional. Without one, a zap opens a wallet app on this iPhone and Comb never finds out whether it was paid. Paste the connection string your wallet gives you and zaps are paid here instead.")
+            }
+        }
+        .combRows()
+    }
+
+    private func connectWallet() async {
+        walletFailure = nil
+        isConnectingWallet = true
+        defer { isConnectingWallet = false }
+
+        let connection: NWC.Connection
+        do {
+            connection = try NWC.connection(from: walletURI)
+        } catch {
+            walletFailure = Self.describe(connectionError: error)
+            return
+        }
+
+        // Asked before saving. A stored connection that cannot be reached is a
+        // wallet the UI claims is connected and which fails on first use.
+        do {
+            try await NWCSession(connection: connection).checkReachable()
+        } catch let failure as NWCSession.Failure {
+            walletFailure = Self.describe(reachability: failure)
+            return
+        } catch {
+            walletFailure = "Comb could not reach that wallet."
+            return
+        }
+
+        do {
+            try WalletStore.save(connection, host: host)
+        } catch {
+            walletFailure = "Comb could not store the connection securely."
+            return
+        }
+
+        await session.setWallet(connection)
+        walletConnected = true
+        walletURI = ""
+    }
+
+    private func disconnectWallet() {
+        try? WalletStore.forget(host: host)
+        walletConnected = false
+        walletFailure = nil
+        Task { await session.setWallet(nil) }
+    }
+
+    private static func describe(connectionError: Error) -> String {
+        switch connectionError as? NWC.ConnectionError {
+        case .notAWalletURI:
+            "That does not look like a wallet connection string. It should start with nostr+walletconnect://"
+        case .insecureRelay:
+            "That wallet's relay is not encrypted, and the connection string would travel over it."
+        case .missingRelay, .missingSecret, .malformedSecret, .malformedWalletPubkey:
+            "That connection string is incomplete. Copy the whole thing from your wallet."
+        case nil:
+            "Comb could not read that connection string."
+        }
+    }
+
+    private static func describe(reachability: NWCSession.Failure) -> String {
+        switch reachability {
+        case .encryptionUnsupported:
+            // Named plainly rather than blamed on the reader. nip04 is
+            // unauthenticated and Comb will not carry spend authorisation over
+            // it, which is a choice worth owning in the copy.
+            "That wallet only supports an older encryption Comb will not use for payments. A newer wallet, or a newer version of it, will work."
+        case .noWalletFound:
+            "Nothing answered on that wallet's relay. The connection may have been revoked."
+        case .cannotReachRelay, .connectionLost:
+            "Comb could not reach that wallet's relay."
+        case .timedOut:
+            "That wallet did not answer in time."
+        }
+    }
     /// The subdomain reads as the community; the full host is the address.
     private var communityName: String { JoinedCommunity.derivedName(from: host) }
 
@@ -194,6 +326,8 @@ struct SettingsView: View {
                 }
                 .combRows()
 
+                walletSection
+
                 Section {
                     Toggle("Load pictures from other sites", isOn: $loadsRemoteImages)
                         .tint(Palette.chartreuse)
@@ -275,6 +409,7 @@ struct SettingsView: View {
                 let profile = try? session.store.profile(pubkey: session.me.hex)
                 displayName = profile?.displayName ?? ""
                 hasCopiedAccount = AccountBackup.hasCopied(host: host)
+                walletConnected = WalletStore.exists(host: host)
             }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {

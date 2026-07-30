@@ -1061,22 +1061,122 @@ actor CommunitySession {
         await attest(zap)
     }
 
+    // MARK: - Paying in place
+
+    /// The wallet connection for this community, when the reader has set one up.
+    ///
+    /// Injected rather than read, so nothing below the UI reaches into
+    /// `UserDefaults` or the Keychain. Nil is the ordinary case and means the
+    /// `lightning:` handoff, which is still the only path most readers have.
+    private var wallet: NWC.Connection?
+
+    func setWallet(_ connection: NWC.Connection?) {
+        wallet = connection
+    }
+
+    var hasWallet: Bool { wallet != nil }
+
+    /// What happened when Comb asked a wallet to pay.
+    enum ZapPayment {
+        /// Settled, with the preimage that proves it. The first time this app
+        /// has ever been able to say a zap was paid and mean it.
+        case paid
+        /// The wallet answered and declined, in words the reader can act on.
+        case refused(String)
+        /// No answer inside the deadline, or the wallet could not be reached.
+        /// Deliberately not a refusal: the payment may have happened, and the
+        /// pending marker is the honest state for that.
+        case unknown(String)
+    }
+
+    /// Pays a prepared zap through the connected wallet.
+    ///
+    /// Records the attempt first, exactly as the handoff path does. If the app
+    /// dies between asking and hearing back, the marker is what stops the zap
+    /// vanishing without trace, and a marker for a payment that then failed
+    /// simply expires.
+    func payZap(_ zap: PreparedZap) async -> ZapPayment {
+        guard let wallet else { return .unknown("No wallet is connected.") }
+
+        do {
+            try await store.recordZapAttempt(
+                requestID: zap.requestID,
+                targetID: zap.targetID,
+                recipient: zap.recipient,
+                issuer: zap.issuer,
+                amountMillisats: zap.amountMillisats
+            )
+        } catch {
+            // Same reasoning as the handoff: a missing marker is a worse-looking
+            // zap, never a failed one.
+        }
+
+        let outcome: NWC.Outcome
+        do {
+            outcome = try await NWCSession(connection: wallet).pay(zap.invoice)
+        } catch let failure as NWCSession.Failure {
+            return .unknown(Self.describe(failure))
+        } catch NWC.ResponseError.missingPreimage {
+            // The wallet says it paid and offers nothing to prove it. Not
+            // treated as paid, because Comb would then publish a claim it cannot
+            // back, and not as a refusal either, because the money may be gone.
+            return .unknown("Your wallet said it paid but did not prove it, so Comb cannot confirm this.")
+        } catch {
+            return .unknown("Comb could not read your wallet's answer.")
+        }
+
+        switch outcome {
+        case .paid(let preimage, _):
+            // The preimage in hand is exactly what the group needs to verify
+            // this, so attest immediately rather than waiting on a receipt that
+            // a gated relay will never carry.
+            await attest(zap, preimage: preimage)
+            return .paid
+        case .refused(let code, let message):
+            return .refused(NWC.describe(code: code, message: message))
+        case .answered:
+            return .unknown("Your wallet answered something Comb did not ask.")
+        }
+    }
+
+    private static func describe(_ failure: NWCSession.Failure) -> String {
+        switch failure {
+        case .cannotReachRelay:
+            "Comb could not reach your wallet."
+        case .timedOut:
+            "Your wallet did not answer. It may still have paid."
+        case .connectionLost:
+            "The connection to your wallet dropped. It may still have paid."
+        case .encryptionUnsupported:
+            "Your wallet cannot talk to Comb securely enough. Reconnect it in Settings."
+        case .noWalletFound:
+            "Comb could not find your wallet. Reconnect it in Settings."
+        }
+    }
+
     /// Turns a settled invoice into an attestation the group can verify.
     ///
-    /// Only reachable where the host implements LUD-21. Without a verify URL
-    /// there is no way for a `lightning:` handoff to learn its own preimage,
-    /// so the zap stays a pending marker until it expires, which is what
-    /// happens today for every zap.
+    /// Two ways in, one event out. A wallet paid through NIP-47 hands back the
+    /// preimage directly, so `preimage` is already known and nothing is polled.
+    /// A `lightning:` handoff knows nothing, so the recipient's host is asked
+    /// via LUD-21, and where it does not implement that the zap stays a pending
+    /// marker until it expires, which is what happens today for every zap.
     ///
     /// Every failure here is silent and costs only the tally. The payment
     /// happened or it did not, entirely between the reader's wallet and the
     /// recipient's, and an error about bookkeeping would be Comb claiming a
     /// part in something it had no part in.
-    private func attest(_ zap: PreparedZap) async {
-        guard let verify = zap.verify, let channel = zap.targetID.flatMap(channelOf) else { return }
+    private func attest(_ zap: PreparedZap, preimage known: String? = nil) async {
+        guard let channel = zap.targetID.flatMap(channelOf) else { return }
 
-        guard case .settled(let preimage) = await LNURLClient().awaitSettlement(of: verify) else {
-            return
+        let preimage: String
+        if let known {
+            preimage = known
+        } else {
+            guard let verify = zap.verify,
+                  case .settled(let polled) = await LNURLClient().awaitSettlement(of: verify)
+            else { return }
+            preimage = polled
         }
 
         do {
