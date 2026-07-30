@@ -207,6 +207,7 @@ release path.
 - [x] Search, profiles, member lists, link detection, date separators
 - [x] Zaps (NIP-57) by `lightning:` deep link, or paid in place over NIP-47
 - [x] Sender-attested zaps, so a gated relay can still show a tally
+- [x] Spending allowances for agents, decided on your device
 - [x] Reporting (NIP-56) and local blocking
 - [x] Mention notifications by background refresh, and local reminders
 - [x] Deep links to a message, by `buzz://message` URL

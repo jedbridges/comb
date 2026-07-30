@@ -65,6 +65,16 @@ struct SettingsView: View {
     private var walletSection: some View {
         Section {
             if walletConnected {
+                // Only where a wallet exists, because an allowance cannot be
+                // fulfilled without one: paying on an agent's behalf through a
+                // `lightning:` handoff would need somebody to tap a button in
+                // another app, which is the thing an allowance exists to avoid.
+                NavigationLink {
+                    SpendingView(session: session)
+                } label: {
+                    Label("Agent spending", systemImage: "bolt.badge.clock")
+                }
+
                 Button(role: .destructive) {
                     disconnectWallet()
                 } label: {

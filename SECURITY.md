@@ -49,6 +49,15 @@ interesting attack surface is roughly:
   settlement with no preimage as a payment, is in scope. Comb speaks only
   `nip44_v2` and refuses wallets offering only NIP-04, which is unauthenticated;
   a path that downgrades that is in scope.
+- **Agent spending allowances.** An agent is a keypair in the roster and holds no
+  spend credential: it publishes a kind 40005 asking to zap, and the funder's
+  device decides against a grant the agent cannot read, forge, or be told about.
+  A path that gets a zap paid without a matching grant, past the per-zap ceiling
+  or the rolling allowance, from a replayed intent, from a stale one, or after
+  the allowance was revoked, is a serious bug. So is any path by which a relay
+  can create or alter a grant: both `spend_grant` and `spend_ledger` are
+  local-only and deliberately outside the projection tables, so a projection
+  rebuild cannot invent permission to spend.
 - **Injection through message content.** Message bodies are written by strangers
   and rendered. Comb deliberately does not interpret arbitrary Markdown. A way
   to get styling, a link, or code to execute from message content is in scope.
@@ -77,6 +86,16 @@ These are design choices, not vulnerabilities, but you should know them:
   recovery code.
 - **The community index is unsigned.** See
   [CONTRIBUTING.md](CONTRIBUTING.md#listing-a-community) for why.
+- **A refused agent is not told why.** A grant is never published, so nobody in
+  a channel can see what a member is willing to spend. The cost is that an agent
+  whose request was refused learns only that no zap appeared, and cannot tell an
+  exhausted allowance from a revoked one. Refusals and their reasons are shown to
+  the funder in Settings and nowhere else. An encrypted reply to the agent alone
+  is the obvious improvement and is not built.
+- **An allowance only works while Comb is running.** Comb is the gatekeeper, so
+  an intent published while the app is closed is acted on at next launch and only
+  if it is still fresh; older ones are refused rather than paid in a batch. An
+  agent cannot spend on a phone that is off, by design.
 - **A zap crosses a host nobody in the community chose.** The recipient picked
   their wallet provider, and paying them means asking it for an invoice. That
   is the one place Comb talks to a host outside the community relay, it happens

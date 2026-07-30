@@ -190,6 +190,12 @@ struct MemberListView: View {
 
     @State private var members: [ProfileSummary] = []
     @State private var selected: ProfileTarget?
+    @State private var granting: ProfileTarget?
+    /// Which members already have an allowance here, so the action can say
+    /// "edit" rather than offering to create a second one.
+    @State private var granted: Set<String> = []
+
+    private func hasGrant(_ pubkey: String) -> Bool { granted.contains(pubkey) }
 
     var body: some View {
         Group {
@@ -209,6 +215,25 @@ struct MemberListView: View {
                                 row(member)
                             }
                             .buttonStyle(.plain)
+                            // The roster is where an allowance belongs, because
+                            // a grant is for one member in one channel and this
+                            // is the only screen that knows both. Never the
+                            // reader's own row: an allowance to yourself is a
+                            // loop, and the session refuses it anyway.
+                            .contextMenu {
+                                if member.pubkey != session.me.hex {
+                                    Button {
+                                        granting = ProfileTarget(pubkey: member.pubkey)
+                                    } label: {
+                                        Label(
+                                            hasGrant(member.pubkey)
+                                                ? "Edit spending allowance"
+                                                : "Give a spending allowance",
+                                            systemImage: "bolt.badge.clock"
+                                        )
+                                    }
+                                }
+                            }
                         }
                     } header: {
                         Text("\(members.count) members")
@@ -222,10 +247,29 @@ struct MemberListView: View {
         .navigationBarTitleDisplayMode(.inline)
         .task {
             members = (try? session.store.members(of: channelID)) ?? []
+            reloadGrants()
         }
         .sheet(item: $selected) { target in
             ProfileSheet(session: session, pubkey: target.pubkey)
         }
+        .sheet(item: $granting, onDismiss: reloadGrants) { target in
+            GrantSheet(
+                session: session,
+                agentPubkey: target.pubkey,
+                agentName: members.first { $0.pubkey == target.pubkey }?.name
+                    ?? String(target.pubkey.prefix(8)),
+                channelID: channelID,
+                channelName: channelName
+            )
+        }
+    }
+
+    private func reloadGrants() {
+        granted = Set(
+            ((try? session.store.spendGrants()) ?? [])
+                .filter { $0.channelID == channelID }
+                .map(\.agentPubkey)
+        )
     }
 
     private func row(_ member: ProfileSummary) -> some View {

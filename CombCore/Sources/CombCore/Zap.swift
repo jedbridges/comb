@@ -370,6 +370,9 @@ public enum Zap {
         bolt11: String,
         preimage: String,
         groupID: String,
+        // Named `intentID` rather than `intent`, which would shadow
+        // `Zap.intent(...)` in this scope and resolve to the function.
+        intentID: String? = nil,
         with signer: any EventSigner
     ) async throws -> NostrEvent {
         var tags: [[String]] = [
@@ -383,6 +386,12 @@ public enum Zap {
         }
         if let target = request.firstValue(for: "e") {
             tags.append(["e", target])
+        }
+        // Credits the agent that asked, without pretending it paid. The money is
+        // the funder's and the request carries their signature; this says whose
+        // idea it was, and a reader can look the intent up in the log.
+        if let intentID {
+            tags.append(["intent", intentID])
         }
 
         return try await signer.sign(

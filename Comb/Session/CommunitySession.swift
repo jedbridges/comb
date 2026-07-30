@@ -28,7 +28,7 @@ actor CommunitySession {
     /// subscription can never drift apart.
     private static let contentKinds: [EventKind] = [
         .groupChatMessage, .reaction, .deletion, .groupDeleteEvent,
-        .buzzEdit, .buzzRichContent, .buzzZapAttestation,
+        .buzzEdit, .buzzRichContent, .buzzZapAttestation, .buzzZapIntent,
     ]
     private static let stateKinds: [EventKind] = [
         .metadata, .groupMetadata, .groupMembers,
@@ -93,6 +93,8 @@ actor CommunitySession {
         self.membershipBox = membership
         let readState = EphemeralBox()
         self.readStateBox = readState
+        let intents = EphemeralBox()
+        self.intentBox = intents
         self.relay = RelaySession(
             url: url,
             signer: signer,
@@ -100,7 +102,8 @@ actor CommunitySession {
                 store: resolvedStore,
                 onEphemeral: { box.emit($0) },
                 onMembershipChange: { membership.fire() },
-                onReadState: { readState.emit($0) }
+                onReadState: { readState.emit($0) },
+                onSpendIntents: { intents.emit($0) }
             ),
             transport: transport
         )
@@ -126,9 +129,19 @@ actor CommunitySession {
                 await self?.receiveReadState(events)
             }
         }
+
+        let intents = intentBox
+        intentTask = Task { [weak self] in
+            for await events in intents.stream() {
+                await self?.receiveSpendIntents(events)
+            }
+        }
     }
 
     private let readStateBox: EphemeralBox
+    /// Agent spend requests, handed over as they are stored.
+    private let intentBox: EphemeralBox
+    private var intentTask: Task<Void, Never>?
 
     private let ephemeralBox: EphemeralBox
     private let membershipBox: CallbackBox
@@ -1061,6 +1074,135 @@ actor CommunitySession {
         await attest(zap)
     }
 
+    // MARK: - Agent spending
+
+    /// Acts on what agents have asked for, one at a time.
+    ///
+    /// Serially and deliberately. Two intents decided concurrently could each
+    /// read an allowance the other was about to consume, and while `claim` would
+    /// catch a duplicate of the *same* intent, nothing would catch two different
+    /// intents both fitting a budget that only had room for one. The number of
+    /// intents in a chat is tiny, so the cost of doing this in order is nothing
+    /// and the correctness is free.
+    private func receiveSpendIntents(_ events: [NostrEvent]) async {
+        for event in events.sorted(by: { $0.createdAt < $1.createdAt }) {
+            await fulfil(event)
+        }
+    }
+
+    /// Decides one intent and, if it passes every check, pays it.
+    ///
+    /// The money is the reader's and the ask is the agent's, and both stay
+    /// visible as such: the zap request is signed by this identity because it is
+    /// this identity's money, and the attestation carries the intent's id so the
+    /// channel can see which agent asked for it.
+    ///
+    /// A refusal is written to the ledger and published nowhere. Telling the room
+    /// that an agent was refused would tell the room what the reader is willing
+    /// to spend, and the agent learns the outcome from the presence or absence of
+    /// an attestation. That is a real limitation rather than a good answer, and
+    /// the honest fix later is an encrypted reply to the agent alone.
+    private func fulfil(_ event: NostrEvent) async {
+        guard let intent = try? Zap.intent(from: event) else { return }
+        // Never fund an agent's request to pay this identity's own money to
+        // itself, and never act on this identity's own intent: an intent signed
+        // by the reader is not an agent asking, it is a loop.
+        guard intent.agent != me.hex else { return }
+
+        // Written out rather than `try?`, which would flatten the two optionals
+        // and make "the store could not answer" indistinguishable from "every
+        // check passed". Those must never be confused: one pays and one does not.
+        let refusal: SpendRefusal?
+        do {
+            refusal = try store.decide(intent)
+        } catch {
+            return
+        }
+        if let refusal {
+            try? await store.refuse(intent, refusal)
+            return
+        }
+
+        // The insert is the lock. If a second delivery of this intent is racing
+        // us, exactly one of us claims it.
+        guard (try? await store.claim(intent)) == true else { return }
+
+        guard let recipient = PublicKey(hex: intent.recipient),
+              let address = try? store.profile(pubkey: intent.recipient)?.lightningAddress
+        else {
+            try? await store.settle(
+                intent.id, state: .failed,
+                reason: "Comb could not find a Lightning address for them."
+            )
+            return
+        }
+
+        // Signed by this identity, because it is this identity paying. The agent
+        // is credited by the intent id on the attestation, not by pretending it
+        // sent the zap.
+        let prepared = await prepareZap(
+            toLightningAddress: address,
+            recipient: recipient,
+            amountSats: intent.amountSats,
+            comment: intent.comment,
+            messageID: intent.targetEventID
+        )
+
+        guard case .prepared(let zap) = prepared else {
+            try? await store.settle(
+                intent.id, state: .failed,
+                reason: "Their wallet would not produce an invoice."
+            )
+            return
+        }
+
+        // Only a connected wallet can fulfil an agent's ask. A `lightning:`
+        // handoff needs somebody to tap a button in another app, which is exactly
+        // what an agent grant exists to avoid, and pretending otherwise would
+        // leave intents silently pending forever.
+        guard wallet != nil else {
+            try? await store.settle(
+                intent.id, state: .failed,
+                reason: "No wallet is connected, so Comb cannot pay on your behalf."
+            )
+            return
+        }
+
+        // Last look at the grant, immediately before the money moves. Tapping
+        // Stop between the claim and the payment has to stop it, or "Stop" is a
+        // suggestion.
+        //
+        // The grant is read directly rather than by re-running `decide`. After a
+        // claim, `decide` answers `.alreadySeen` when the allowance is intact and
+        // `.noGrant` when it is gone, so using it here would mean treating one
+        // particular refusal value as permission to spend. That is a fragile way
+        // to decide whether somebody's money moves, and it inverts the reading:
+        // the question is whether a grant exists, so ask that.
+        let stillGranted: Bool
+        do {
+            stillGranted = try store.spendGrant(
+                agent: intent.agent, channel: intent.channel
+            ) != nil
+        } catch {
+            stillGranted = false
+        }
+        guard stillGranted else {
+            try? await store.settle(
+                intent.id, state: .refused, reason: SpendRefusal.noGrant.sentence
+            )
+            return
+        }
+
+        switch await payZap(zap, intent: intent.id) {
+        case .paid:
+            try? await store.settle(intent.id, state: .paid)
+        case .refused(let message):
+            try? await store.settle(intent.id, state: .failed, reason: message)
+        case .unknown(let message):
+            try? await store.settle(intent.id, state: .failed, reason: message)
+        }
+    }
+
     // MARK: - Paying in place
 
     /// The wallet connection for this community, when the reader has set one up.
@@ -1095,7 +1237,7 @@ actor CommunitySession {
     /// dies between asking and hearing back, the marker is what stops the zap
     /// vanishing without trace, and a marker for a payment that then failed
     /// simply expires.
-    func payZap(_ zap: PreparedZap) async -> ZapPayment {
+    func payZap(_ zap: PreparedZap, intent: String? = nil) async -> ZapPayment {
         guard let wallet else { return .unknown("No wallet is connected.") }
 
         do {
@@ -1130,7 +1272,7 @@ actor CommunitySession {
             // The preimage in hand is exactly what the group needs to verify
             // this, so attest immediately rather than waiting on a receipt that
             // a gated relay will never carry.
-            await attest(zap, preimage: preimage)
+            await attest(zap, preimage: preimage, intent: intent)
             return .paid
         case .refused(let code, let message):
             return .refused(NWC.describe(code: code, message: message))
@@ -1166,7 +1308,11 @@ actor CommunitySession {
     /// happened or it did not, entirely between the reader's wallet and the
     /// recipient's, and an error about bookkeeping would be Comb claiming a
     /// part in something it had no part in.
-    private func attest(_ zap: PreparedZap, preimage known: String? = nil) async {
+    private func attest(
+        _ zap: PreparedZap,
+        preimage known: String? = nil,
+        intent: String? = nil
+    ) async {
         guard let channel = zap.targetID.flatMap(channelOf) else { return }
 
         let preimage: String
@@ -1185,6 +1331,7 @@ actor CommunitySession {
                 bolt11: zap.invoice,
                 preimage: preimage,
                 groupID: channel,
+                intentID: intent,
                 with: signer
             )
             // Verified before publishing, against the same function every other
@@ -1372,10 +1519,21 @@ private struct StoreSink: EventSink {
     let onEphemeral: @Sendable ([NostrEvent]) -> Void
     let onMembershipChange: @Sendable () -> Void
     let onReadState: @Sendable ([NostrEvent]) -> Void
+    let onSpendIntents: @Sendable ([NostrEvent]) -> Void
 
     func ingest(_ events: [NostrEvent], subscription: String) async {
         guard let result = try? await store.ingest(events) else { return }
         if !result.ephemeral.isEmpty { onEphemeral(result.ephemeral) }
+
+        // Keyed on what was newly stored, not on what arrived. A relay replaying
+        // an intent after a reconnect must not be a second chance to spend, and
+        // while the ledger would refuse it anyway, relying on that as the only
+        // defence would mean every reconnect racing the replay guard.
+        let stored = Set(result.inserted)
+        let intents = events.filter {
+            $0.kind == .buzzZapIntent && stored.contains($0.id)
+        }
+        if !intents.isEmpty { onSpendIntents(intents) }
 
         // Handed over whether or not the store considered them new: a kind
         // 30078 is addressable, so a replay after a reconnect carries the same
@@ -1384,10 +1542,8 @@ private struct StoreSink: EventSink {
         let readState = events.filter { $0.kind == .appData }
         if !readState.isEmpty { onReadState(readState) }
 
-        // Keyed on what was newly stored rather than on what arrived, so a
-        // relay replaying an old notice after a reconnect does not trigger a
-        // refetch of every channel each time.
-        let stored = Set(result.inserted)
+        // Same reasoning as the intents above: keyed on what was newly stored,
+        // so a replayed notice does not refetch every channel each time.
         if events.contains(where: {
             CommunitySession.isMembershipChange($0.kind) && stored.contains($0.id)
         }) {

@@ -100,6 +100,24 @@ public struct EventKind: RawRepresentable, Hashable, Codable, Sendable, Expressi
     /// fallback the extension rule requires: zaps still work, they just are not
     /// counted, exactly as they are not counted today.
     public static let buzzZapAttestation: EventKind = 40004
+
+    /// An agent asking to spend from a member's allowance.
+    ///
+    /// The whole mechanism in one event. An agent is a keypair in the roster, the
+    /// same as a person, and it cannot spend anything: it says what it would
+    /// like to send and to whom, signed by its own key and h-tagged into the
+    /// channel, and the funder's device decides. No spend credential is ever
+    /// handed to an agent, so revoking is deleting a local grant and needs no
+    /// cooperation from anything.
+    ///
+    /// Publishing the ask rather than whispering it is the point. It sits in the
+    /// append-only log beside everyone's messages, signed by its author, so a
+    /// room can see what its agents asked for as plainly as what they said. That
+    /// is the audit trail README.md claims and the code has never had.
+    ///
+    /// A client that does not know this kind sees nothing, and an agent whose
+    /// funder is offline simply is not answered.
+    public static let buzzZapIntent: EventKind = 40005
     public static let buzzMemberAdded: EventKind = 44100   // relay-signed notification
     public static let buzzMemberRemoved: EventKind = 44101
 
@@ -117,7 +135,8 @@ public struct EventKind: RawRepresentable, Hashable, Codable, Sendable, Expressi
         switch self {
         case .buzzMemberAdd, .buzzMemberRemove, .buzzRoleChange, .buzzWorkspaceProfile,
              .buzzMembershipList, .buzzPresence, .buzzTyping, .buzzRichContent,
-             .buzzEdit, .buzzZapAttestation, .buzzMemberAdded, .buzzMemberRemoved,
+             .buzzEdit, .buzzZapAttestation, .buzzZapIntent,
+             .buzzMemberAdded, .buzzMemberRemoved,
              .buzzOpenDirectMessage:
             true
         default:

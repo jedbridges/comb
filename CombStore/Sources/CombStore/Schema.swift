@@ -209,6 +209,68 @@ enum Schema {
                 """)
         }
 
+        // Local-only, and this is the most important table in the app to keep
+        // that way. A grant is permission to spend the reader's money, so it must
+        // never be derivable from anything a relay can send, and a projection
+        // rebuild must not be able to create one. Neither table is listed in
+        // `projectionTables`, which is what guarantees both.
+        //
+        // Deliberately never published either. An agent is not told it has a
+        // grant and cannot read its own limits, so the room cannot see what any
+        // member is willing to spend. The cost is that a refused agent learns
+        // nothing, which is a real limitation and is documented rather than
+        // solved by leaking the budget.
+        migrator.registerMigration("v6.spend") { db in
+            try db.execute(sql: """
+                CREATE TABLE spend_grant (
+                    agent_pubkey    TEXT NOT NULL,
+                    channel_id      TEXT NOT NULL,
+                    -- What the agent may spend across the whole window.
+                    allowance_msats INTEGER NOT NULL,
+                    -- The window, in seconds, applied as a rolling lookback
+                    -- rather than a calendar period. "500 sats a day" means the
+                    -- last 24 hours: a midnight reset would let an agent spend
+                    -- a full day's allowance twice inside two minutes.
+                    window_seconds  INTEGER NOT NULL,
+                    -- The most any single zap may be. This is the dial that
+                    -- stops one request eating the whole allowance, and it is
+                    -- why there is no approve-each-spend prompt: a request over
+                    -- the ceiling is refused rather than escalated.
+                    per_zap_msats   INTEGER NOT NULL,
+                    created_at      INTEGER NOT NULL,
+                    PRIMARY KEY (agent_pubkey, channel_id)
+                )
+                """)
+
+            try db.execute(sql: """
+                CREATE TABLE spend_ledger (
+                    -- The intent's event id. Primary key, so one intent buys at
+                    -- most one payment however many times it is republished.
+                    intent_id    TEXT PRIMARY KEY NOT NULL,
+                    agent_pubkey TEXT NOT NULL,
+                    channel_id   TEXT NOT NULL,
+                    target_id    TEXT,
+                    recipient    TEXT NOT NULL,
+                    amount_msats INTEGER NOT NULL,
+                    -- refused | paying | paid | failed
+                    state        TEXT NOT NULL,
+                    -- Why, in the reader's words, for both refusals and
+                    -- failures. Refusals are shown rather than swallowed: a
+                    -- silent one teaches nobody anything and looks like a bug.
+                    reason       TEXT,
+                    created_at   INTEGER NOT NULL,
+                    -- When the money actually moved. The rolling window sums
+                    -- over this, so a refusal never counts against an allowance
+                    -- and an in-flight payment does.
+                    settled_at   INTEGER
+                )
+                """)
+            try db.execute(sql: """
+                CREATE INDEX spend_ledger_window
+                    ON spend_ledger(agent_pubkey, channel_id, settled_at)
+                """)
+        }
+
         return migrator
     }
 
