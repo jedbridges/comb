@@ -183,6 +183,10 @@ Working against live Buzz communities. Builds are uploaded to TestFlight and
 internal testing is running; see [docs/TESTFLIGHT.md](docs/TESTFLIGHT.md) for the
 release path.
 
+Zaps are covered by tests that deliberately move no money. Running the paid path
+once, against a real wallet, is written up in
+[docs/ZAP-TESTING.md](docs/ZAP-TESTING.md).
+
 **Protocol and storage**
 
 - [x] Hex, bech32, NIP-19 `npub` / `nsec`

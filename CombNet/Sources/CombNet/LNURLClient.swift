@@ -206,6 +206,18 @@ public struct LNURLClient: Sendable {
         public let bolt11: String
         /// Nil when the host does not implement LUD-21, or offered one Comb
         /// declined to use.
+        ///
+        /// Usually nil, and worth knowing before relying on this. Sampled
+        /// 2026-07-29 against real donation endpoints that do support Nostr
+        /// zaps: `opensats@vlt.ge` and `damus@sendsats.lol` both return an
+        /// invoice and neither returns a `verify` URL.
+        ///
+        /// So a `lightning:` handoff mostly cannot learn its own preimage, which
+        /// means it mostly cannot produce an attestation and its zap stays a
+        /// pending marker until it expires. That is honest behaviour rather than
+        /// a bug, but it does mean sender-attested zaps lean on NIP-47 in
+        /// practice rather than on this. Do not read the presence of this field
+        /// as the deep-link path being covered.
         public let verify: URL?
     }
 
