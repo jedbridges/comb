@@ -44,6 +44,9 @@ struct SettingsView: View {
     @State private var walletConnected = false
     @State private var isConnectingWallet = false
     @State private var walletFailure: String?
+    /// Whether any agent has an allowance here, which decides whether the
+    /// spending screen is reachable even with no wallet connected.
+    @State private var hasGrants = false
     /// Set when a name change could not be published, so the footer can say so
     /// instead of the field quietly looking saved.
     @State private var nameUndelivered = false
@@ -64,17 +67,21 @@ struct SettingsView: View {
     @ViewBuilder
     private var walletSection: some View {
         Section {
-            if walletConnected {
-                // Only where a wallet exists, because an allowance cannot be
-                // fulfilled without one: paying on an agent's behalf through a
-                // `lightning:` handoff would need somebody to tap a button in
-                // another app, which is the thing an allowance exists to avoid.
+            // Shown when a wallet is connected, and also whenever an allowance
+            // exists at all, which is not the same condition. A grant is given
+            // from a channel's member list and does not require a wallet, so
+            // gating this on one alone left an allowance somebody had created
+            // with no way to see it, no meter, and no ledger. An allowance the
+            // reader cannot find is the last thing this screen should allow.
+            if walletConnected || hasGrants {
                 NavigationLink {
                     SpendingView(session: session)
                 } label: {
                     Label("Agent spending", systemImage: "bolt.badge.clock")
                 }
+            }
 
+            if walletConnected {
                 Button(role: .destructive) {
                     disconnectWallet()
                 } label: {
@@ -420,6 +427,7 @@ struct SettingsView: View {
                 displayName = profile?.displayName ?? ""
                 hasCopiedAccount = AccountBackup.hasCopied(host: host)
                 walletConnected = WalletStore.exists(host: host)
+                hasGrants = !((try? session.store.spendGrants()) ?? []).isEmpty
             }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
