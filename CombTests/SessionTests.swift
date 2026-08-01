@@ -431,3 +431,124 @@ struct CommunitySessionTests {
         }
     }
 }
+
+/// What a strict relay does to the conversation.
+///
+/// Build 12 shipped with every live filter in one REQ. A relay refuses a REQ by
+/// closing the *subscription*, not the offending filter, so the one ask Comb has
+/// to make unscoped — zap receipts, which carry no `h` tag because a wallet
+/// publishes them — took the whole live feed down with it. Messages stopped
+/// arriving, reactions stopped appearing, and nothing said why.
+///
+/// These are the cases that would have caught it.
+@Suite("Live subscription isolation")
+struct SubscriptionIsolationTests {
+    private static let channel = "room-under-test"
+
+    private func session(
+        rules: BuzzFake.Rules,
+        key: PrivateKey,
+        store: EventStore
+    ) async throws -> (CommunitySession, BuzzFake) {
+        let relay = try BuzzFake(rules: rules)
+        await relay.seed(group: BuzzFake.Group(
+            id: Self.channel,
+            name: "Contract",
+            members: [key.publicKey.hex]
+        ))
+        let session = try CommunitySession(
+            url: URL(string: "wss://fake.communities.buzz.xyz")!,
+            key: key,
+            store: store,
+            transport: relay
+        )
+        return (session, relay)
+    }
+
+    /// The exact shape of the shipped bug.
+    @Test("a relay that refuses the unscoped receipt filter still delivers messages")
+    func groupScopedRelayKeepsTheConversation() async throws {
+        var rules = BuzzFake.Rules()
+        rules.refusesKinds = [.zapReceipt]
+
+        let key = try PrivateKey()
+        let store = try EventStore()
+        let (session, relay) = try await self.session(rules: rules, key: key, store: store)
+        try await session.start()
+
+        // Arrives after the connection, so it can only come down a live
+        // subscription that survived.
+        let author = try PrivateKey()
+        await relay.deliver(try NostrEvent.signed(
+            kind: .groupChatMessage,
+            content: "the conversation continues",
+            tags: [["h", Self.channel]],
+            with: author
+        ))
+        try await Task.sleep(for: .milliseconds(200))
+
+        #expect(
+            try store.timeline(channel: Self.channel).map(\.content)
+                == ["the conversation continues"],
+            "an unscoped zap filter must not cost the conversation"
+        )
+        await session.stop()
+    }
+
+    /// The other way the same mistake could be made: Comb's own kinds are not
+    /// kinds any relay is obliged to accept.
+    @Test("a relay that refuses unknown kinds still delivers messages")
+    func unknownKindsDoNotCostTheConversation() async throws {
+        var rules = BuzzFake.Rules()
+        rules.refusesKinds = [.buzzZapAttestation, .buzzZapIntent]
+
+        let key = try PrivateKey()
+        let store = try EventStore()
+        let (session, relay) = try await self.session(rules: rules, key: key, store: store)
+        try await session.start()
+
+        let author = try PrivateKey()
+        await relay.deliver(try NostrEvent.signed(
+            kind: .groupChatMessage,
+            content: "still here",
+            tags: [["h", Self.channel]],
+            with: author
+        ))
+        try await Task.sleep(for: .milliseconds(200))
+
+        #expect(
+            try store.timeline(channel: Self.channel).map(\.content) == ["still here"],
+            "kinds 40004 and 40005 are unproven, so they must not ride with the conversation"
+        )
+        await session.stop()
+    }
+
+    /// A reaction is the symptom the report led with, and it travels the same
+    /// live subscription a message does.
+    @Test("reactions still arrive on a relay that refuses the receipt filter")
+    func reactionsSurvive() async throws {
+        var rules = BuzzFake.Rules()
+        rules.refusesKinds = [.zapReceipt]
+
+        let key = try PrivateKey()
+        let store = try EventStore()
+        let (session, relay) = try await self.session(rules: rules, key: key, store: store)
+        try await session.start()
+
+        let author = try PrivateKey()
+        let message = try NostrEvent.signed(
+            kind: .groupChatMessage, content: "worth a reaction",
+            tags: [["h", Self.channel]], with: author
+        )
+        await relay.deliver(message)
+        await relay.deliver(try NostrEvent.signed(
+            kind: .reaction, content: "🐝",
+            tags: [["e", message.id], ["h", Self.channel]], with: author
+        ))
+        try await Task.sleep(for: .milliseconds(250))
+
+        let reactions = try store.reactions(for: [message.id], me: key.publicKey.hex)
+        #expect(reactions[message.id]?.first?.emoji == "🐝")
+        await session.stop()
+    }
+}

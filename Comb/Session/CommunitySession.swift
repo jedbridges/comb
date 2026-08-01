@@ -23,12 +23,32 @@ actor CommunitySession {
     private let relay: RelaySession
     private let signer: InMemorySigner
     private var liveSubscription: String?
+    /// The best-effort subscriptions, held only so they can be torn down.
+    /// Separate from `liveSubscription` because losing one of these costs a
+    /// feature, and losing that one costs the conversation.
+    private var membershipSubscription: String?
+    private var receiptSubscription: String?
+    private var zapSubscription: String?
+    private var readStateSubscription: String?
 
     /// Kinds the app renders. One place, so the bootstrap query and the live
     /// subscription can never drift apart.
+    /// The conversation. Every kind here shipped and worked before zaps existed,
+    /// and nothing is added to this list that a relay has not already been seen
+    /// to accept. Losing this subscription loses the app.
     private static let contentKinds: [EventKind] = [
         .groupChatMessage, .reaction, .deletion, .groupDeleteEvent,
-        .buzzEdit, .buzzRichContent, .buzzZapAttestation, .buzzZapIntent,
+        .buzzEdit, .buzzRichContent,
+    ]
+    /// The zap extensions, asked for separately because they have never been
+    /// confirmed against a real Buzz relay.
+    ///
+    /// They were in `contentKinds` for one release and that was the mistake: a
+    /// relay refuses a REQ by closing the subscription, so an unknown kind in
+    /// the same ask as `groupChatMessage` takes the conversation down with it.
+    /// Unproven kinds do not travel with proven ones.
+    private static let zapExtensionKinds: [EventKind] = [
+        .buzzZapAttestation, .buzzZapIntent,
     ]
     private static let stateKinds: [EventKind] = [
         .metadata, .groupMetadata, .groupMembers,
@@ -215,16 +235,33 @@ actor CommunitySession {
 
         // Bootstrap: one round trip, several filters. Group state, profiles,
         // and enough recent traffic that the first paint has substance.
+        // The same split as the live subscription, for the same reason: a
+        // rejected filter closes the whole query, so the history everything
+        // depends on must not share a request with anything a relay might
+        // refuse. This one is required and is allowed to throw.
         let bootstrap = try await relay.query(
             [
                 Filter(kinds: [.groupMetadata], limit: 200),
                 Filter(kinds: [.groupMembers], limit: 200),
                 Filter(kinds: [.metadata], limit: 500),
                 Filter(kinds: Self.contentKinds, limit: 500),
-                Filter(kinds: Self.receiptKinds, limit: 200),
             ],
             timeout: .seconds(25)
         )
+
+        // Best effort, and after the required one so a refusal here cannot stop
+        // the app opening. A community with no zap history is a community with
+        // no zap totals, which is a feature missing rather than an app broken.
+        let zapHistory = (try? await relay.query(
+            [
+                Filter(kinds: Self.zapExtensionKinds, limit: 200),
+                Filter(kinds: Self.receiptKinds, limit: 200),
+            ],
+            timeout: .seconds(15)
+        )) ?? []
+        if !zapHistory.isEmpty {
+            _ = try? await store.ingest(zapHistory)
+        }
         let result = try await store.ingest(bootstrap)
         Log.session.info("bootstrap ingested \(result.inserted.count) events, \(result.rejected.count) rejected")
         DiagnosticsBuffer.report("session", "bootstrap: \(result.inserted.count) stored, \(result.rejected.count) rejected")
@@ -439,22 +476,53 @@ actor CommunitySession {
         // membership changes.
         let membership = Filter(kinds: Self.membershipKinds).taggingPubkey(me.hex)
 
-        // Separate for the same reason it is separate in the bootstrap: an
-        // unscoped filter is the only way to ask for receipts, and a relay that
-        // rejects it should cost only this.
         var receipts = Filter(kinds: Self.receiptKinds)
         receipts.since = newest - 5
 
-        var filters = [filter, ephemeral, membership, receipts]
+        // Separate subscriptions, not one subscription with several filters,
+        // and this distinction is the whole bug.
+        //
+        // A relay refuses a REQ by closing the *subscription*, not the offending
+        // filter. Zap receipts have to be asked for unscoped, because a kind
+        // 9735 is published by a wallet and carries no `h` tag, and a NIP-29
+        // relay that requires every filter to name a group refuses exactly that.
+        // Riding in the same REQ as everything else, that one refusal closed the
+        // whole live feed: no messages, no reactions, no membership notices, for
+        // the rest of the session. A comment here claimed the refusal "should
+        // cost only this" while the code put it in the same basket as the
+        // conversation.
+        //
+        // Now each risky ask stands alone. Losing receipts costs zap totals.
+        // Losing the core costs the app, so the core asks for nothing a plain
+        // NIP-29 relay could object to.
+        liveSubscription = try await relay.subscribe(
+            [filter, ephemeral], label: "live"
+        )
+
+        // Best effort from here down. Each is wrapped so a relay that refuses
+        // one leaves the others, and the live feed above, untouched.
+        membershipSubscription = try? await relay.subscribe(
+            [membership], label: "membership"
+        )
+
+        // Attestations and intents together: both are h-tagged group events, so
+        // a relay that takes one takes the other, and they fail as one feature.
+        var extensions = Filter(kinds: Self.zapExtensionKinds)
+        extensions.since = newest - 5
+        zapSubscription = try? await relay.subscribe([extensions], label: "zaps")
+
+        receiptSubscription = try? await relay.subscribe(
+            [receipts], label: "receipts"
+        )
 
         // Only this identity's own app data, and only when the feature is on:
         // a subscription is a statement to the relay about what interests you,
         // and there is no reason to make it while the answer is unused.
         if syncsReadState {
-            filters.append(Filter(authors: [me.hex], kinds: [.appData]))
+            readStateSubscription = try? await relay.subscribe(
+                [Filter(authors: [me.hex], kinds: [.appData])], label: "read-state"
+            )
         }
-
-        liveSubscription = try await relay.subscribe(filters, label: "live")
     }
 
     // MARK: - Read state sync
@@ -631,10 +699,17 @@ actor CommunitySession {
         guard enabled != syncsReadState else { return }
         syncsReadState = enabled
 
-        if let liveSubscription {
-            await relay.unsubscribe(liveSubscription)
-            self.liveSubscription = nil
+        for id in [
+            liveSubscription, membershipSubscription, zapSubscription,
+            receiptSubscription, readStateSubscription,
+        ].compactMap({ $0 }) {
+            await relay.unsubscribe(id)
         }
+        liveSubscription = nil
+        membershipSubscription = nil
+        zapSubscription = nil
+        receiptSubscription = nil
+        readStateSubscription = nil
         try? await subscribeLive()
 
         // Whatever this device already knows goes out immediately, rather than

@@ -51,11 +51,26 @@ public actor RelaySession {
     /// Injectable so tests do not spend real time in reconnect backoff. Query
     /// deadlines deliberately do not use this.
     private let backoffSleep: @Sendable (Duration) async throws -> Void
+    /// How long this session waits for an OK. Injectable so a test can prove the
+    /// watchdog fires without waiting twenty seconds for it.
+    private let publishDeadline: Duration
 
     /// Replay overlap on reconnect. Relay clocks drift and many events share a
     /// second, so resuming exactly at the last timestamp drops messages. The
     /// duplicates this causes are free: the store keys on event id.
     private static let replaySkew: Int64 = 5
+
+    /// How long to wait for a relay's OK before giving up on a publish.
+    ///
+    /// There was no limit here at all, and that is a hang rather than a delay: a
+    /// publish suspends on a continuation that only an OK frame resumes, so a
+    /// relay that accepts the socket and never answers leaves the caller stopped
+    /// forever. Every caller is a person waiting: a reaction that never lands, a
+    /// direct message whose spinner never stops.
+    ///
+    /// Generous, because a slow answer is still an answer and a false failure
+    /// would have the outbox resend something the relay already took.
+    public static let publishTimeout: Duration = .seconds(20)
 
     // MARK: - State
 
@@ -150,6 +165,7 @@ public actor RelaySession {
         sink: any EventSink,
         transport: any WebSocketTransport = URLSessionTransport(),
         policy: ReconnectPolicy = .default,
+        publishTimeout: Duration = RelaySession.publishTimeout,
         backoffSleep: @escaping @Sendable (Duration) async throws -> Void = {
             try await Task.sleep(for: $0)
         }
@@ -159,6 +175,7 @@ public actor RelaySession {
         self.sink = sink
         self.transport = transport
         self.policy = policy
+        self.publishDeadline = publishTimeout
         self.backoffSleep = backoffSleep
     }
 
@@ -480,6 +497,16 @@ public actor RelaySession {
         }
         try await waitForAuthentication()
 
+        // Armed before the continuation, cancelled in `defer`, and resolved
+        // through the same `resumePublish` the OK path uses so the two cannot
+        // both resume it.
+        let deadline = publishDeadline
+        let watchdog = Task { [weak self] in
+            try? await Task.sleep(for: deadline)
+            await self?.timeOutPublish(event.id)
+        }
+        defer { watchdog.cancel() }
+
         return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<String, Error>) in
             pendingPublishes[event.id] = continuation
             Task {
@@ -490,6 +517,14 @@ public actor RelaySession {
                 }
             }
         }
+    }
+
+    /// Fails a publish the relay never answered.
+    ///
+    /// A no-op when the OK already arrived, because `resumePublish` removes the
+    /// continuation as it resumes it.
+    private func timeOutPublish(_ eventID: String) {
+        resumePublish(eventID, with: .failure(RelayError.timedOut))
     }
 
     private func resumePublish(_ eventID: String, with result: Result<String, Error>) {

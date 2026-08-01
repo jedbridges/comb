@@ -35,6 +35,19 @@ public actor BuzzFake: WebSocketTransport {
         /// Refuse a subscription for gift wraps or membership notices that is
         /// not scoped to a pubkey with `#p`.
         public var gatesPubkeyScopedKinds = true
+        /// Kinds this relay will not serve, closing any subscription that asks
+        /// for one.
+        ///
+        /// Models the two ways a relay refuses an ask Comb has started making.
+        /// A kind 9735 is published by a wallet and carries no `h` tag, so it
+        /// can only be requested unscoped, and a relay that requires group scope
+        /// refuses it. Kinds 40004 and 40005 are Comb's own, and no relay is
+        /// obliged to have heard of them.
+        ///
+        /// Deliberately a refusal of the *subscription*, because that is what
+        /// NIP-01 specifies and what made this dangerous: the offending filter
+        /// does not fail alone, it takes its whole REQ with it.
+        public var refusesKinds: Set<EventKind> = []
         /// Check the auth response quotes the challenge we issued.
         public var matchesAuthChallenge = true
         /// Check the auth response names this relay, so a signature collected
@@ -440,6 +453,12 @@ public actor BuzzFake: WebSocketTransport {
         if rules.gatesPubkeyScopedKinds, filters.contains(where: \.needsPubkeyScope) {
             return closed(id, "restricted: these kinds need a #p scope")
         }
+        if !rules.refusesKinds.isEmpty,
+           filters.contains(where: { filter in
+               filter.kinds?.contains(where: rules.refusesKinds.contains) ?? false
+           }) {
+            return closed(id, "restricted: this relay does not serve those kinds")
+        }
         if rules.gatesPubkeyScopedKinds,
            let me = authenticatedAs,
            filters.contains(where: { filter in
@@ -489,6 +508,18 @@ public actor BuzzFake: WebSocketTransport {
         let group = tag(event, "h") ?? (event.kind.isAddressable ? tag(event, "d") : nil)
         guard let group, let roster = groups[group] else { return true }
         return roster.members.contains(me)
+    }
+
+    /// Pushes an event to whichever live subscriptions match it, as if another
+    /// member had just published it.
+    ///
+    /// Public because "did this arrive?" is a different question from "was this
+    /// accepted?", and the subscription-isolation tests need the first one:
+    /// after a relay refuses one filter, the events matching the surviving
+    /// subscriptions must still land.
+    public func deliver(_ event: NostrEvent) {
+        record(event)
+        deliverLive(event)
     }
 
     private func deliverLive(_ event: NostrEvent) {
