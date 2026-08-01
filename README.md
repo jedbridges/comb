@@ -185,7 +185,12 @@ release path.
 
 Zaps are covered by tests that deliberately move no money. Running the paid path
 once, against a real wallet, is written up in
-[docs/ZAP-TESTING.md](docs/ZAP-TESTING.md).
+[docs/ZAP-TESTING.md](docs/ZAP-TESTING.md) and has not been done.
+
+Two things the zap feature claims are still unverified against anything real: no
+payment has been made through it, and no relay has been observed accepting kinds
+40004 or 40005. Neither can break the conversation any more, but a tally that
+never appears is the expected failure until both are checked.
 
 **Protocol and storage**
 
@@ -210,8 +215,11 @@ once, against a real wallet, is written up in
 - [x] Images: Blossom upload, inline rendering, metadata stripped before send
 - [x] Search, profiles, member lists, link detection, date separators
 - [x] Zaps (NIP-57) by `lightning:` deep link, or paid in place over NIP-47
-- [x] Sender-attested zaps, so a gated relay can still show a tally
-- [x] Spending allowances for agents, decided on your device
+- [x] Sender-attested zaps (kind 40004), so a gated relay can still show a
+      tally. Built and tested, but no relay has been observed accepting the
+      kind, so tallies may not appear yet.
+- [x] Spending allowances for agents (kind 40005), decided on your device. Same
+      caveat, and nothing publishes a request yet, so no agent has used one.
 - [x] Reporting (NIP-56) and local blocking
 - [x] Mention notifications by background refresh, and local reminders
 - [x] Deep links to a message, by `buzz://message` URL
