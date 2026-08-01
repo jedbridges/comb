@@ -3,6 +3,69 @@
 Newest first. Each entry carries the App Store / TestFlight blurb, the internal
 detail behind it, and what was deliberately left undone.
 
+## Version 0.2.1 (Build 13) — 2026-08-01
+
+### What's New (App Store Connect blurb)
+
+Fixes a bug in the last build that stopped reactions appearing and left the
+direct-message button spinning. Both had the same cause and both are fixed.
+
+### TestFlight tester notes
+
+**Build 12 was broken. This fixes it.** If you had reactions doing nothing, or a
+conversation that never opened, that was one bug and it is gone.
+
+Everything from build 12 still applies, including the warning that a connected
+Lightning wallet pays with no second confirmation. Please still use a throwaway
+wallet connection with a small cap.
+
+Worth retesting: tapping an emoji reaction, opening a direct message from
+somebody's profile, and sending a message. Those are the paths that were dead.
+
+### Internal notes
+
+**One root cause for both symptoms, introduced in 0.2.0.** A relay refuses a REQ
+by closing the subscription, not the offending filter. Every live filter went out
+in a single REQ, so the one ask Comb has to make unscoped, zap receipts, closed
+the whole live feed. Messages, reactions and membership notices all stopped for
+the rest of the session.
+
+- Each risky ask is now its own subscription, and the core asks for nothing a
+  plain NIP-29 relay could object to.
+- Kinds 40004 and 40005 came out of `contentKinds`. They are Comb's own and no
+  relay is obliged to have heard of them, so they no longer travel with the
+  conversation.
+- The bootstrap query had the identical flaw and got the identical split.
+
+**A second defect, older, that 0.2.0 made reachable.** `RelaySession.publish`
+suspended on a continuation only an OK frame resumes, with no deadline. A relay
+that took the socket and stayed quiet stopped the caller forever: that is the
+spinner, and it is also the reaction, because `toggleReaction` awaits the publish
+before storing anything. Now twenty seconds, generous because a slow answer is
+still an answer and a false failure would have the outbox resend.
+
+Both fixes are mutation-tested. Removing the publish watchdog does not fail the
+suite, it hangs it, which is exactly what the app did.
+
+`BuzzFake` gained a `refusesKinds` rule. It could not previously say no to a
+subscription, which is why nothing caught this.
+
+**Version bump**: 0.2.0 → 0.2.1, build 12 → 13.
+
+### Release checklist
+
+- [ ] `make export DEVELOPMENT_TEAM=…` and upload
+- [ ] Tell testers build 12 was broken and 13 fixes it
+- [ ] Retest reactions, direct messages, sending
+
+### Known gaps
+
+- **Kinds 40004 and 40005 are still unconfirmed against a real Buzz relay.**
+  They can no longer take the conversation down, but whether the relay serves
+  them at all is still unmeasured. `make relay-up` needs a container runtime.
+- Everything else carried forward from 0.2.0 below, including that no real money
+  has moved through the zap path.
+
 ## Version 0.2.0 (Build 12) — 2026-07-30
 
 ### What's New (App Store Connect blurb)
